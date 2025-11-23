@@ -14,17 +14,26 @@ import re
 import uuid
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
+os.environ['UNSTRUCTURED_DISABLE_INFERENCE'] = '1'
+
 
 import pdfplumber
-from unstructured.partition.pdf import partition_pdf
+# try:
+#     from unstructured.partition.pdf import partition_pdf
+#     HAS_UNSTRUCTURED = True
+# except Exception as e:
+#     print(f"Warning: Could not import unstructured: {e}")
+#     HAS_UNSTRUCTURED = False
+
 from sentence_transformers import SentenceTransformer
 import tiktoken
 from dotenv import load_dotenv
 from pinecone import Pinecone
 
-from ingestion.toc_parser import TOCParser, TOCEntry
-from ingestion.hierarchy_builder import HierarchyBuilder, BookNode
-from ingestion.chapter_chunker import ChapterChunker, ChunkMetadata
+from rag_based_book_bot.document_ingestion.ingestion.toc_parser import TOCParser, TOCEntry
+from rag_based_book_bot.document_ingestion.ingestion.hierarchy_builder import HierarchyBuilder, BookNode
+from rag_based_book_bot.document_ingestion.ingestion.chapter_chunker import ChapterChunker, ChunkMetadata
+
 
 load_dotenv()
 
@@ -207,48 +216,28 @@ class EnhancedBookIngestor:
         return metadata
     
     def _parse_pdf_multiway(self, pdf_path: str) -> List[Dict]:
-        """Parse PDF using both unstructured and pdfplumber"""
-        # Primary: Use unstructured for semantic parsing
-        try:
-            elements_raw = partition_pdf(filename=pdf_path)
-            elements = []
-            
-            for idx, el in enumerate(elements_raw):
-                text = getattr(el, "text", "") or ""
-                el_type = el.__class__.__name__
-                md = getattr(el, "metadata", {}) or {}
+        """Parse PDF using pdfplumber (skip unstructured to avoid DLL issues)"""
+        elements = []
+        
+        with pdfplumber.open(pdf_path) as pdf:
+            for page_num, page in enumerate(pdf.pages, start=1):
+                text = page.extract_text() or ""
                 
-                page_no = None
-                if isinstance(md, dict):
-                    page_no = md.get("page_number") or md.get("page") or md.get("page_no")
+                # Split into paragraphs
+                paragraphs = text.split('\n\n')
                 
-                elements.append({
-                    "index": idx,
-                    "type": el_type,
-                    "text": text,
-                    "metadata": md,
-                    "page": page_no
-                })
-            
-            return elements
-        except Exception as e:
-            print(f"  Warning: unstructured parsing failed ({e}), falling back to pdfplumber")
-            
-            # Fallback: Use pdfplumber
-            elements = []
-            with pdfplumber.open(pdf_path) as pdf:
-                for page_num, page in enumerate(pdf.pages, start=1):
-                    text = page.extract_text() or ""
-                    
-                    elements.append({
-                        "index": page_num - 1,
-                        "type": "NarrativeText",
-                        "text": text,
-                        "metadata": {"page_number": page_num},
-                        "page": page_num
-                    })
-            
-            return elements
+                for para in paragraphs:
+                    if para.strip():
+                        elements.append({
+                            "index": len(elements),
+                            "type": "NarrativeText",
+                            "text": para.strip(),
+                            "metadata": {"page_number": page_num},
+                            "page": page_num
+                        })
+        
+        return elements
+
     
     def _get_total_pages(self, pdf_path: str) -> int:
         """Get total number of pages"""

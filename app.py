@@ -7,22 +7,41 @@ import os
 import sys
 from dotenv import load_dotenv
 
-# Add paths
-sys.path.append(os.path.join(os.path.dirname(__file__), 'document ingestion'))
-
-from pinecone import Pinecone
-from sentence_transformers import SentenceTransformer
-from rag_based_book_bot.document_ingestion.enhanced_ingestion import EnhancedBookIngestor
-
-load_dotenv()
-
-# Page config
+# MUST BE FIRST STREAMLIT COMMAND
 st.set_page_config(
     page_title="RAG Book Bot",
     page_icon="📚",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Now the debug messages
+st.write("✅ Step 1: Basic imports successful")
+
+load_dotenv()
+st.write("✅ Step 2: .env loaded")
+
+# Check env variables
+if os.getenv("PINECONE_API_KEY"):
+    st.write("✅ Step 3: Pinecone API key found")
+else:
+    st.error("❌ Step 3: Pinecone API key NOT found")
+    st.stop()
+
+st.write("✅ Step 4: Starting Pinecone import...")
+from pinecone import Pinecone
+st.write("✅ Step 5: Pinecone imported")
+
+st.write("✅ Step 6: Starting sentence-transformers import...")
+from sentence_transformers import SentenceTransformer
+st.write("✅ Step 7: sentence-transformers imported")
+
+st.write("✅ Step 8: Starting enhanced_ingestion import...")
+from rag_based_book_bot.document_ingestion.enhanced_ingestion import EnhancedBookIngestor
+st.write("✅ Step 9: ALL IMPORTS SUCCESSFUL!")
+
+# Rest of your app code...
+
 
 # Custom CSS
 st.markdown("""
@@ -71,15 +90,39 @@ if 'ingestion_complete' not in st.session_state:
 @st.cache_resource
 def initialize_pinecone():
     """Initialize Pinecone connection"""
-    api_key = os.getenv("PINECONE_API_KEY")
-    if not api_key:
-        st.error("❌ PINECONE_API_KEY not found in .env file")
+    try:
+        api_key = os.getenv("PINECONE_API_KEY")
+        if not api_key:
+            st.error("❌ PINECONE_API_KEY not found in .env file")
+            return None, None
+        
+        pc = Pinecone(api_key=api_key)
+        index_name = os.getenv("PINECONE_INDEX_NAME", "coding-books")
+        
+        # Check if index exists
+        try:
+            index = pc.Index(index_name)
+            return pc, index
+        except Exception as e:
+            st.error(f"❌ Pinecone index '{index_name}' not found")
+            st.info("""
+            **To create the index, run:**
+            ```
+            from pinecone import Pinecone, ServerlessSpec
+            
+            pc = Pinecone(api_key="your-api-key")
+            pc.create_index(
+                name="coding-books",
+                dimension=384,
+                metric="cosine",
+                spec=ServerlessSpec(cloud="aws", region="us-east-1")
+            )
+            ```
+            """)
+            return None, None
+    except Exception as e:
+        st.error(f"❌ Failed to connect to Pinecone: {str(e)}")
         return None, None
-    
-    pc = Pinecone(api_key=api_key)
-    index_name = os.getenv("PINECONE_INDEX_NAME", "coding-books")
-    index = pc.Index(index_name)
-    return pc, index
 
 
 @st.cache_resource
@@ -128,11 +171,10 @@ def get_available_books():
     if index is None:
         return []
     
-    # Query with dummy vector to get some results and extract unique books
     namespace = os.getenv("PINECONE_NAMESPACE", "books_rag")
     try:
         results = index.query(
-            vector=[0.0] * 384,  # Dummy vector
+            vector=[0.0] * 384,
             top_k=100,
             namespace=namespace,
             include_metadata=True
@@ -145,8 +187,10 @@ def get_available_books():
                 books.add(book_title)
         
         return sorted(list(books))
-    except:
+    except Exception as e:
+        st.warning(f"Could not retrieve books: {str(e)}")
         return []
+
 
 
 def ingest_book(pdf_path, book_title, author):
