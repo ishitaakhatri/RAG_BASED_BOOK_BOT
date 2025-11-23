@@ -1,21 +1,28 @@
-# --- CORE ---
-streamlit==1.38.0
-python-dotenv==1.0.1
+# ============================================================================
+# RAG BASED BOOK BOT - REQUIREMENTS
+# Fixed for Windows DLL compatibility
+# ============================================================================
 
-# --- EMBEDDINGS ---
-sentence-transformers==2.7.0
-transformers==4.44.2
-
-# Safe CPU-only PyTorch (no CUDA DLL issues)
+# --- INSTALLATION ORDER MATTERS ---
+# Install PyTorch FIRST with CPU-only to avoid DLL conflicts
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.2.2+cpu
 torchvision==0.17.2+cpu
 torchaudio==2.2.2+cpu
---extra-index-url https://download.pytorch.org/whl/cpu
 
-# --- VECTOR DB ---
+# --- CORE FRAMEWORK ---
+streamlit==1.38.0
+python-dotenv==1.0.1
+
+# --- EMBEDDINGS & TRANSFORMERS ---
+# These depend on PyTorch, so install AFTER PyTorch
+sentence-transformers==2.7.0
+transformers==4.44.2
+
+# --- VECTOR DATABASE ---
 pinecone-client==4.1.0
 
-# --- LLM CLIENTS ---
+# --- LLM API CLIENTS ---
 openai==1.40.0
 groq==0.8.0
 anthropic==0.34.0
@@ -29,6 +36,34 @@ pandas==2.2.2
 # --- PDF PROCESSING ---
 PyPDF2==3.0.1
 pdfplumber==0.11.4
+pillow==10.4.0
 
-# --- OPTIONAL (local vector DB, Windows-safe) ---
-faiss-cpu==1.13.0
+# --- VECTOR DATABASE (LOCAL, CPU-SAFE) ---
+faiss-cpu==1.8.0
+
+# --- ADDITIONAL DEPENDENCIES FOR SENTENCE-TRANSFORMERS ---
+scikit-learn==1.5.0
+scipy==1.13.0
+huggingface-hub==0.24.0
+tokenizers==0.19.1
+
+# ============================================================================
+# INSTALLATION INSTRUCTIONS
+# ============================================================================
+# 1. Create virtual environment:
+#    python -m venv venv
+#
+# 2. Activate virtual environment:
+#    Windows: venv\Scripts\activate
+#    Linux/Mac: source venv/bin/activate
+#
+# 3. Upgrade pip:
+#    python -m pip install --upgrade pip
+#
+# 4. Install requirements:
+#    pip install -r requirements.txt --no-cache-dir
+#
+# 5. If you still get DLL errors, uninstall and reinstall PyTorch:
+#    pip uninstall torch torchvision torchaudio -y
+#    pip install torch==2.2.2+cpu torchvision==0.17.2+cpu torchaudio==2.2.2+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+# ============================================================================
