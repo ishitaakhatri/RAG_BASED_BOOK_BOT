@@ -1,0 +1,27 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+.ipynb_checkpoints/
+.DS_Store
+.vscode/
+.idea/
+logs/
+
+# Local vector DB
+faiss_index/
+# Local embeddings
+embeddings/     
+# Local book files
+books/
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Ignore virtual environment directories
+.venv/  

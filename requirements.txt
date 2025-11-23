@@ -1,0 +1,34 @@
+# --- CORE ---
+streamlit==1.38.0
+python-dotenv==1.0.1
+
+# --- EMBEDDINGS ---
+sentence-transformers==2.7.0
+transformers==4.44.2
+
+# Safe CPU-only PyTorch (no CUDA DLL issues)
+torch==2.2.2+cpu
+torchvision==0.17.2+cpu
+torchaudio==2.2.2+cpu
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# --- VECTOR DB ---
+pinecone-client==4.1.0
+
+# --- LLM CLIENTS ---
+openai==1.40.0
+groq==0.8.0
+anthropic==0.34.0
+
+# --- UTILITIES ---
+tqdm==4.66.4
+requests==2.32.3
+numpy==1.26.4
+pandas==2.2.2
+
+# --- PDF PROCESSING ---
+PyPDF2==3.0.1
+pdfplumber==0.11.4
+
+# --- OPTIONAL (local vector DB, Windows-safe) ---
+faiss-cpu==1.13.0
