@@ -1,6 +1,6 @@
 """
 Streamlit App for RAG-Based Book Bot
-Using book_ingestion.py for PDF processing
+Using enhanced_ingestion.py for PDF processing
 WITH INTEGRATED ANSWER GENERATION
 """
 import streamlit as st
@@ -21,7 +21,12 @@ load_dotenv()
 # ✅ CORRECT IMPORTS
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
-from rag_based_book_bot.document_ingestion.book_ingestion import BookIngestionService
+
+# Import ENHANCED ingestion service
+from rag_based_book_bot.document_ingestion.enhanced_ingestion import (
+    EnhancedBookIngestorPaddle,
+    IngestorConfig
+)
 
 # Import agent components for answer generation
 from rag_based_book_bot.agents.nodes import llm_reasoning_node
@@ -59,6 +64,12 @@ st.markdown("""
         border-left: 4px solid #28a745;
         margin: 1rem 0;
     }
+    .stats-box {
+        background-color: #e8f4f8;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin: 0.5rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -67,6 +78,8 @@ if 'query_history' not in st.session_state:
     st.session_state.query_history = []
 if 'ingestion_complete' not in st.session_state:
     st.session_state.ingestion_complete = False
+if 'last_ingestion_stats' not in st.session_state:
+    st.session_state.last_ingestion_stats = None
 
 
 # =============================================================================
@@ -100,6 +113,18 @@ def initialize_pinecone():
 def load_embedding_model():
     """Load sentence transformer model"""
     return SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+
+@st.cache_resource
+def get_enhanced_ingestor():
+    """Get cached enhanced ingestor instance"""
+    config = IngestorConfig(
+        chunk_size=1500,
+        overlap=200,
+        encoding_name="cl100k_base",
+        debug=False
+    )
+    return EnhancedBookIngestorPaddle(config=config)
 
 
 def query_pinecone(query_text, top_k=5, book_filter=None, chapter_filter=None):
@@ -163,19 +188,45 @@ def get_available_books():
         return []
 
 
-def ingest_book(pdf_path, book_title, author):
-    """Ingest a book into Pinecone using BookIngestionService"""
+def ingest_book_enhanced(pdf_path, book_title, author):
+    """Ingest a book into Pinecone using EnhancedBookIngestorPaddle"""
     try:
-        with st.spinner(f"🔄 Ingesting '{book_title}'... This may take several minutes."):
-            service = BookIngestionService()
-            metadata = service.ingest_book(pdf_path)
-            
-            return True, {
-                "title": metadata.title,
-                "author": metadata.author,
-                "source": metadata.source_file
-            }
+        # Get the enhanced ingestor
+        ingestor = get_enhanced_ingestor()
+        
+        # Create progress container
+        progress_text = st.empty()
+        progress_bar = st.progress(0)
+        
+        # Step 1: Detect heading candidates
+        progress_text.text("🔍 Step 1/4: Detecting heading candidates...")
+        progress_bar.progress(0.25)
+        
+        # Step 2: Verify with LLM
+        progress_text.text("🤖 Step 2/4: Verifying headings with LLM...")
+        progress_bar.progress(0.50)
+        
+        # Step 3: Build hierarchy
+        progress_text.text("🏗️ Step 3/4: Building document hierarchy...")
+        progress_bar.progress(0.75)
+        
+        # Ingest the book
+        result = ingestor.ingest_book(
+            pdf_path=pdf_path,
+            book_title=book_title,
+            author=author
+        )
+        
+        # Step 4: Complete
+        progress_text.text("✅ Step 4/4: Ingestion complete!")
+        progress_bar.progress(1.0)
+        
+        return True, result
+        
     except Exception as e:
+        st.error(f"❌ Enhanced ingestion error: {str(e)}")
+        import traceback
+        st.error(f"Traceback: {traceback.format_exc()}")
         return False, str(e)
 
 
@@ -278,8 +329,14 @@ def generate_answer(query_text, matches):
 with st.sidebar:
     st.title("📚 Book Management")
     
-    with st.expander("➕ Ingest New Book", expanded=False):
-        st.markdown("Upload a PDF book to add it to the knowledge base.")
+    with st.expander("➕ Ingest New Book (Enhanced)", expanded=False):
+        st.markdown("**Enhanced Pipeline Features:**")
+        st.markdown("- 🎯 PaddleOCR for better text extraction")
+        st.markdown("- 🤖 LLM-based heading verification")
+        st.markdown("- 📖 Advanced TOC parsing")
+        st.markdown("- 🏗️ Hierarchical structure building")
+        
+        st.divider()
         
         uploaded_file = st.file_uploader(
             "Choose PDF file",
@@ -297,27 +354,55 @@ with st.sidebar:
             placeholder="e.g., Aurélien Géron"
         )
         
-        if st.button("🚀 Ingest Book", type="primary", disabled=not uploaded_file):
+        if st.button("🚀 Ingest Book (Enhanced)", type="primary", disabled=not uploaded_file):
             if uploaded_file and book_title:
                 # Save uploaded file temporarily
                 temp_path = f"temp_{uploaded_file.name}"
                 with open(temp_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
                 
-                # Ingest using BookIngestionService
-                success, result = ingest_book(temp_path, book_title, author or "Unknown")
+                # Ingest using EnhancedBookIngestorPaddle
+                success, result = ingest_book_enhanced(temp_path, book_title, author or "Unknown")
                 
                 # Cleanup
-                os.remove(temp_path)
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
                 
                 if success:
                     st.success(f"✅ Successfully ingested '{book_title}'!")
-                    st.info(f"📖 Book: {result['title']}")
+                    
+                    # Display ingestion stats
+                    st.markdown('<div class="stats-box">', unsafe_allow_html=True)
+                    st.markdown("**📊 Ingestion Statistics:**")
+                    st.markdown(f"- **Title:** {result.get('title', 'N/A')}")
+                    st.markdown(f"- **Author:** {result.get('author', 'N/A')}")
+                    st.markdown(f"- **Total Pages:** {result.get('total_pages', 'N/A')}")
+                    st.markdown(f"- **Chapters Detected:** {result.get('total_chapters', 'N/A')}")
+                    st.markdown(f"- **Total Chunks:** {result.get('total_chunks', 'N/A')}")
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    
                     st.session_state.ingestion_complete = True
+                    st.session_state.last_ingestion_stats = result
                 else:
                     st.error(f"❌ Ingestion failed: {result}")
             else:
                 st.warning("Please provide both PDF and book title")
+    
+    st.divider()
+    
+    # Show last ingestion stats if available
+    if st.session_state.last_ingestion_stats:
+        with st.expander("📊 Last Ingestion Stats", expanded=False):
+            stats = st.session_state.last_ingestion_stats
+            st.json({
+                "title": stats.get("title"),
+                "author": stats.get("author"),
+                "total_pages": stats.get("total_pages"),
+                "total_chapters": stats.get("total_chapters"),
+                "total_chunks": stats.get("total_chunks")
+            })
     
     st.divider()
     
@@ -339,6 +424,12 @@ with st.sidebar:
         st.text(f"Index: {os.getenv('PINECONE_INDEX_NAME', 'coding-books')}")
         st.text(f"Namespace: {os.getenv('PINECONE_NAMESPACE', 'books_rag')}")
         
+        st.markdown("**Enhanced Ingestion Settings**")
+        st.text("Chunk Size: 1500 tokens")
+        st.text("Overlap: 200 tokens")
+        st.text("OCR: PaddleOCR (GPU-enabled)")
+        st.text("Verifier: LLM-based")
+        
         # Check connection
         pc, index = initialize_pinecone()
         if index:
@@ -358,7 +449,7 @@ with st.sidebar:
 # =============================================================================
 
 st.title("🤖 RAG-Based Book Bot")
-st.markdown("Ask questions about your ingested books and get AI-powered answers with citations!")
+st.markdown("**Enhanced Pipeline** • Ask questions about your ingested books and get AI-powered answers with citations!")
 
 # Check if any books are available
 books = get_available_books()
@@ -507,4 +598,4 @@ if st.session_state.query_history:
 
 # Footer
 st.divider()
-st.caption("Built with Streamlit • Powered by Pinecone & OpenAI • Using book_ingestion.py")
+st.caption("Built with Streamlit • Powered by Pinecone & OpenAI • Using Enhanced Ingestion Pipeline with PaddleOCR")
