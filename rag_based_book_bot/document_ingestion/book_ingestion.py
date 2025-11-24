@@ -8,7 +8,7 @@ import pdfplumber
 from sentence_transformers import SentenceTransformer
 import tiktoken
 from dotenv import load_dotenv
-from pinecone import Pinecone
+from pinecone import Pinecone, ServerlessSpec
 
 load_dotenv()
 
@@ -115,12 +115,17 @@ class BookIngestionService:
         self.pc = Pinecone(api_key=PINECONE_API_KEY)
         existing = []
         try:
-            existing = self.pc.list_indexes()
+            existing = [idx.name for idx in self.pc.list_indexes()]
         except Exception:
             existing = []
         if INDEX_NAME not in existing:
             dim = len(self.model.encode(["hello"])[0])
-            self.pc.create_index(name=INDEX_NAME, dimension=dim, metric="cosine")
+            self.pc.create_index(
+                name=INDEX_NAME, 
+                dimension=dim, 
+                metric="cosine",
+                spec=ServerlessSpec(cloud="aws", region="us-east-1")
+            )
         self.index = self.pc.Index(INDEX_NAME)
 
     def _line_from_chars(self, chars):
@@ -437,4 +442,3 @@ class BookIngestionService:
 if __name__ == "__main__":
     svc = BookIngestionService()
     svc.ingest_book("C:/Users/Yuvraj/Downloads/hands-onmachinelearningwithscikit-learnkerasandtensorflow.pdf")
-

@@ -1,6 +1,6 @@
 """
 Streamlit App for RAG-Based Book Bot
-Test your ingestion and query system interactively
+Using book_ingestion.py for PDF processing
 """
 import streamlit as st
 import os
@@ -15,33 +15,12 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Now the debug messages
-st.write("✅ Step 1: Basic imports successful")
-
 load_dotenv()
-st.write("✅ Step 2: .env loaded")
 
-# Check env variables
-if os.getenv("PINECONE_API_KEY"):
-    st.write("✅ Step 3: Pinecone API key found")
-else:
-    st.error("❌ Step 3: Pinecone API key NOT found")
-    st.stop()
-
-st.write("✅ Step 4: Starting Pinecone import...")
+# ✅ CORRECT IMPORTS
 from pinecone import Pinecone
-st.write("✅ Step 5: Pinecone imported")
-
-st.write("✅ Step 6: Starting sentence-transformers import...")
 from sentence_transformers import SentenceTransformer
-st.write("✅ Step 7: sentence-transformers imported")
-
-st.write("✅ Step 8: Starting enhanced_ingestion import...")
-from rag_based_book_bot.document_ingestion.enhanced_ingestion import EnhancedBookIngestor
-st.write("✅ Step 9: ALL IMPORTS SUCCESSFUL!")
-
-# Rest of your app code...
-
+from rag_based_book_bot.document_ingestion.book_ingestion import BookIngestionService
 
 # Custom CSS
 st.markdown("""
@@ -55,14 +34,6 @@ st.markdown("""
         border-radius: 0.5rem;
         margin: 0.5rem 0;
         border-left: 4px solid #1f77b4;
-    }
-    .code-snippet {
-        background-color: #1e1e1e;
-        color: #d4d4d4;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin: 0.5rem 0;
-        font-family: 'Courier New', monospace;
     }
     .metadata-badge {
         display: inline-block;
@@ -99,26 +70,11 @@ def initialize_pinecone():
         pc = Pinecone(api_key=api_key)
         index_name = os.getenv("PINECONE_INDEX_NAME", "coding-books")
         
-        # Check if index exists
         try:
             index = pc.Index(index_name)
             return pc, index
         except Exception as e:
             st.error(f"❌ Pinecone index '{index_name}' not found")
-            st.info("""
-            **To create the index, run:**
-            ```
-            from pinecone import Pinecone, ServerlessSpec
-            
-            pc = Pinecone(api_key="your-api-key")
-            pc.create_index(
-                name="coding-books",
-                dimension=384,
-                metric="cosine",
-                spec=ServerlessSpec(cloud="aws", region="us-east-1")
-            )
-            ```
-            """)
             return None, None
     except Exception as e:
         st.error(f"❌ Failed to connect to Pinecone: {str(e)}")
@@ -148,7 +104,8 @@ def query_pinecone(query_text, top_k=5, book_filter=None, chapter_filter=None):
     if book_filter and book_filter != "All Books":
         filter_dict["book_title"] = book_filter
     if chapter_filter:
-        filter_dict["chapter_number"] = chapter_filter
+        # Convert to list format to match storage
+        filter_dict["chapter_numbers"] = {"$in": [chapter_filter]}
     
     # Query
     try:
@@ -192,18 +149,21 @@ def get_available_books():
         return []
 
 
-
 def ingest_book(pdf_path, book_title, author):
-    """Ingest a book into Pinecone"""
+    """Ingest a book into Pinecone using BookIngestionService"""
     try:
         with st.spinner(f"🔄 Ingesting '{book_title}'... This may take several minutes."):
-            ingestor = EnhancedBookIngestor(debug=False)
-            metadata = ingestor.ingest_book(
-                pdf_path=pdf_path,
-                book_title=book_title,
-                author=author
-            )
-            return True, metadata
+            # Initialize the service
+            service = BookIngestionService()
+            
+            # Ingest the book (book_ingestion.py handles everything)
+            metadata = service.ingest_book(pdf_path)
+            
+            return True, {
+                "title": metadata.title,
+                "author": metadata.author,
+                "source": metadata.source_file
+            }
     except Exception as e:
         return False, str(e)
 
@@ -241,7 +201,7 @@ with st.sidebar:
                 with open(temp_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
                 
-                # Ingest
+                # Ingest using BookIngestionService
                 success, result = ingest_book(temp_path, book_title, author or "Unknown")
                 
                 # Cleanup
@@ -249,7 +209,7 @@ with st.sidebar:
                 
                 if success:
                     st.success(f"✅ Successfully ingested '{book_title}'!")
-                    st.info(f"📖 Chapters: {result.total_chapters}\n📄 Pages: {result.total_pages}")
+                    st.info(f"📖 Book: {result['title']}")
                     st.session_state.ingestion_complete = True
                 else:
                     st.error(f"❌ Ingestion failed: {result}")
@@ -365,18 +325,24 @@ if st.button("🔍 Search", type="primary", disabled=not query):
                 metadata = match.get("metadata", {})
                 score = match.get("score", 0.0)
                 
-                # Extract metadata
+                # Extract metadata (book_ingestion.py format)
                 book_title = metadata.get("book_title", "Unknown")
-                chapter_title = metadata.get("chapter_title", "Unknown")
-                chapter_number = metadata.get("chapter_number", "N/A")
+                
+                # Handle lists for chapters/sections
+                chapter_titles = metadata.get("chapter_titles", [])
+                chapter_numbers = metadata.get("chapter_numbers", [])
+                section_titles = metadata.get("section_titles", [])
+                
+                chapter_title = chapter_titles[0] if chapter_titles else "Unknown"
+                chapter_number = chapter_numbers[0] if chapter_numbers else "N/A"
+                
                 page_start = metadata.get("page_start", "?")
                 page_end = metadata.get("page_end", "?")
                 contains_code = metadata.get("contains_code", False)
-                content = metadata.get("text", "No content available")
                 
-                # Build hierarchy
-                sections = metadata.get("section_titles", [])
-                section_str = " → ".join(sections) if sections else ""
+                # Get content - book_ingestion.py doesn't store text in metadata
+                # So we'll show a preview message
+                content_preview = f"[Chunk {i+1} from {book_title}]"
                 
                 # Display source
                 with st.expander(f"**Source {i+1}** | {book_title} - Ch.{chapter_number} | Relevance: {score:.2%}", expanded=(i == 0)):
@@ -390,50 +356,45 @@ if st.button("🔍 Search", type="primary", disabled=not query):
                         unsafe_allow_html=True
                     )
                     
-                    if section_str:
-                        st.caption(f"Section: {section_str}")
+                    if section_titles:
+                        section_str = " → ".join(section_titles)
+                        st.caption(f"Sections: {section_str}")
                     
                     st.divider()
                     
-                    # Content
-                    if contains_code:
-                        st.code(content, language="python")
-                    else:
-                        st.markdown(content)
+                    st.info("💡 Note: Text content is stored as embeddings. To see full text, enable text storage in book_ingestion.py")
                     
-                    # Copy button
-                    st.download_button(
-                        label="📋 Copy Content",
-                        data=content,
-                        file_name=f"source_{i+1}.txt",
-                        mime="text/plain",
-                        key=f"download_{i}"
-                    )
+                    # Show metadata details
+                    st.json({
+                        "book": book_title,
+                        "chapter": f"{chapter_number}: {chapter_title}",
+                        "pages": f"{page_start}-{page_end}",
+                        "type": "code" if contains_code else "text",
+                        "relevance": f"{score:.2%}"
+                    })
             
-            # Generate answer section (placeholder for LLM integration)
+            # Generate answer section
             st.divider()
             st.subheader("💬 Generated Answer")
             
             st.info("""
-            **🔧 LLM Integration Required**
+            **🔧 To Enable Answer Generation:**
             
-            To generate answers, integrate your LLM (Azure OpenAI, OpenAI, etc.) in the code.
+            1. The retrieved chunks above show relevant sections
+            2. To get AI-generated answers, integrate nodes.py pipeline:
+               - Use `llm_reasoning_node()` from agents/nodes.py
+               - Or add LLM call directly in this section
             
-            The retrieved sources above can be passed to your LLM as context to generate comprehensive answers.
+            3. Example integration:
+```python
+            from rag_based_book_bot.agents.nodes import llm_reasoning_node
+            from rag_based_book_bot.agents.states import AgentState
+            
+            state = AgentState(user_query=query, reranked_chunks=matches)
+            state = llm_reasoning_node(state)
+            answer = state.response.answer
+```
             """)
-            
-            # Show assembled context
-            with st.expander("🔍 View Assembled Context (for LLM)"):
-                context = ""
-                for i, match in enumerate(matches):
-                    metadata = match.get("metadata", {})
-                    content = metadata.get("text", "")
-                    book = metadata.get("book_title", "Unknown")
-                    chapter = metadata.get("chapter_title", "Unknown")
-                    
-                    context += f"[SOURCE {i+1}] {book} - {chapter}\n{content}\n\n---\n\n"
-                
-                st.text_area("Context for LLM", context, height=300)
 
 # Query History
 if st.session_state.query_history:
@@ -445,4 +406,4 @@ if st.session_state.query_history:
 
 # Footer
 st.divider()
-st.caption("Built with Streamlit • Powered by Pinecone & Sentence Transformers")
+st.caption("Built with Streamlit • Powered by Pinecone & Sentence Transformers • Using book_ingestion.py")
