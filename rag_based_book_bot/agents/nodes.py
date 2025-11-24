@@ -11,11 +11,8 @@ from dotenv import load_dotenv
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'document_ingestion'))
-from document_ingestion.enhanced_ingestion import EnhancedBookIngestor
-from document_ingestion.ingestion.chapter_chunker import ChunkMetadata
-
-from states import (
+# Fixed imports - removed the broken ones since we don't need them for this pipeline
+from rag_based_book_bot.agents.states import (
     AgentState, DocumentChunk, RetrievedChunk, 
     ParsedQuery, QueryIntent, LLMResponse
 )
@@ -47,8 +44,22 @@ def get_embedding_model():
     return _model
 
 
+def pdf_loader_node(state: AgentState) -> AgentState:
+    """PDF loader node - not used in direct query pipeline"""
+    state.current_node = "pdf_loader"
+    state.errors.append("PDF loader not implemented - use book_ingestion.py instead")
+    return state
+
+
+def chunking_embedding_node(state: AgentState) -> AgentState:
+    """Chunking and embedding node - not used in direct query pipeline"""
+    state.current_node = "chunking_embedding"
+    state.errors.append("Chunking not implemented - use book_ingestion.py instead")
+    return state
+
+
 def user_query_node(state: AgentState) -> AgentState:
-    """Parse user query - no changes needed here"""
+    """Parse user query"""
     state.current_node = "user_query"
     
     if not state.user_query:
@@ -110,13 +121,10 @@ def _detect_complexity(query: str) -> str:
         return "advanced"
     return "intermediate"
 
-# =============================================================================
-# NODE 4: VECTOR SEARCH - Direct Pinecone query
-# =============================================================================
 
 def vector_search_node(state: AgentState, top_k: int = 10) -> AgentState:
     """
-    Direct Pinecone vector search - uses the data ingested by enhanced_ingestion.py
+    Direct Pinecone vector search - uses the data ingested by book_ingestion.py
     """
     state.current_node = "vector_search"
     
@@ -134,10 +142,10 @@ def vector_search_node(state: AgentState, top_k: int = 10) -> AgentState:
         
         # Build filter if book/chapter specified
         filter_dict = {}
-        if state.book_filter:
+        if hasattr(state, 'book_filter') and state.book_filter:
             filter_dict["book_title"] = state.book_filter
-        if state.chapter_filter:
-            filter_dict["chapter_number"] = state.chapter_filter
+        if hasattr(state, 'chapter_filter') and state.chapter_filter:
+            filter_dict["chapter_numbers"] = {"$in": [state.chapter_filter]}
         
         # Query Pinecone directly
         results = index.query(
@@ -154,22 +162,21 @@ def vector_search_node(state: AgentState, top_k: int = 10) -> AgentState:
         for match in results.get("matches", []):
             metadata = match.get("metadata", {})
             
-            # Create DocumentChunk with metadata from enhanced_ingestion
+            # Handle metadata lists safely
+            chapter_titles = metadata.get("chapter_titles", [])
+            chapter_numbers = metadata.get("chapter_numbers", [])
+            section_titles = metadata.get("section_titles", [])
+            
+            chapter_title = chapter_titles[0] if chapter_titles else ""
+            chapter_number = chapter_numbers[0] if chapter_numbers else ""
+            
+            # Create DocumentChunk with metadata from book_ingestion
             chunk = DocumentChunk(
                 chunk_id=match["id"],
-                content=metadata.get("text", ""),  # Text is stored in metadata
-                book_title=metadata.get("book_title", ""),
-                author=metadata.get("author", ""),
-                chapter_title=metadata.get("chapter_title"),
-                chapter_number=metadata.get("chapter_number"),
-                section_titles=metadata.get("section_titles", []),
-                section_numbers=metadata.get("section_numbers", []),
-                subsection_titles=metadata.get("subsection_titles", []),
-                subsection_numbers=metadata.get("subsection_numbers", []),
-                page_start=metadata.get("page_start"),
-                page_end=metadata.get("page_end"),
-                chunk_index=metadata.get("chunk_index", 0),
-                contains_code=metadata.get("contains_code", False),
+                content=metadata.get("text", ""),
+                chapter=f"{chapter_number}: {chapter_title}" if chapter_number else chapter_title,
+                section=", ".join(section_titles) if section_titles else "",
+                page_number=metadata.get("page_start"),
                 chunk_type="code" if metadata.get("contains_code") else "text"
             )
             
@@ -185,10 +192,6 @@ def vector_search_node(state: AgentState, top_k: int = 10) -> AgentState:
     
     return state
 
-
-# =============================================================================
-# NODE 5: RERANKING (Keep enhanced logic)
-# =============================================================================
 
 def reranking_node(state: AgentState, top_k: int = 5) -> AgentState:
     """Rerank based on query intent and content type"""
@@ -215,11 +218,11 @@ def reranking_node(state: AgentState, top_k: int = 5) -> AgentState:
             score += keyword_matches * 0.05
             
             # Boost code chunks for code requests
-            if query.intent == QueryIntent.CODE_REQUEST and rc.chunk.contains_code:
+            if query.intent == QueryIntent.CODE_REQUEST and rc.chunk.chunk_type == "code":
                 score += 0.25
             
             # Boost text chunks for conceptual queries
-            if query.intent == QueryIntent.CONCEPTUAL and not rc.chunk.contains_code:
+            if query.intent == QueryIntent.CONCEPTUAL and rc.chunk.chunk_type == "text":
                 score += 0.1
             
             rc.rerank_score = min(score, 1.0)
@@ -239,10 +242,6 @@ def reranking_node(state: AgentState, top_k: int = 5) -> AgentState:
     return state
 
 
-# =============================================================================
-# NODE 6: CONTEXT ASSEMBLY
-# =============================================================================
-
 def context_assembly_node(state: AgentState) -> AgentState:
     """Assemble context with rich metadata from ingestion"""
     state.current_node = "context_assembly"
@@ -257,26 +256,14 @@ def context_assembly_node(state: AgentState) -> AgentState:
         for i, rc in enumerate(state.reranked_chunks):
             chunk = rc.chunk
             
-            # Build hierarchical path
-            hierarchy = []
-            if chunk.book_title:
-                hierarchy.append(f"📚 {chunk.book_title}")
-            if chunk.chapter_number and chunk.chapter_title:
-                hierarchy.append(f"Ch.{chunk.chapter_number}: {chunk.chapter_title}")
-            if chunk.section_titles:
-                hierarchy.append(f"§ {', '.join(chunk.section_titles)}")
-            
-            hierarchy_str = " → ".join(hierarchy)
-            
-            # Pages and content type
-            pages = f"pp.{chunk.page_start}-{chunk.page_end}" if chunk.page_start else ""
-            content_type = "💻 CODE" if chunk.contains_code else "📝 TEXT"
-            
             # Format source
             context_parts.append(
                 f"[SOURCE {i+1}]\n"
-                f"{hierarchy_str}\n"
-                f"{pages} | Relevance: {rc.relevance_percentage}% | {content_type}\n\n"
+                f"Chapter: {chunk.chapter}\n"
+                f"Section: {chunk.section}\n"
+                f"Page: {chunk.page_number}\n"
+                f"Type: {'CODE' if chunk.chunk_type == 'code' else 'TEXT'}\n"
+                f"Relevance: {rc.relevance_percentage}%\n\n"
                 f"{chunk.content}\n"
             )
         
@@ -312,29 +299,29 @@ Always reference sources by number [SOURCE 1], [SOURCE 2], etc."""
     return base + intent_prompts.get(query.intent, "") + complexity.get(query.complexity_hint, "")
 
 
-# =============================================================================
-# NODE 7: LLM REASONING
-# =============================================================================
-
 def llm_reasoning_node(state: AgentState) -> AgentState:
     """Call OpenAI LLM for answer generation"""
     state.current_node = "llm_reasoning"
     
-    if not state.assembled_context or not state.parsed_query:
+    if not state.reranked_chunks or not state.parsed_query:
         state.errors.append("Missing context or query for LLM")
         return state
+    
+    # Build context if not already assembled
+    if not state.assembled_context:
+        state = context_assembly_node(state)
     
     try:
         from openai import OpenAI
         
-        # Initialize OpenAI client (NOT Azure in this case)
+        # Initialize OpenAI client
         client = OpenAI(
-            api_key=os.getenv("openai_api_key")  # Fixed: correct env variable name
+            api_key=os.getenv("OPENAI_API_KEY")
         )
         
         # Call OpenAI API
         response = client.chat.completions.create(
-            model="gpt-4o-mini",  # Fixed: model goes here, not in client init
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": state.system_prompt},
                 {"role": "user", "content": f"{state.assembled_context}\n\nQuestion: {state.parsed_query.raw_query}"}
@@ -347,11 +334,11 @@ def llm_reasoning_node(state: AgentState) -> AgentState:
         
         # Extract code snippets from chunks (if any)
         chunks = state.reranked_chunks
-        code_snippets = [c.chunk.content for c in chunks if c.chunk.contains_code]
+        code_snippets = [c.chunk.content for c in chunks if c.chunk.chunk_type == "code"]
         
         # Build response object
         state.response = LLMResponse(
-            answer=answer,  # Use the actual LLM response
+            answer=answer,
             code_snippets=code_snippets[:2],
             sources=[c.chunk.chunk_id for c in chunks[:3]],
             confidence=0.85
@@ -363,7 +350,7 @@ def llm_reasoning_node(state: AgentState) -> AgentState:
         if state.reranked_chunks:
             chunks = state.reranked_chunks
             fallback_answer = f"Error calling LLM. Here's the retrieved content:\n\n"
-            fallback_answer += f"From {chunks[0].chunk.book_title} - {chunks[0].chunk.chapter_title}:\n"
+            fallback_answer += f"From {chunks[0].chunk.chapter}:\n"
             fallback_answer += chunks[0].chunk.content[:500] + "..."
             
             state.response = LLMResponse(

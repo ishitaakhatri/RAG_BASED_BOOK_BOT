@@ -1,6 +1,7 @@
 """
 Streamlit App for RAG-Based Book Bot
 Using book_ingestion.py for PDF processing
+WITH INTEGRATED ANSWER GENERATION
 """
 import streamlit as st
 import os
@@ -21,6 +22,13 @@ load_dotenv()
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
 from rag_based_book_bot.document_ingestion.book_ingestion import BookIngestionService
+
+# Import agent components for answer generation
+from rag_based_book_bot.agents.nodes import llm_reasoning_node
+from rag_based_book_bot.agents.states import (
+    AgentState, DocumentChunk, RetrievedChunk, 
+    ParsedQuery, QueryIntent
+)
 
 # Custom CSS
 st.markdown("""
@@ -43,6 +51,13 @@ st.markdown("""
         border-radius: 0.3rem;
         margin: 0.2rem;
         font-size: 0.85rem;
+    }
+    .answer-box {
+        background-color: #f8f9fa;
+        padding: 1.5rem;
+        border-radius: 0.5rem;
+        border-left: 4px solid #28a745;
+        margin: 1rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -104,7 +119,6 @@ def query_pinecone(query_text, top_k=5, book_filter=None, chapter_filter=None):
     if book_filter and book_filter != "All Books":
         filter_dict["book_title"] = book_filter
     if chapter_filter:
-        # Convert to list format to match storage
         filter_dict["chapter_numbers"] = {"$in": [chapter_filter]}
     
     # Query
@@ -153,10 +167,7 @@ def ingest_book(pdf_path, book_title, author):
     """Ingest a book into Pinecone using BookIngestionService"""
     try:
         with st.spinner(f"🔄 Ingesting '{book_title}'... This may take several minutes."):
-            # Initialize the service
             service = BookIngestionService()
-            
-            # Ingest the book (book_ingestion.py handles everything)
             metadata = service.ingest_book(pdf_path)
             
             return True, {
@@ -166,6 +177,98 @@ def ingest_book(pdf_path, book_title, author):
             }
     except Exception as e:
         return False, str(e)
+
+
+def parse_query_simple(query_text):
+    """Simple query parsing"""
+    query_lower = query_text.lower()
+    
+    # Detect intent
+    if any(w in query_lower for w in ['implement', 'code', 'write', 'build', 'create']):
+        intent = QueryIntent.CODE_REQUEST
+    elif any(w in query_lower for w in ['difference', 'compare', 'vs', 'versus']):
+        intent = QueryIntent.COMPARISON
+    elif any(w in query_lower for w in ['error', 'bug', 'fix', 'wrong', 'not working']):
+        intent = QueryIntent.DEBUGGING
+    elif any(w in query_lower for w in ['tutorial', 'walk through', 'step by step', 'guide']):
+        intent = QueryIntent.TUTORIAL
+    else:
+        intent = QueryIntent.CONCEPTUAL
+    
+    return ParsedQuery(
+        raw_query=query_text,
+        intent=intent,
+        topics=[],
+        keywords=query_text.split(),
+        complexity_hint="intermediate"
+    )
+
+
+def convert_pinecone_to_chunks(matches):
+    """Convert Pinecone matches to RetrievedChunk objects"""
+    chunks = []
+    
+    for match in matches:
+        metadata = match.get("metadata", {})
+        
+        # Handle metadata lists safely
+        chapter_numbers = metadata.get("chapter_numbers", [])
+        chapter_titles = metadata.get("chapter_titles", [])
+        section_titles = metadata.get("section_titles", [])
+        
+        chapter_num = chapter_numbers[0] if chapter_numbers else ""
+        chapter_title = chapter_titles[0] if chapter_titles else ""
+        
+        # Create DocumentChunk
+        chunk = DocumentChunk(
+            chunk_id=match["id"],
+            content=metadata.get("text", ""),
+            chapter=f"{chapter_num}: {chapter_title}" if chapter_num else chapter_title,
+            section=", ".join(section_titles) if section_titles else "",
+            page_number=metadata.get("page_start"),
+            chunk_type="code" if metadata.get("contains_code") else "text"
+        )
+        
+        # Create RetrievedChunk
+        retrieved_chunk = RetrievedChunk(
+            chunk=chunk,
+            similarity_score=match.get("score", 0.0),
+            rerank_score=match.get("score", 0.0),
+            relevance_percentage=round(match.get("score", 0.0) * 100, 1)
+        )
+        
+        chunks.append(retrieved_chunk)
+    
+    return chunks
+
+
+def generate_answer(query_text, matches):
+    """Generate AI answer using LLM reasoning node"""
+    try:
+        # Parse query
+        parsed_query = parse_query_simple(query_text)
+        
+        # Convert Pinecone matches to RetrievedChunk objects
+        retrieved_chunks = convert_pinecone_to_chunks(matches)
+        
+        # Create agent state
+        state = AgentState(
+            user_query=query_text,
+            parsed_query=parsed_query,
+            reranked_chunks=retrieved_chunks
+        )
+        
+        # Run LLM reasoning node
+        state = llm_reasoning_node(state)
+        
+        # Check for errors
+        if state.errors:
+            return None, f"Error generating answer: {', '.join(state.errors)}"
+        
+        return state.response, None
+        
+    except Exception as e:
+        return None, f"Answer generation failed: {str(e)}"
 
 
 # =============================================================================
@@ -317,7 +420,33 @@ if st.button("🔍 Search", type="primary", disabled=not query):
         else:
             st.success(f"✅ Found {len(matches)} relevant chunks")
             
-            # Display results
+            # Generate AI answer
+            st.divider()
+            st.subheader("💬 AI-Generated Answer")
+            
+            with st.spinner("🤖 Generating answer..."):
+                response, error = generate_answer(query, matches)
+            
+            if error:
+                st.error(f"❌ {error}")
+            elif response:
+                # Display answer in a nice box
+                st.markdown(
+                    f'<div class="answer-box">'
+                    f'<h4>Answer:</h4>'
+                    f'<p>{response.answer}</p>'
+                    f'<br><small>Confidence: {response.confidence:.1%}</small>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+                
+                # Show code snippets if available
+                if response.code_snippets:
+                    st.markdown("#### 💻 Code Examples")
+                    for i, code in enumerate(response.code_snippets, 1):
+                        st.code(code, language="python")
+            
+            # Display sources
             st.divider()
             st.subheader("📋 Retrieved Sources")
             
@@ -325,10 +454,8 @@ if st.button("🔍 Search", type="primary", disabled=not query):
                 metadata = match.get("metadata", {})
                 score = match.get("score", 0.0)
                 
-                # Extract metadata (book_ingestion.py format)
+                # Extract metadata
                 book_title = metadata.get("book_title", "Unknown")
-                
-                # Handle lists for chapters/sections
                 chapter_titles = metadata.get("chapter_titles", [])
                 chapter_numbers = metadata.get("chapter_numbers", [])
                 section_titles = metadata.get("section_titles", [])
@@ -340,12 +467,11 @@ if st.button("🔍 Search", type="primary", disabled=not query):
                 page_end = metadata.get("page_end", "?")
                 contains_code = metadata.get("contains_code", False)
                 
-                # Get content - book_ingestion.py doesn't store text in metadata
-                # So we'll show a preview message
-                content_preview = f"[Chunk {i+1} from {book_title}]"
-                
                 # Display source
-                with st.expander(f"**Source {i+1}** | {book_title} - Ch.{chapter_number} | Relevance: {score:.2%}", expanded=(i == 0)):
+                with st.expander(
+                    f"**Source {i+1}** | {book_title} - Ch.{chapter_number} | Relevance: {score:.2%}",
+                    expanded=(i == 0)
+                ):
                     # Metadata badges
                     st.markdown(
                         f'<span class="metadata-badge">📚 {book_title}</span>'
@@ -362,8 +488,6 @@ if st.button("🔍 Search", type="primary", disabled=not query):
                     
                     st.divider()
                     
-                    st.info("💡 Note: Text content is stored as embeddings. To see full text, enable text storage in book_ingestion.py")
-                    
                     # Show metadata details
                     st.json({
                         "book": book_title,
@@ -372,29 +496,6 @@ if st.button("🔍 Search", type="primary", disabled=not query):
                         "type": "code" if contains_code else "text",
                         "relevance": f"{score:.2%}"
                     })
-            
-            # Generate answer section
-            st.divider()
-            st.subheader("💬 Generated Answer")
-            
-            st.info("""
-            **🔧 To Enable Answer Generation:**
-            
-            1. The retrieved chunks above show relevant sections
-            2. To get AI-generated answers, integrate nodes.py pipeline:
-               - Use `llm_reasoning_node()` from agents/nodes.py
-               - Or add LLM call directly in this section
-            
-            3. Example integration:
-```python
-            from rag_based_book_bot.agents.nodes import llm_reasoning_node
-            from rag_based_book_bot.agents.states import AgentState
-            
-            state = AgentState(user_query=query, reranked_chunks=matches)
-            state = llm_reasoning_node(state)
-            answer = state.response.answer
-```
-            """)
 
 # Query History
 if st.session_state.query_history:
@@ -406,4 +507,4 @@ if st.session_state.query_history:
 
 # Footer
 st.divider()
-st.caption("Built with Streamlit • Powered by Pinecone & Sentence Transformers • Using book_ingestion.py")
+st.caption("Built with Streamlit • Powered by Pinecone & OpenAI • Using book_ingestion.py")
