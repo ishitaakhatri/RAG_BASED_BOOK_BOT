@@ -91,19 +91,23 @@ class IngestorConfig:
     debug: bool = False
 
 # --------------------------
-# PaddleOCR wrapper
+# PaddleOCR wrapper - FIXED
 # --------------------------
 class PaddleLayoutWrapper:
     """Uses PaddleOCR for text extraction with fallback to pdfplumber"""
 
-    def __init__(self, use_gpu: bool = True, lang: str = "en"):
-        self.use_gpu = use_gpu and USE_CUDA
+    def __init__(self, lang: str = "en"):
         self.lang = lang
         self.ocr = None
         if _HAS_PADDLEOCR:
             try:
-                self.ocr = PaddleOCR(use_angle_cls=True, lang=self.lang, use_gpu=self.use_gpu, show_log=False)
-                logger.info(f"PaddleOCR initialized (use_gpu={self.use_gpu}).")
+                # Fixed: Remove use_gpu and show_log parameters
+                # PaddleOCR automatically detects GPU availability
+                self.ocr = PaddleOCR(
+                    use_angle_cls=True,
+                    lang=self.lang
+                )
+                logger.info("PaddleOCR initialized successfully.")
             except Exception as e:
                 logger.warning(f"PaddleOCR init failed: {e}")
                 self.ocr = None
@@ -175,7 +179,7 @@ class LLMVerifier:
 class EnhancedBookIngestorPaddle:
     def __init__(self, config: Optional[IngestorConfig] = None):
         self.config = config or IngestorConfig()
-        self.paddle_wrapper = PaddleLayoutWrapper(use_gpu=USE_CUDA)
+        self.paddle_wrapper = PaddleLayoutWrapper()  # Fixed: removed use_gpu parameter
         self.hierarchy_builder = HierarchyBuilder()
         self.chunker = ChapterChunker(
             chunk_size=self.config.chunk_size,
