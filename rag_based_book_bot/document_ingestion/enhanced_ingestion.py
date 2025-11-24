@@ -411,13 +411,14 @@ class EnhancedBookIngestorPaddle:
         vectors = []
         for i, ((chunk_text, metadata), embedding) in enumerate(zip(chunks, embeddings)):
             # Convert metadata to dict for Pinecone
+            # Handle singular fields from ChunkMetadata - convert to lists for compatibility
             metadata_dict = {
                 "text": chunk_text[:1000],  # Store preview only
                 "book_id": book_id,
                 "book_title": metadata.book_title,
                 "author": metadata.author,
-                "chapter_titles": metadata.chapter_titles if metadata.chapter_titles else [],
-                "chapter_numbers": [str(n) if n else "" for n in (metadata.chapter_numbers if metadata.chapter_numbers else [])],
+                "chapter_titles": [metadata.chapter_title] if metadata.chapter_title else [],
+                "chapter_numbers": [str(metadata.chapter_number) if metadata.chapter_number else ""],
                 "section_titles": metadata.section_titles if metadata.section_titles else [],
                 "section_numbers": [str(n) if n else "" for n in (metadata.section_numbers if metadata.section_numbers else [])],
                 "subsection_titles": metadata.subsection_titles if metadata.subsection_titles else [],
