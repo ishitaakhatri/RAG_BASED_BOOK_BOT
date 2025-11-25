@@ -196,25 +196,34 @@ def build_indexing_graph() -> Graph:
     
     return graph
 
-
 def build_query_graph() -> Graph:
-    """Builds the graph for query processing (nodes 3-7)."""
+    """Builds the enhanced 5-pass query processing graph."""
     from nodes import (
-        user_query_node, vector_search_node, reranking_node,
+        user_query_node, vector_search_node, 
         context_assembly_node, llm_reasoning_node
     )
+    # Import new nodes
+    from cross_encoder_rerank_node import cross_encoder_rerank_node
+    from query_expansion_node import query_expansion_node
+    from compression_node import compression_node
     
-    graph = Graph(name="query_pipeline")
+    graph = Graph(name="5pass_query_pipeline")
     
+    # Add nodes
     graph.add_node("query_parser", user_query_node, "Parse user query")
-    graph.add_node("vector_search", vector_search_node, "Retrieve relevant chunks")
-    graph.add_node("reranking", reranking_node, "Rerank by relevance")
-    graph.add_node("context_assembly", context_assembly_node, "Assemble LLM context")
-    graph.add_node("llm_reasoning", llm_reasoning_node, "Generate response")
+    graph.add_node("vector_search", vector_search_node, "PASS 1: Broad search (50)")
+    graph.add_node("cross_encoder_rerank", cross_encoder_rerank_node, "PASS 2: Rerank (15)")
+    graph.add_node("query_expansion", query_expansion_node, "PASS 3: Query expansion")
+    graph.add_node("compression", compression_node, "PASS 5: Compression")
+    graph.add_node("context_assembly", context_assembly_node, "Build context")
+    graph.add_node("llm_reasoning", llm_reasoning_node, "LLM response")
     
+    # Connect nodes
     graph.add_edge("query_parser", "vector_search")
-    graph.add_edge("vector_search", "reranking")
-    graph.add_edge("reranking", "context_assembly")
+    graph.add_edge("vector_search", "cross_encoder_rerank")
+    graph.add_edge("cross_encoder_rerank", "query_expansion")
+    graph.add_edge("query_expansion", "compression")
+    graph.add_edge("compression", "context_assembly")
     graph.add_edge("context_assembly", "llm_reasoning")
     
     graph.set_entry_point("query_parser")

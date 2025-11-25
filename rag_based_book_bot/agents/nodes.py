@@ -122,7 +122,7 @@ def _detect_complexity(query: str) -> str:
     return "intermediate"
 
 
-def vector_search_node(state: AgentState, top_k: int = 10) -> AgentState:
+def vector_search_node(state: AgentState, top_k: int = 80) -> AgentState:
     """
     Direct Pinecone vector search - uses the data ingested by book_ingestion.py
     """

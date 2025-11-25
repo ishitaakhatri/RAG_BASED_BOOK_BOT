@@ -67,6 +67,15 @@ class LoggingConfig:
     log_to_file: bool = False
     log_file_path: str = "rag_agent.log"
 
+@dataclass
+class FivePassConfig:
+    """Configuration for 5-pass retrieval"""
+    pass1_top_k: int = 80
+    pass2_top_k: int = 15
+    pass3_expansion_k: int = 10
+    pass5_max_tokens: int = 2500
+    pass5_similarity_threshold: float = 0.95
+
 
 @dataclass
 class PipelineConfig:

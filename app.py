@@ -415,11 +415,18 @@ with st.sidebar:
     st.divider()
     
     # Settings
-    with st.expander("⚙️ Settings"):
-        st.markdown("**Semantic Chunking Settings**")
-        st.text("Similarity Threshold: 0.75")
-        st.text("Chunk Size: 200-1500 tokens")
-        st.text("Method: Embedding-based")
+    with st.expander("⚙️ 5-Pass Retrieval Settings"):
+        st.markdown("**Pass 1:** Broad Vector Search")
+        pass1_k = st.slider("Initial candidates", 30, 100, 50)
+        
+        st.markdown("**Pass 2:** Cross-Encoder Reranking")
+        pass2_k = st.slider("After reranking", 10, 30, 15)
+        
+        st.markdown("**Pass 3:** Query Expansion")
+        pass3_enabled = st.checkbox("Enable multi-hop", value=True)
+        
+        st.markdown("**Pass 5:** Compression")
+        max_tokens = st.slider("Max context tokens", 1500, 4000, 2500)
         
         # Check connection
         pc, index = initialize_pinecone()
