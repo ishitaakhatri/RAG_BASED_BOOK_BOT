@@ -117,11 +117,11 @@ def load_embedding_model():
 
 @st.cache_resource
 def get_enhanced_ingestor():
-    """Get cached enhanced ingestor instance"""
+    """Get cached semantic ingestor instance"""
     config = IngestorConfig(
-        chunk_size=1500,
-        overlap=200,
-        encoding_name="cl100k_base",
+        similarity_threshold=0.75,  # ✅ NEW: Controls topic splitting
+        min_chunk_size=200,         # ✅ NEW: Minimum tokens per chunk
+        max_chunk_size=1500,        # ✅ NEW: Maximum tokens per chunk
         debug=False
     )
     return EnhancedBookIngestorPaddle(config=config)
@@ -189,26 +189,22 @@ def get_available_books():
 
 
 def ingest_book_enhanced(pdf_path, book_title, author):
-    """Ingest a book into Pinecone using EnhancedBookIngestorPaddle"""
+    """Ingest a book into Pinecone using Semantic Chunking"""
     try:
-        # Get the enhanced ingestor
+        # Get the ingestor (now returns SemanticBookIngestor)
         ingestor = get_enhanced_ingestor()
         
         # Create progress container
         progress_text = st.empty()
         progress_bar = st.progress(0)
         
-        # Step 1: Detect heading candidates
-        progress_text.text("🔍 Step 1/4: Detecting heading candidates...")
-        progress_bar.progress(0.25)
+        # Step 1: Extract text
+        progress_text.text("📄 Step 1/3: Extracting text from PDF...")
+        progress_bar.progress(0.33)
         
-        # Step 2: Verify with LLM
-        progress_text.text("🤖 Step 2/4: Verifying headings with LLM...")
-        progress_bar.progress(0.50)
-        
-        # Step 3: Build hierarchy
-        progress_text.text("🏗️ Step 3/4: Building document hierarchy...")
-        progress_bar.progress(0.75)
+        # Step 2: Semantic chunking
+        progress_text.text("🧠 Step 2/3: Semantic chunking (grouping related content)...")
+        progress_bar.progress(0.66)
         
         # Ingest the book
         result = ingestor.ingest_book(
@@ -217,14 +213,14 @@ def ingest_book_enhanced(pdf_path, book_title, author):
             author=author
         )
         
-        # Step 4: Complete
-        progress_text.text("✅ Step 4/4: Ingestion complete!")
+        # Step 3: Complete
+        progress_text.text("✅ Step 3/3: Ingestion complete!")
         progress_bar.progress(1.0)
         
         return True, result
         
     except Exception as e:
-        st.error(f"❌ Enhanced ingestion error: {str(e)}")
+        st.error(f"❌ Semantic ingestion error: {str(e)}")
         import traceback
         st.error(f"Traceback: {traceback.format_exc()}")
         return False, str(e)
@@ -329,12 +325,12 @@ def generate_answer(query_text, matches):
 with st.sidebar:
     st.title("📚 Book Management")
     
-    with st.expander("➕ Ingest New Book (Enhanced)", expanded=False):
-        st.markdown("**Enhanced Pipeline Features:**")
-        st.markdown("- 🎯 PaddleOCR for better text extraction")
-        st.markdown("- 🤖 LLM-based heading verification")
-        st.markdown("- 📖 Advanced TOC parsing")
-        st.markdown("- 🏗️ Hierarchical structure building")
+    with st.expander("➕ Ingest New Book (Semantic Chunking)", expanded=False):
+        st.markdown("**Semantic Chunking Features:**")
+        st.markdown("- 🧠 AI-powered topic boundary detection")
+        st.markdown("- 📊 Groups semantically related content")
+        st.markdown("- 💻 Keeps code + explanations together")
+        st.markdown("- ⚡ No complex hierarchy detection needed")
         
         st.divider()
         
@@ -420,15 +416,10 @@ with st.sidebar:
     
     # Settings
     with st.expander("⚙️ Settings"):
-        st.markdown("**Pinecone Configuration**")
-        st.text(f"Index: {os.getenv('PINECONE_INDEX_NAME', 'coding-books')}")
-        st.text(f"Namespace: {os.getenv('PINECONE_NAMESPACE', 'books_rag')}")
-        
-        st.markdown("**Enhanced Ingestion Settings**")
-        st.text("Chunk Size: 1500 tokens")
-        st.text("Overlap: 200 tokens")
-        st.text("OCR: PaddleOCR (GPU-enabled)")
-        st.text("Verifier: LLM-based")
+        st.markdown("**Semantic Chunking Settings**")
+        st.text("Similarity Threshold: 0.75")
+        st.text("Chunk Size: 200-1500 tokens")
+        st.text("Method: Embedding-based")
         
         # Check connection
         pc, index = initialize_pinecone()
@@ -598,4 +589,4 @@ if st.session_state.query_history:
 
 # Footer
 st.divider()
-st.caption("Built with Streamlit • Powered by Pinecone & OpenAI • Using Enhanced Ingestion Pipeline with PaddleOCR")
+st.caption("Built with Streamlit • Powered by Pinecone & OpenAI • Using Semantic Chunking with Sentence Transformers")
