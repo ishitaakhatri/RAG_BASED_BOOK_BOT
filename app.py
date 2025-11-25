@@ -479,6 +479,7 @@ with col2:
         help="Optionally filter to a specific chapter number"
     )
 
+
 # Query button
 if st.button("🔍 Search", type="primary", disabled=not query):
     if query:
@@ -501,6 +502,35 @@ if st.button("🔍 Search", type="primary", disabled=not query):
             st.warning("🤷 No relevant results found. Try rephrasing your question or removing filters.")
         else:
             st.success(f"✅ Found {len(matches)} relevant chunks")
+            
+            # ==================== DEBUG SECTION ====================
+            with st.expander("🔍 DEBUG: Retrieved Content", expanded=False):
+                st.markdown("**Raw content from top 3 retrieved chunks:**")
+                for i, match in enumerate(matches[:3]):
+                    metadata = match.get('metadata', {})
+                    score = match.get('score', 0.0)
+                    
+                    st.markdown(f"### Chunk {i+1} (Score: {score:.2%})")
+                    
+                    # Show metadata
+                    st.json({
+                        "book": metadata.get('book_title'),
+                        "page_start": metadata.get('page_start'),
+                        "page_end": metadata.get('page_end'),
+                        "contains_code": metadata.get('contains_code'),
+                        "token_count": metadata.get('token_count')
+                    })
+                    
+                    # Show content preview
+                    content = metadata.get('text', '')
+                    st.text_area(
+                        f"Content Preview (first 500 chars):",
+                        content[:500] + "..." if len(content) > 500 else content,
+                        height=200,
+                        key=f"debug_chunk_{i}"
+                    )
+                    st.divider()
+            # ==================== END DEBUG SECTION ====================
             
             # Generate AI answer
             st.divider()

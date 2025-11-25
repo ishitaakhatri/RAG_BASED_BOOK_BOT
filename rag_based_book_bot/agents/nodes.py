@@ -202,6 +202,18 @@ def reranking_node(state: AgentState, top_k: int = 5) -> AgentState:
         return state
     
     try:
+        # ==================== DEBUG: BEFORE RERANKING ====================
+        print("\n" + "="*60)
+        print("🔍 RERANKING DEBUG")
+        print("="*60)
+        print(f"Query: {state.parsed_query.raw_query}")
+        print(f"Intent: {state.parsed_query.intent.value}")
+        print(f"Retrieved chunks: {len(state.retrieved_chunks)}")
+        print("\n📊 BEFORE RERANKING - Similarity Scores:")
+        for i, r in enumerate(state.retrieved_chunks[:5]):
+            print(f"  Chunk {i+1}: {r.similarity_score:.4f} | {r.chunk.chunk_type} | {r.chunk.content[:50]}...")
+        # ==================== END DEBUG ====================
+        
         query = state.parsed_query
         
         for rc in state.retrieved_chunks:
@@ -236,11 +248,26 @@ def reranking_node(state: AgentState, top_k: int = 5) -> AgentState:
         
         state.reranked_chunks = state.retrieved_chunks[:top_k]
         
+        # ==================== DEBUG: AFTER RERANKING ====================
+        print("\n📊 AFTER RERANKING - Rerank Scores:")
+        for i, r in enumerate(state.reranked_chunks):
+            print(f"  Chunk {i+1}: {r.rerank_score:.4f} (was {r.similarity_score:.4f}) | "
+                  f"{r.relevance_percentage:.1f}% | {r.chunk.chunk_type} | "
+                  f"{r.chunk.content[:50]}...")
+        
+        print("\n📈 Score Changes:")
+        for i, r in enumerate(state.reranked_chunks):
+            change = r.rerank_score - r.similarity_score
+            change_pct = (change / r.similarity_score * 100) if r.similarity_score > 0 else 0
+            arrow = "📈" if change > 0 else "📉" if change < 0 else "➡️"
+            print(f"  {arrow} Chunk {i+1}: {change:+.4f} ({change_pct:+.1f}%)")
+        print("="*60 + "\n")
+        # ==================== END DEBUG ====================
+        
     except Exception as e:
         state.errors.append(f"Reranking failed: {str(e)}")
     
     return state
-
 
 def context_assembly_node(state: AgentState) -> AgentState:
     """Assemble context with rich metadata from ingestion"""

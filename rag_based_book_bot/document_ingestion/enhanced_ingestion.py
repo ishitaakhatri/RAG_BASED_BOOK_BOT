@@ -224,7 +224,7 @@ class SemanticBookIngestor:
             pages_text, 
             book_title, 
             author,
-            batch_size=50  # Process 20 pages at a time
+            batch_size=20  # Process 20 pages at a time
         )
         
         logger.info(f"✅ Created {len(chunks)} semantic chunks")
