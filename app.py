@@ -557,57 +557,6 @@ if st.button("🔍 Search", type="primary", disabled=not query):
                     st.markdown("#### 💻 Code Examples")
                     for i, code in enumerate(response.code_snippets, 1):
                         st.code(code, language="python")
-            
-            # Display sources
-            st.divider()
-            st.subheader("📋 Retrieved Sources")
-            
-            for i, match in enumerate(matches):
-                metadata = match.get("metadata", {})
-                score = match.get("score", 0.0)
-                
-                # Extract metadata
-                book_title = metadata.get("book_title", "Unknown")
-                chapter_titles = metadata.get("chapter_titles", [])
-                chapter_numbers = metadata.get("chapter_numbers", [])
-                section_titles = metadata.get("section_titles", [])
-                
-                chapter_title = chapter_titles[0] if chapter_titles else "Unknown"
-                chapter_number = chapter_numbers[0] if chapter_numbers else "N/A"
-                
-                page_start = metadata.get("page_start", "?")
-                page_end = metadata.get("page_end", "?")
-                contains_code = metadata.get("contains_code", False)
-                
-                # Display source
-                with st.expander(
-                    f"**Source {i+1}** | {book_title} - Ch.{chapter_number} | Relevance: {score:.2%}",
-                    expanded=(i == 0)
-                ):
-                    # Metadata badges
-                    st.markdown(
-                        f'<span class="metadata-badge">📚 {book_title}</span>'
-                        f'<span class="metadata-badge">📖 Ch.{chapter_number}: {chapter_title}</span>'
-                        f'<span class="metadata-badge">📄 pp.{page_start}-{page_end}</span>'
-                        f'<span class="metadata-badge">{"💻 Code" if contains_code else "📝 Text"}</span>'
-                        f'<span class="metadata-badge">🎯 {score:.2%}</span>',
-                        unsafe_allow_html=True
-                    )
-                    
-                    if section_titles:
-                        section_str = " → ".join(section_titles)
-                        st.caption(f"Sections: {section_str}")
-                    
-                    st.divider()
-                    
-                    # Show metadata details
-                    st.json({
-                        "book": book_title,
-                        "chapter": f"{chapter_number}: {chapter_title}",
-                        "pages": f"{page_start}-{page_end}",
-                        "type": "code" if contains_code else "text",
-                        "relevance": f"{score:.2%}"
-                    })
 
 # Query History
 if st.session_state.query_history:
