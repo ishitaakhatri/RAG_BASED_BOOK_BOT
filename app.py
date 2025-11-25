@@ -289,33 +289,61 @@ def convert_pinecone_to_chunks(matches):
     return chunks
 
 
-def generate_answer(query_text, matches):
-    """Generate AI answer using LLM reasoning node"""
+def generate_answer(query_text, matches, pass2_k=15, pass3_enabled=True, max_tokens=2500):
+    """
+    Generate AI answer using FULL 5-pass retrieval pipeline
+    
+    Returns:
+        tuple: (response, error, final_state)
+    """
     try:
-        # Parse query
-        parsed_query = parse_query_simple(query_text)
-        
-        # Convert Pinecone matches to RetrievedChunk objects
-        retrieved_chunks = convert_pinecone_to_chunks(matches)
-        
-        # Create agent state
-        state = AgentState(
-            user_query=query_text,
-            parsed_query=parsed_query,
-            reranked_chunks=retrieved_chunks
+        from rag_based_book_bot.agents.nodes import (
+            user_query_node,
+            reranking_node,
+            multi_hop_expansion_node,
+            cluster_expansion_node,
+            context_assembly_node,
+            llm_reasoning_node
         )
         
-        # Run LLM reasoning node
+        # Initialize state
+        state = AgentState(user_query=query_text)
+        
+        # Parse query
+        state = user_query_node(state)
+        
+        # PASS 1 - Already done via UI
+        state.retrieved_chunks = convert_pinecone_to_chunks(matches)
+        print(f"\n[PASS 1] Vector Search")
+        print(f"  → Retrieved {len(state.retrieved_chunks)} candidates")
+        
+        # PASS 2 - Cross-Encoder Reranking
+        state = reranking_node(state, top_k=pass2_k)
+        
+        # PASS 3 - Multi-Hop Expansion (optional)
+        if pass3_enabled:
+            state = multi_hop_expansion_node(state, max_hops=2)
+        
+        # PASS 4 - Cluster Expansion
+        state = cluster_expansion_node(state)
+        
+        # PASS 5 - Context Compression
+        state = context_assembly_node(state, max_tokens=max_tokens)
+        
+        # FINAL - LLM Reasoning
         state = llm_reasoning_node(state)
         
-        # Check for errors
         if state.errors:
-            return None, f"Error generating answer: {', '.join(state.errors)}"
+            return None, f"Error: {', '.join(state.errors)}", state  # ← Return state
         
-        return state.response, None
+        return state.response, None, state  # ← Return state
         
     except Exception as e:
-        return None, f"Answer generation failed: {str(e)}"
+        import traceback
+        return None, f"Pipeline failed: {str(e)}\n{traceback.format_exc()}", None
+
+
+
 
 
 # =============================================================================
@@ -490,10 +518,10 @@ with col2:
 # Query button
 if st.button("🔍 Search", type="primary", disabled=not query):
     if query:
-        with st.spinner("🔎 Searching knowledge base..."):
+        with st.spinner("🔎 Running 5-pass retrieval pipeline..."):
             matches = query_pinecone(
                 query,
-                top_k=top_k,
+                top_k=pass1_k,
                 book_filter=book_filter if book_filter != "All Books" else None,
                 chapter_filter=chapter_filter if chapter_filter else None
             )
@@ -506,45 +534,69 @@ if st.button("🔍 Search", type="primary", disabled=not query):
         })
         
         if not matches:
-            st.warning("🤷 No relevant results found. Try rephrasing your question or removing filters.")
+            st.warning("🤷 No relevant results found...")
         else:
             st.success(f"✅ Found {len(matches)} relevant chunks")
             
-            # ==================== DEBUG SECTION ====================
-            with st.expander("🔍 DEBUG: Retrieved Content", expanded=False):
-                st.markdown("**Raw content from top 3 retrieved chunks:**")
-                for i, match in enumerate(matches[:3]):
-                    metadata = match.get('metadata', {})
-                    score = match.get('score', 0.0)
-                    
-                    st.markdown(f"### Chunk {i+1} (Score: {score:.2%})")
-                    
-                    # Show metadata
-                    st.json({
-                        "book": metadata.get('book_title'),
-                        "page_start": metadata.get('page_start'),
-                        "page_end": metadata.get('page_end'),
-                        "contains_code": metadata.get('contains_code'),
-                        "token_count": metadata.get('token_count')
-                    })
-                    
-                    # Show content preview
-                    content = metadata.get('text', '')
-                    st.text_area(
-                        f"Content Preview (first 500 chars):",
-                        content[:500] + "..." if len(content) > 500 else content,
-                        height=200,
-                        key=f"debug_chunk_{i}"
-                    )
-                    st.divider()
-            # ==================== END DEBUG SECTION ====================
-            
-            # Generate AI answer
+            # Generate answer with user settings
             st.divider()
             st.subheader("💬 AI-Generated Answer")
             
             with st.spinner("🤖 Generating answer..."):
-                response, error = generate_answer(query, matches)
+                response, error, final_state = generate_answer(  # ← Return state too!
+                    query, 
+                    matches,
+                    pass2_k=pass2_k,
+                    pass3_enabled=pass3_enabled,
+                    max_tokens=max_tokens
+                )
+            
+            # ==================== SHOW FINAL CHUNKS ====================
+            with st.expander("🔍 Final Chunks (After 5-Pass Pipeline)", expanded=False):
+                if final_state and final_state.reranked_chunks:
+                    st.markdown(f"**Showing final {len(final_state.reranked_chunks)} chunks after:**")
+                    st.markdown("- ✅ Cross-encoder reranking")
+                    st.markdown("- ✅ Multi-hop expansion")
+                    st.markdown("- ✅ Cluster expansion")
+                    st.markdown("- ✅ Deduplication & compression")
+                    
+                    for i, retrieved_chunk in enumerate(final_state.reranked_chunks[:5], 1):  # Show top 5
+                        chunk = retrieved_chunk.chunk
+                        
+                        st.markdown(f"### 🔹 Chunk {i}")
+                        
+                        # Show relevance scores
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Similarity", f"{retrieved_chunk.similarity_score:.2%}")
+                        with col2:
+                            st.metric("Rerank Score", f"{retrieved_chunk.rerank_score:.2%}")
+                        with col3:
+                            st.metric("Final Relevance", f"{retrieved_chunk.relevance_percentage:.1f}%")
+                        
+                        # Show metadata
+                        st.markdown("**Metadata:**")
+                        st.json({
+                            "chunk_id": chunk.chunk_id,
+                            "chapter": chunk.chapter,
+                            "section": chunk.section if chunk.section else "N/A",
+                            "page": chunk.page_number if chunk.page_number else "N/A",
+                            "type": chunk.chunk_type,
+                        })
+                        
+                        # Show content
+                        st.markdown("**Content:**")
+                        st.text_area(
+                            f"Chunk {i} content",
+                            chunk.content[:800] + ("..." if len(chunk.content) > 800 else ""),
+                            height=200,
+                            key=f"final_chunk_{i}",
+                            label_visibility="collapsed"
+                        )
+                        
+                        st.divider()
+                else:
+                    st.warning("No final chunks available")
             
             if error:
                 st.error(f"❌ {error}")

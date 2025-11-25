@@ -82,12 +82,13 @@ def get_cluster_manager():
         # cluster_manager.load("default_book")
     return _cluster_manager
 
-def get_compressor():
-    """Get context compressor"""
-    global _compressor
-    if _compressor is None:
-        _compressor = ContextCompressor(target_tokens=2000, max_tokens=4000)
-    return _compressor
+def get_compressor(target_tokens=2000, max_tokens=4000):
+    """Get context compressor with configurable token limits"""
+    return ContextCompressor(
+        target_tokens=target_tokens,
+        max_tokens=max_tokens
+    )
+
 
 
 # ============================================================================
@@ -290,6 +291,7 @@ def reranking_node(state: AgentState, top_k: int = 15) -> AgentState:
                 chunk_id=chunk_data['metadata']['chunk_id'],
                 content=chunk_data['text'],
                 chapter=chunk_data['metadata']['chapter'],
+                section="",
                 page_number=chunk_data['metadata']['page'],
                 chunk_type=chunk_data['metadata']['type']
             )
@@ -377,6 +379,7 @@ def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState
                 chunk_id=exp_result['id'],
                 content=exp_result['text'],
                 chapter="Multi-hop Result",
+                section="",
                 chunk_type="text"
             )
             
@@ -436,7 +439,7 @@ def cluster_expansion_node(state: AgentState) -> AgentState:
     return state
 
 
-def context_assembly_node(state: AgentState) -> AgentState:
+def context_assembly_node(state: AgentState,max_tokens) -> AgentState:
     """
     PASS 5: Compression & Assembly
     
@@ -451,7 +454,10 @@ def context_assembly_node(state: AgentState) -> AgentState:
     try:
         print(f"\n[PASS 5] Context Compression & Assembly")
         
-        compressor = get_compressor()
+        compressor = ContextCompressor(
+            target_tokens=int(max_tokens * 0.8),  # Target 80% of max
+            max_tokens=max_tokens
+        )
         
         # Convert chunks to format for compressor
         chunks_for_compression = []
