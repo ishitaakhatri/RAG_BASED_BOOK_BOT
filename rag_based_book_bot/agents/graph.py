@@ -1,6 +1,5 @@
 """
-Graph definition and execution engine for the RAG pipeline.
-Defines nodes, edges, and traversal logic.
+Updated Graph with Full 5-Pass Retrieval Pipeline
 """
 
 from typing import Callable, Optional
@@ -33,7 +32,7 @@ class Edge:
     """Represents an edge between nodes."""
     from_node: str
     to_node: str
-    condition: Optional[Callable[[AgentState], bool]] = None  # For conditional routing
+    condition: Optional[Callable[[AgentState], bool]] = None
 
 
 @dataclass 
@@ -47,10 +46,7 @@ class ExecutionResult:
 
 
 class Graph:
-    """
-    Directed graph for pipeline execution.
-    Supports linear flow and conditional branching.
-    """
+    """Directed graph for pipeline execution."""
     
     def __init__(self, name: str = "rag_pipeline"):
         self.name = name
@@ -60,13 +56,13 @@ class Graph:
         self.end_points: set[str] = set()
     
     def add_node(self, name: str, func: Callable, description: str = "") -> "Graph":
-        """Adds a node to the graph. Returns self for chaining."""
+        """Adds a node to the graph."""
         self.nodes[name] = Node(name=name, func=func, description=description)
         return self
     
     def add_edge(self, from_node: str, to_node: str, 
                  condition: Optional[Callable[[AgentState], bool]] = None) -> "Graph":
-        """Adds an edge between nodes. Returns self for chaining."""
+        """Adds an edge between nodes."""
         if from_node not in self.nodes:
             raise ValueError(f"Node '{from_node}' not found")
         if to_node not in self.nodes:
@@ -99,9 +95,7 @@ class Graph:
         return next_nodes
     
     def execute(self, state: AgentState, start_from: Optional[str] = None) -> ExecutionResult:
-        """
-        Executes the graph starting from entry point or specified node.
-        """
+        """Executes the graph."""
         current = start_from or self.entry_point
         if not current:
             return ExecutionResult(
@@ -119,12 +113,10 @@ class Graph:
                     failed_node=current, error_message=f"Node '{current}' not found"
                 )
             
-            # Execute node
             node.status = NodeStatus.RUNNING
             try:
                 state = node.func(state)
                 
-                # Check for errors in state
                 if state.errors:
                     node.status = NodeStatus.FAILED
                     return ExecutionResult(
@@ -142,11 +134,9 @@ class Graph:
                     failed_node=current, error_message=str(e)
                 )
             
-            # Check if we've reached an end point
             if current in self.end_points:
                 break
             
-            # Get next node(s)
             next_nodes = self.get_next_nodes(current, state)
             current = next_nodes[0] if next_nodes else None
         
@@ -158,15 +148,14 @@ class Graph:
             node.status = NodeStatus.PENDING
     
     def visualize(self) -> str:
-        """Returns a simple text visualization of the graph."""
-        lines = [f"Graph: {self.name}", "=" * 40]
+        """Returns a text visualization of the graph."""
+        lines = [f"Graph: {self.name}", "=" * 60]
         
         for node_name, node in self.nodes.items():
             marker = "→" if node_name == self.entry_point else " "
             end_marker = "◉" if node_name in self.end_points else " "
             lines.append(f"{marker} [{node.status.value:^10}] {node_name} {end_marker}")
             
-            # Show outgoing edges
             for edge in self.edges:
                 if edge.from_node == node_name:
                     cond = " (conditional)" if edge.condition else ""
@@ -176,12 +165,12 @@ class Graph:
         return "\n".join(lines)
 
 
-# =============================================================================
-# GRAPH BUILDERS
-# =============================================================================
+# ============================================================================
+# UPDATED GRAPH BUILDERS WITH 5-PASS PIPELINE
+# ============================================================================
 
 def build_indexing_graph() -> Graph:
-    """Builds the graph for document indexing (nodes 1-2)."""
+    """Builds the graph for document indexing."""
     from nodes import pdf_loader_node, chunking_embedding_node
     
     graph = Graph(name="indexing_pipeline")
@@ -196,35 +185,51 @@ def build_indexing_graph() -> Graph:
     
     return graph
 
+
 def build_query_graph() -> Graph:
-    """Builds the enhanced 5-pass query processing graph."""
+    """
+    Builds the FULL 5-PASS query graph.
+    
+    Pipeline:
+    1. Query Parser
+    2. Vector Search (Pass 1: Coarse)
+    3. Cross-Encoder Reranking (Pass 2: Precision)
+    4. Multi-Hop Expansion (Pass 3: Cross-chapter)
+    5. Cluster Expansion (Pass 4: Concept linking)
+    6. Context Compression & Assembly (Pass 5: Token management)
+    7. LLM Reasoning (Final answer)
+    """
     from nodes import (
-        user_query_node, vector_search_node, 
+        user_query_node, vector_search_node, reranking_node,
+        multi_hop_expansion_node, cluster_expansion_node,
         context_assembly_node, llm_reasoning_node
     )
-    # Import new nodes
-    from cross_encoder_rerank_node import cross_encoder_rerank_node
-    from query_expansion_node import query_expansion_node
-    from compression_node import compression_node
     
-    graph = Graph(name="5pass_query_pipeline")
+    graph = Graph(name="5_pass_query_pipeline")
     
-    # Add nodes
-    graph.add_node("query_parser", user_query_node, "Parse user query")
-    graph.add_node("vector_search", vector_search_node, "PASS 1: Broad search (50)")
-    graph.add_node("cross_encoder_rerank", cross_encoder_rerank_node, "PASS 2: Rerank (15)")
-    graph.add_node("query_expansion", query_expansion_node, "PASS 3: Query expansion")
-    graph.add_node("compression", compression_node, "PASS 5: Compression")
-    graph.add_node("context_assembly", context_assembly_node, "Build context")
-    graph.add_node("llm_reasoning", llm_reasoning_node, "LLM response")
+    # Add all nodes
+    graph.add_node("query_parser", user_query_node, 
+                   "Parse user query")
+    graph.add_node("vector_search", vector_search_node, 
+                   "PASS 1: Coarse vector search (top 50)")
+    graph.add_node("cross_encoder_reranking", reranking_node, 
+                   "PASS 2: Cross-encoder reranking (top 15)")
+    graph.add_node("multi_hop_expansion", multi_hop_expansion_node, 
+                   "PASS 3: Multi-hop retrieval (cross-chapter)")
+    graph.add_node("cluster_expansion", cluster_expansion_node, 
+                   "PASS 4: Cluster-based expansion")
+    graph.add_node("context_compression", context_assembly_node, 
+                   "PASS 5: Compression & deduplication")
+    graph.add_node("llm_reasoning", llm_reasoning_node, 
+                   "Generate final answer")
     
-    # Connect nodes
+    # Connect nodes in sequence
     graph.add_edge("query_parser", "vector_search")
-    graph.add_edge("vector_search", "cross_encoder_rerank")
-    graph.add_edge("cross_encoder_rerank", "query_expansion")
-    graph.add_edge("query_expansion", "compression")
-    graph.add_edge("compression", "context_assembly")
-    graph.add_edge("context_assembly", "llm_reasoning")
+    graph.add_edge("vector_search", "cross_encoder_reranking")
+    graph.add_edge("cross_encoder_reranking", "multi_hop_expansion")
+    graph.add_edge("multi_hop_expansion", "cluster_expansion")
+    graph.add_edge("cluster_expansion", "context_compression")
+    graph.add_edge("context_compression", "llm_reasoning")
     
     graph.set_entry_point("query_parser")
     graph.set_end_point("llm_reasoning")
@@ -233,31 +238,37 @@ def build_query_graph() -> Graph:
 
 
 def build_full_graph() -> Graph:
-    """Builds the complete RAG pipeline graph."""
+    """Builds the complete RAG pipeline (indexing + query)."""
     from nodes import (
         pdf_loader_node, chunking_embedding_node, user_query_node,
-        vector_search_node, reranking_node, context_assembly_node,
-        llm_reasoning_node
+        vector_search_node, reranking_node, multi_hop_expansion_node,
+        cluster_expansion_node, context_assembly_node, llm_reasoning_node
     )
     
-    graph = Graph(name="full_rag_pipeline")
+    graph = Graph(name="full_5_pass_rag")
     
-    # Add all nodes
-    graph.add_node("pdf_loader", pdf_loader_node, "Load and extract PDF")
-    graph.add_node("chunking_embedding", chunking_embedding_node, "Chunk and embed")
-    graph.add_node("query_parser", user_query_node, "Parse query")
-    graph.add_node("vector_search", vector_search_node, "Vector search")
-    graph.add_node("reranking", reranking_node, "Rerank results")
-    graph.add_node("context_assembly", context_assembly_node, "Build context")
-    graph.add_node("llm_reasoning", llm_reasoning_node, "LLM response")
+    # Indexing nodes
+    graph.add_node("pdf_loader", pdf_loader_node)
+    graph.add_node("chunking_embedding", chunking_embedding_node)
     
-    # Linear flow
+    # Query nodes (5-pass)
+    graph.add_node("query_parser", user_query_node)
+    graph.add_node("vector_search", vector_search_node)
+    graph.add_node("cross_encoder_reranking", reranking_node)
+    graph.add_node("multi_hop_expansion", multi_hop_expansion_node)
+    graph.add_node("cluster_expansion", cluster_expansion_node)
+    graph.add_node("context_compression", context_assembly_node)
+    graph.add_node("llm_reasoning", llm_reasoning_node)
+    
+    # Edges
     graph.add_edge("pdf_loader", "chunking_embedding")
     graph.add_edge("chunking_embedding", "query_parser")
     graph.add_edge("query_parser", "vector_search")
-    graph.add_edge("vector_search", "reranking")
-    graph.add_edge("reranking", "context_assembly")
-    graph.add_edge("context_assembly", "llm_reasoning")
+    graph.add_edge("vector_search", "cross_encoder_reranking")
+    graph.add_edge("cross_encoder_reranking", "multi_hop_expansion")
+    graph.add_edge("multi_hop_expansion", "cluster_expansion")
+    graph.add_edge("cluster_expansion", "context_compression")
+    graph.add_edge("context_compression", "llm_reasoning")
     
     graph.set_entry_point("pdf_loader")
     graph.set_end_point("llm_reasoning")

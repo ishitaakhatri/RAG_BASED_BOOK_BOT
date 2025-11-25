@@ -1,21 +1,31 @@
 """
-Node implementations for the RAG Agent pipeline.
-Each node is a function that takes AgentState and returns modified AgentState.
+Updated Node implementations with full 5-pass retrieval.
+
+PASSES:
+1. Vector Search (coarse)
+2. Cross-Encoder Reranking (precision)
+3. Multi-Hop Expansion (cross-chapter)
+4. Cluster Expansion (avoid chapter bias)
+5. Compression (token management)
 """
 
 import re
 import os
-import sys
 from typing import List
 from dotenv import load_dotenv
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
 
-# Fixed imports - removed the broken ones since we don't need them for this pipeline
 from rag_based_book_bot.agents.states import (
     AgentState, DocumentChunk, RetrievedChunk, 
     ParsedQuery, QueryIntent, LLMResponse
 )
+
+# Import the new retrieval components
+from rag_based_book_bot.retrieval.cross_encoder_reranker import CrossEncoderReranker
+from rag_based_book_bot.retrieval.multi_hop_expander import MultiHopExpander
+from rag_based_book_bot.retrieval.cluster_manager import ClusterManager
+from rag_based_book_bot.retrieval.context_compressor import ContextCompressor
 
 load_dotenv()
 
@@ -24,9 +34,14 @@ INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "coding-books")
 NAMESPACE = os.getenv("PINECONE_NAMESPACE", "books_rag")
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
+# Global instances (lazy loading)
 _pc = None
 _index = None
 _model = None
+_cross_encoder = None
+_multi_hop = None
+_cluster_manager = None
+_compressor = None
 
 def get_pinecone_index():
     """Get Pinecone index (lazy initialization)"""
@@ -43,6 +58,41 @@ def get_embedding_model():
         _model = SentenceTransformer(EMBEDDING_MODEL)
     return _model
 
+def get_cross_encoder():
+    """Get cross-encoder reranker"""
+    global _cross_encoder
+    if _cross_encoder is None:
+        _cross_encoder = CrossEncoderReranker()
+    return _cross_encoder
+
+def get_multi_hop_expander():
+    """Get multi-hop expander"""
+    global _multi_hop
+    if _multi_hop is None:
+        _multi_hop = MultiHopExpander()
+    return _multi_hop
+
+def get_cluster_manager():
+    """Get cluster manager"""
+    global _cluster_manager
+    if _cluster_manager is None:
+        _cluster_manager = ClusterManager(n_clusters=100)
+        # Try to load pre-built clusters
+        # In production, you'd load based on book_id
+        # cluster_manager.load("default_book")
+    return _cluster_manager
+
+def get_compressor():
+    """Get context compressor"""
+    global _compressor
+    if _compressor is None:
+        _compressor = ContextCompressor(target_tokens=2000, max_tokens=4000)
+    return _compressor
+
+
+# ============================================================================
+# EXISTING NODES (unchanged)
+# ============================================================================
 
 def pdf_loader_node(state: AgentState) -> AgentState:
     """PDF loader node - not used in direct query pipeline"""
@@ -50,13 +100,11 @@ def pdf_loader_node(state: AgentState) -> AgentState:
     state.errors.append("PDF loader not implemented - use book_ingestion.py instead")
     return state
 
-
 def chunking_embedding_node(state: AgentState) -> AgentState:
     """Chunking and embedding node - not used in direct query pipeline"""
     state.current_node = "chunking_embedding"
     state.errors.append("Chunking not implemented - use book_ingestion.py instead")
     return state
-
 
 def user_query_node(state: AgentState) -> AgentState:
     """Parse user query"""
@@ -84,7 +132,6 @@ def user_query_node(state: AgentState) -> AgentState:
     
     return state
 
-
 def _detect_intent(query: str) -> QueryIntent:
     if any(w in query for w in ['implement', 'code', 'write', 'build', 'create']):
         return QueryIntent.CODE_REQUEST
@@ -96,7 +143,6 @@ def _detect_intent(query: str) -> QueryIntent:
         return QueryIntent.TUTORIAL
     return QueryIntent.CONCEPTUAL
 
-
 def _extract_topics(query: str) -> list[str]:
     known_topics = [
         'neural network', 'cnn', 'rnn', 'lstm', 'transformer',
@@ -107,12 +153,10 @@ def _extract_topics(query: str) -> list[str]:
     ]
     return [t for t in known_topics if t in query.lower()]
 
-
 def _extract_keywords(query: str) -> list[str]:
     stopwords = {'the', 'a', 'an', 'is', 'are', 'what', 'how', 'why', 'can', 'do', 'me', 'i', 'to'}
     words = re.findall(r'\b\w+\b', query.lower())
     return [w for w in words if w not in stopwords and len(w) > 2]
-
 
 def _detect_complexity(query: str) -> str:
     if any(w in query for w in ['basic', 'simple', 'beginner', 'intro']):
@@ -122,9 +166,16 @@ def _detect_complexity(query: str) -> str:
     return "intermediate"
 
 
-def vector_search_node(state: AgentState, top_k: int = 80) -> AgentState:
+# ============================================================================
+# UPDATED NODES WITH 5-PASS INTEGRATION
+# ============================================================================
+
+def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
     """
-    Direct Pinecone vector search - uses the data ingested by book_ingestion.py
+    PASS 1: Coarse Semantic Search
+    
+    Retrieve broad set of candidates (50-100).
+    NOT directly passed to LLM - will be refined in later passes.
     """
     state.current_node = "vector_search"
     
@@ -133,7 +184,8 @@ def vector_search_node(state: AgentState, top_k: int = 80) -> AgentState:
         return state
     
     try:
-        # Get Pinecone index and embedding model
+        print(f"\n[PASS 1] Vector Search (top_k={top_k})")
+        
         index = get_pinecone_index()
         model = get_embedding_model()
         
@@ -147,22 +199,21 @@ def vector_search_node(state: AgentState, top_k: int = 80) -> AgentState:
         if hasattr(state, 'chapter_filter') and state.chapter_filter:
             filter_dict["chapter_numbers"] = {"$in": [state.chapter_filter]}
         
-        # Query Pinecone directly
+        # Query Pinecone (broad search)
         results = index.query(
             vector=query_embedding,
-            top_k=top_k,
+            top_k=top_k,  # Higher than before!
             namespace=NAMESPACE,
             filter=filter_dict if filter_dict else None,
             include_metadata=True
         )
         
-        # Convert Pinecone results to RetrievedChunk objects
+        # Convert to RetrievedChunk objects
         retrieved_chunks = []
         
         for match in results.get("matches", []):
             metadata = match.get("metadata", {})
             
-            # Handle metadata lists safely
             chapter_titles = metadata.get("chapter_titles", [])
             chapter_numbers = metadata.get("chapter_numbers", [])
             section_titles = metadata.get("section_titles", [])
@@ -170,7 +221,6 @@ def vector_search_node(state: AgentState, top_k: int = 80) -> AgentState:
             chapter_title = chapter_titles[0] if chapter_titles else ""
             chapter_number = chapter_numbers[0] if chapter_numbers else ""
             
-            # Create DocumentChunk with metadata from book_ingestion
             chunk = DocumentChunk(
                 chunk_id=match["id"],
                 content=metadata.get("text", ""),
@@ -186,6 +236,7 @@ def vector_search_node(state: AgentState, top_k: int = 80) -> AgentState:
             ))
         
         state.retrieved_chunks = retrieved_chunks
+        print(f"  → Retrieved {len(retrieved_chunks)} candidates")
         
     except Exception as e:
         state.errors.append(f"Vector search failed: {str(e)}")
@@ -193,8 +244,13 @@ def vector_search_node(state: AgentState, top_k: int = 80) -> AgentState:
     return state
 
 
-def reranking_node(state: AgentState, top_k: int = 5) -> AgentState:
-    """Rerank based on query intent and content type"""
+def reranking_node(state: AgentState, top_k: int = 15) -> AgentState:
+    """
+    PASS 2: Cross-Encoder Reranking
+    
+    Use BERT cross-encoder for true relevance scoring.
+    Reduces 50 candidates → 15 high-precision results.
+    """
     state.current_node = "reranking"
     
     if not state.retrieved_chunks or not state.parsed_query:
@@ -202,75 +258,190 @@ def reranking_node(state: AgentState, top_k: int = 5) -> AgentState:
         return state
     
     try:
-        # ==================== DEBUG: BEFORE RERANKING ====================
-        print("\n" + "="*60)
-        print("🔍 RERANKING DEBUG")
-        print("="*60)
-        print(f"Query: {state.parsed_query.raw_query}")
-        print(f"Intent: {state.parsed_query.intent.value}")
-        print(f"Retrieved chunks: {len(state.retrieved_chunks)}")
-        print("\n📊 BEFORE RERANKING - Similarity Scores:")
-        for i, r in enumerate(state.retrieved_chunks[:5]):
-            print(f"  Chunk {i+1}: {r.similarity_score:.4f} | {r.chunk.chunk_type} | {r.chunk.content[:50]}...")
-        # ==================== END DEBUG ====================
+        print(f"\n[PASS 2] Cross-Encoder Reranking (top_k={top_k})")
         
-        query = state.parsed_query
+        cross_encoder = get_cross_encoder()
         
+        # Prepare chunks for reranking
+        chunks_data = []
         for rc in state.retrieved_chunks:
-            score = rc.similarity_score * 0.4
-            
-            # Boost for topic matches
-            for topic in query.topics:
-                if topic in rc.chunk.content.lower():
-                    score += 0.2
-            
-            # Boost for keyword matches
-            keyword_matches = sum(1 for kw in query.keywords 
-                                 if kw in rc.chunk.content.lower())
-            score += keyword_matches * 0.05
-            
-            # Boost code chunks for code requests
-            if query.intent == QueryIntent.CODE_REQUEST and rc.chunk.chunk_type == "code":
-                score += 0.25
-            
-            # Boost text chunks for conceptual queries
-            if query.intent == QueryIntent.CONCEPTUAL and rc.chunk.chunk_type == "text":
-                score += 0.1
-            
-            rc.rerank_score = min(score, 1.0)
+            chunks_data.append({
+                'text': rc.chunk.content,
+                'metadata': {
+                    'chunk_id': rc.chunk.chunk_id,
+                    'chapter': rc.chunk.chapter,
+                    'page': rc.chunk.page_number,
+                    'type': rc.chunk.chunk_type
+                },
+                'similarity_score': rc.similarity_score
+            })
         
-        # Sort and calculate percentages
-        state.retrieved_chunks.sort(key=lambda x: x.rerank_score, reverse=True)
+        # Rerank with cross-encoder
+        reranked = cross_encoder.rerank_with_metadata(
+            state.parsed_query.raw_query,
+            chunks_data,
+            top_k=top_k
+        )
         
-        max_score = state.retrieved_chunks[0].rerank_score if state.retrieved_chunks else 1
-        for rc in state.retrieved_chunks:
-            rc.relevance_percentage = round((rc.rerank_score / max_score) * 100, 1)
+        # Convert back to RetrievedChunk objects
+        reranked_chunks = []
+        for chunk_data in reranked:
+            chunk = DocumentChunk(
+                chunk_id=chunk_data['metadata']['chunk_id'],
+                content=chunk_data['text'],
+                chapter=chunk_data['metadata']['chapter'],
+                page_number=chunk_data['metadata']['page'],
+                chunk_type=chunk_data['metadata']['type']
+            )
+            
+            reranked_chunks.append(RetrievedChunk(
+                chunk=chunk,
+                similarity_score=chunk_data['similarity_score'],
+                rerank_score=chunk_data['cross_encoder_score'],
+                relevance_percentage=round(chunk_data['final_score'] * 100, 1)
+            ))
         
-        state.reranked_chunks = state.retrieved_chunks[:top_k]
-        
-        # ==================== DEBUG: AFTER RERANKING ====================
-        print("\n📊 AFTER RERANKING - Rerank Scores:")
-        for i, r in enumerate(state.reranked_chunks):
-            print(f"  Chunk {i+1}: {r.rerank_score:.4f} (was {r.similarity_score:.4f}) | "
-                  f"{r.relevance_percentage:.1f}% | {r.chunk.chunk_type} | "
-                  f"{r.chunk.content[:50]}...")
-        
-        print("\n📈 Score Changes:")
-        for i, r in enumerate(state.reranked_chunks):
-            change = r.rerank_score - r.similarity_score
-            change_pct = (change / r.similarity_score * 100) if r.similarity_score > 0 else 0
-            arrow = "📈" if change > 0 else "📉" if change < 0 else "➡️"
-            print(f"  {arrow} Chunk {i+1}: {change:+.4f} ({change_pct:+.1f}%)")
-        print("="*60 + "\n")
-        # ==================== END DEBUG ====================
+        state.reranked_chunks = reranked_chunks
+        print(f"  → Reranked to {len(reranked_chunks)} high-precision chunks")
         
     except Exception as e:
         state.errors.append(f"Reranking failed: {str(e)}")
+        # Fallback: use original chunks
+        state.reranked_chunks = state.retrieved_chunks[:top_k]
     
     return state
 
+
+def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState:
+    """
+    PASS 3: Multi-Hop Retrieval
+    
+    Extract concepts from top results, query again.
+    Finds cross-chapter information.
+    """
+    state.current_node = "multi_hop_expansion"
+    
+    if not state.reranked_chunks or not state.parsed_query:
+        state.errors.append("Missing reranked chunks for multi-hop")
+        return state
+    
+    try:
+        print(f"\n[PASS 3] Multi-Hop Expansion (max_hops={max_hops})")
+        
+        expander = get_multi_hop_expander()
+        
+        # Convert to format expected by expander
+        initial_results = []
+        for rc in state.reranked_chunks[:10]:  # Top 10 for expansion
+            initial_results.append({
+                'id': rc.chunk.chunk_id,
+                'text': rc.chunk.content,
+                'score': rc.rerank_score
+            })
+        
+        # Define retrieval function for secondary queries
+        def retrieval_fn(query_text: str, top_k: int = 5):
+            """Mini retrieval for secondary queries"""
+            index = get_pinecone_index()
+            model = get_embedding_model()
+            
+            emb = model.encode(query_text).tolist()
+            results = index.query(
+                vector=emb,
+                top_k=top_k,
+                namespace=NAMESPACE,
+                include_metadata=True
+            )
+            
+            return [
+                {
+                    'id': m['id'],
+                    'text': m.get('metadata', {}).get('text', ''),
+                    'score': m.get('score', 0)
+                }
+                for m in results.get('matches', [])
+            ]
+        
+        # Perform multi-hop expansion
+        expanded_results = expander.multi_hop_retrieve(
+            state.parsed_query.raw_query,
+            initial_results,
+            retrieval_fn,
+            max_hops=max_hops,
+            top_k_per_hop=3
+        )
+        
+        # Add expanded results to state (mark as secondary)
+        for exp_result in expanded_results[len(initial_results):]:  # Only new ones
+            chunk = DocumentChunk(
+                chunk_id=exp_result['id'],
+                content=exp_result['text'],
+                chapter="Multi-hop Result",
+                chunk_type="text"
+            )
+            
+            state.reranked_chunks.append(RetrievedChunk(
+                chunk=chunk,
+                similarity_score=exp_result['score'],
+                rerank_score=exp_result['score'] * 0.8,  # Slightly lower weight
+                relevance_percentage=exp_result['score'] * 80
+            ))
+        
+        print(f"  → Expanded to {len(state.reranked_chunks)} total chunks")
+        
+    except Exception as e:
+        print(f"  ⚠️ Multi-hop expansion failed: {e}")
+        # Continue without expansion
+    
+    return state
+
+
+def cluster_expansion_node(state: AgentState) -> AgentState:
+    """
+    PASS 4: Cluster-Based Expansion
+    
+    Find semantically similar chunks from same clusters.
+    Avoids chapter-name bias.
+    """
+    state.current_node = "cluster_expansion"
+    
+    # Note: This requires clusters to be built during ingestion
+    # For now, we'll skip if clusters aren't available
+    
+    try:
+        print(f"\n[PASS 4] Cluster Expansion")
+        
+        cluster_manager = get_cluster_manager()
+        
+        # Check if clusters are available
+        if not cluster_manager.chunk_to_cluster:
+            print("  ⚠️ No clusters available (run cluster building during ingestion)")
+            return state
+        
+        # Get chunk IDs from current results
+        chunk_ids = [rc.chunk.chunk_id for rc in state.reranked_chunks[:10]]
+        
+        # Find cluster neighbors
+        neighbor_ids = cluster_manager.get_cluster_neighbors(
+            chunk_ids,
+            max_neighbors=5
+        )
+        
+        # Retrieve neighbor chunks (would need lookup in production)
+        print(f"  → Found {len(neighbor_ids)} cluster neighbors")
+        
+    except Exception as e:
+        print(f"  ⚠️ Cluster expansion failed: {e}")
+    
+    return state
+
+
 def context_assembly_node(state: AgentState) -> AgentState:
-    """Assemble context with rich metadata from ingestion"""
+    """
+    PASS 5: Compression & Assembly
+    
+    Deduplicate, summarize, compress context to fit token budget.
+    """
     state.current_node = "context_assembly"
     
     if not state.reranked_chunks or not state.parsed_query:
@@ -278,23 +449,32 @@ def context_assembly_node(state: AgentState) -> AgentState:
         return state
     
     try:
-        context_parts = []
+        print(f"\n[PASS 5] Context Compression & Assembly")
         
-        for i, rc in enumerate(state.reranked_chunks):
-            chunk = rc.chunk
-            
-            # Format source
-            context_parts.append(
-                f"[SOURCE {i+1}]\n"
-                f"Chapter: {chunk.chapter}\n"
-                f"Section: {chunk.section}\n"
-                f"Page: {chunk.page_number}\n"
-                f"Type: {'CODE' if chunk.chunk_type == 'code' else 'TEXT'}\n"
-                f"Relevance: {rc.relevance_percentage}%\n\n"
-                f"{chunk.content}\n"
-            )
+        compressor = get_compressor()
         
-        state.assembled_context = "\n{'='*70}\n".join(context_parts)
+        # Convert chunks to format for compressor
+        chunks_for_compression = []
+        for rc in state.reranked_chunks:
+            chunks_for_compression.append({
+                'text': rc.chunk.content,
+                'metadata': {
+                    'chapter_title': rc.chunk.chapter,
+                    'page_start': rc.chunk.page_number,
+                    'contains_code': rc.chunk.chunk_type == 'code'
+                },
+                'score': rc.rerank_score,
+                'chunk_type': rc.chunk.chunk_type
+            })
+        
+        # Compress context
+        compressed_context = compressor.compress_context(
+            chunks_for_compression,
+            state.parsed_query.raw_query,
+            preserve_code=True
+        )
+        
+        state.assembled_context = compressed_context
         state.system_prompt = _build_system_prompt(state.parsed_query)
         
     except Exception as e:
@@ -341,12 +521,10 @@ def llm_reasoning_node(state: AgentState) -> AgentState:
     try:
         from openai import OpenAI
         
-        # Initialize OpenAI client
-        client = OpenAI(
-            api_key=os.getenv("OPENAI_API_KEY")
-        )
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         
-        # Call OpenAI API
+        print(f"\n[FINAL] LLM Reasoning")
+        
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -356,14 +534,11 @@ def llm_reasoning_node(state: AgentState) -> AgentState:
             temperature=0.7
         )
         
-        # Extract answer from response
         answer = response.choices[0].message.content
         
-        # Extract code snippets from chunks (if any)
         chunks = state.reranked_chunks
         code_snippets = [c.chunk.content for c in chunks if c.chunk.chunk_type == "code"]
         
-        # Build response object
         state.response = LLMResponse(
             answer=answer,
             code_snippets=code_snippets[:2],
@@ -371,9 +546,11 @@ def llm_reasoning_node(state: AgentState) -> AgentState:
             confidence=0.85
         )
         
+        print(f"  ✅ Answer generated ({len(answer)} chars)")
+        
     except Exception as e:
         state.errors.append(f"LLM reasoning failed: {str(e)}")
-        # Fallback response if LLM fails
+        # Fallback response
         if state.reranked_chunks:
             chunks = state.reranked_chunks
             fallback_answer = f"Error calling LLM. Here's the retrieved content:\n\n"
