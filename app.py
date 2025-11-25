@@ -1,7 +1,6 @@
 """
 Streamlit App for RAG-Based Book Bot
-Using enhanced_ingestion.py for PDF processing
-WITH INTEGRATED ANSWER GENERATION
+✅ NOW WITH 5-PASS RETRIEVAL INTEGRATED
 """
 import streamlit as st
 import os
@@ -18,22 +17,28 @@ st.set_page_config(
 
 load_dotenv()
 
-# ✅ CORRECT IMPORTS
+# ✅ IMPORTS
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
+from rag_based_book_bot.document_ingestion.book_ingestion import BookIngestionService
 
-# Import ENHANCED ingestion service
-from rag_based_book_bot.document_ingestion.enhanced_ingestion import (
-    EnhancedBookIngestorPaddle,
-    IngestorConfig
-)
-
-# Import agent components for answer generation
+# Import agent components
 from rag_based_book_bot.agents.nodes import llm_reasoning_node
 from rag_based_book_bot.agents.states import (
     AgentState, DocumentChunk, RetrievedChunk, 
     ParsedQuery, QueryIntent
 )
+
+# ✅ NEW: Import 5-pass retrieval
+try:
+    from rag_based_book_bot.retrieval.integration_module import (
+        query_with_five_pass,
+        get_retriever
+    )
+    FIVE_PASS_AVAILABLE = True
+except ImportError:
+    FIVE_PASS_AVAILABLE = False
+    print("⚠️ 5-Pass retrieval not available. Using standard retrieval.")
 
 # Custom CSS
 st.markdown("""
@@ -65,9 +70,10 @@ st.markdown("""
         margin: 1rem 0;
     }
     .stats-box {
-        background-color: #e8f4f8;
+        background-color: #fff3cd;
         padding: 1rem;
         border-radius: 0.5rem;
+        border-left: 4px solid #ffc107;
         margin: 0.5rem 0;
     }
 </style>
@@ -78,8 +84,10 @@ if 'query_history' not in st.session_state:
     st.session_state.query_history = []
 if 'ingestion_complete' not in st.session_state:
     st.session_state.ingestion_complete = False
-if 'last_ingestion_stats' not in st.session_state:
-    st.session_state.last_ingestion_stats = None
+if 'use_five_pass' not in st.session_state:
+    st.session_state.use_five_pass = FIVE_PASS_AVAILABLE
+if 'retrieval_stats' not in st.session_state:
+    st.session_state.retrieval_stats = None
 
 
 # =============================================================================
@@ -115,20 +123,8 @@ def load_embedding_model():
     return SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 
-@st.cache_resource
-def get_enhanced_ingestor():
-    """Get cached enhanced ingestor instance"""
-    config = IngestorConfig(
-        chunk_size=1500,
-        overlap=200,
-        encoding_name="cl100k_base",
-        debug=False
-    )
-    return EnhancedBookIngestorPaddle(config=config)
-
-
-def query_pinecone(query_text, top_k=5, book_filter=None, chapter_filter=None):
-    """Query Pinecone for relevant chunks"""
+def query_pinecone_standard(query_text, top_k=5, book_filter=None, chapter_filter=None):
+    """Standard Pinecone query (fallback)"""
     pc, index = initialize_pinecone()
     if index is None:
         return []
@@ -188,45 +184,19 @@ def get_available_books():
         return []
 
 
-def ingest_book_enhanced(pdf_path, book_title, author):
-    """Ingest a book into Pinecone using EnhancedBookIngestorPaddle"""
+def ingest_book(pdf_path, book_title, author):
+    """Ingest a book into Pinecone using BookIngestionService"""
     try:
-        # Get the enhanced ingestor
-        ingestor = get_enhanced_ingestor()
-        
-        # Create progress container
-        progress_text = st.empty()
-        progress_bar = st.progress(0)
-        
-        # Step 1: Detect heading candidates
-        progress_text.text("🔍 Step 1/4: Detecting heading candidates...")
-        progress_bar.progress(0.25)
-        
-        # Step 2: Verify with LLM
-        progress_text.text("🤖 Step 2/4: Verifying headings with LLM...")
-        progress_bar.progress(0.50)
-        
-        # Step 3: Build hierarchy
-        progress_text.text("🏗️ Step 3/4: Building document hierarchy...")
-        progress_bar.progress(0.75)
-        
-        # Ingest the book
-        result = ingestor.ingest_book(
-            pdf_path=pdf_path,
-            book_title=book_title,
-            author=author
-        )
-        
-        # Step 4: Complete
-        progress_text.text("✅ Step 4/4: Ingestion complete!")
-        progress_bar.progress(1.0)
-        
-        return True, result
-        
+        with st.spinner(f"🔄 Ingesting '{book_title}'... This may take several minutes."):
+            service = BookIngestionService()
+            metadata = service.ingest_book(pdf_path)
+            
+            return True, {
+                "title": metadata.title,
+                "author": metadata.author,
+                "source": metadata.source_file
+            }
     except Exception as e:
-        st.error(f"❌ Enhanced ingestion error: {str(e)}")
-        import traceback
-        st.error(f"Traceback: {traceback.format_exc()}")
         return False, str(e)
 
 
@@ -323,20 +293,14 @@ def generate_answer(query_text, matches):
 
 
 # =============================================================================
-# SIDEBAR - INGESTION INTERFACE
+# SIDEBAR - INGESTION & SETTINGS
 # =============================================================================
 
 with st.sidebar:
     st.title("📚 Book Management")
     
-    with st.expander("➕ Ingest New Book (Enhanced)", expanded=False):
-        st.markdown("**Enhanced Pipeline Features:**")
-        st.markdown("- 🎯 PaddleOCR for better text extraction")
-        st.markdown("- 🤖 LLM-based heading verification")
-        st.markdown("- 📖 Advanced TOC parsing")
-        st.markdown("- 🏗️ Hierarchical structure building")
-        
-        st.divider()
+    with st.expander("➕ Ingest New Book", expanded=False):
+        st.markdown("Upload a PDF book to add it to the knowledge base.")
         
         uploaded_file = st.file_uploader(
             "Choose PDF file",
@@ -354,37 +318,23 @@ with st.sidebar:
             placeholder="e.g., Aurélien Géron"
         )
         
-        if st.button("🚀 Ingest Book (Enhanced)", type="primary", disabled=not uploaded_file):
+        if st.button("🚀 Ingest Book", type="primary", disabled=not uploaded_file):
             if uploaded_file and book_title:
                 # Save uploaded file temporarily
                 temp_path = f"temp_{uploaded_file.name}"
                 with open(temp_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
                 
-                # Ingest using EnhancedBookIngestorPaddle
-                success, result = ingest_book_enhanced(temp_path, book_title, author or "Unknown")
+                # Ingest using BookIngestionService
+                success, result = ingest_book(temp_path, book_title, author or "Unknown")
                 
                 # Cleanup
-                try:
-                    os.remove(temp_path)
-                except:
-                    pass
+                os.remove(temp_path)
                 
                 if success:
                     st.success(f"✅ Successfully ingested '{book_title}'!")
-                    
-                    # Display ingestion stats
-                    st.markdown('<div class="stats-box">', unsafe_allow_html=True)
-                    st.markdown("**📊 Ingestion Statistics:**")
-                    st.markdown(f"- **Title:** {result.get('title', 'N/A')}")
-                    st.markdown(f"- **Author:** {result.get('author', 'N/A')}")
-                    st.markdown(f"- **Total Pages:** {result.get('total_pages', 'N/A')}")
-                    st.markdown(f"- **Chapters Detected:** {result.get('total_chapters', 'N/A')}")
-                    st.markdown(f"- **Total Chunks:** {result.get('total_chunks', 'N/A')}")
-                    st.markdown('</div>', unsafe_allow_html=True)
-                    
+                    st.info(f"📖 Book: {result['title']}")
                     st.session_state.ingestion_complete = True
-                    st.session_state.last_ingestion_stats = result
                 else:
                     st.error(f"❌ Ingestion failed: {result}")
             else:
@@ -392,17 +342,49 @@ with st.sidebar:
     
     st.divider()
     
-    # Show last ingestion stats if available
-    if st.session_state.last_ingestion_stats:
-        with st.expander("📊 Last Ingestion Stats", expanded=False):
-            stats = st.session_state.last_ingestion_stats
-            st.json({
-                "title": stats.get("title"),
-                "author": stats.get("author"),
-                "total_pages": stats.get("total_pages"),
-                "total_chapters": stats.get("total_chapters"),
-                "total_chunks": stats.get("total_chunks")
-            })
+    # ✅ NEW: Advanced Retrieval Settings
+    if FIVE_PASS_AVAILABLE:
+        with st.expander("🔬 Advanced Retrieval Settings", expanded=True):
+            st.markdown("**5-Pass Retrieval Pipeline**")
+            
+            use_five_pass = st.toggle(
+                "Enable 5-Pass Retrieval",
+                value=True,
+                help="Use advanced multi-pass retrieval for better results"
+            )
+            st.session_state.use_five_pass = use_five_pass
+            
+            if use_five_pass:
+                st.markdown("---")
+                
+                enable_multihop = st.toggle(
+                    "Multi-Hop Discovery",
+                    value=True,
+                    help="Find cross-chapter connections automatically"
+                )
+                
+                enable_expansion = st.toggle(
+                    "Cluster Expansion",
+                    value=True,
+                    help="Expand semantic neighborhoods for comprehensive results"
+                )
+                
+                show_retrieval_stats = st.toggle(
+                    "Show Statistics",
+                    value=True,
+                    help="Display detailed retrieval metrics"
+                )
+                
+                # Store in session state
+                st.session_state.enable_multihop = enable_multihop
+                st.session_state.enable_expansion = enable_expansion
+                st.session_state.show_retrieval_stats = show_retrieval_stats
+                
+                st.info("💡 5-Pass Retrieval provides:\n- Cross-chapter discovery\n- Reduced noise\n- Optimized token usage")
+            else:
+                st.warning("Using standard retrieval (faster but less comprehensive)")
+    else:
+        st.warning("⚠️ 5-Pass retrieval not available. Install dependencies:\n```\npip install sentence-transformers scikit-learn\n```")
     
     st.divider()
     
@@ -424,12 +406,6 @@ with st.sidebar:
         st.text(f"Index: {os.getenv('PINECONE_INDEX_NAME', 'coding-books')}")
         st.text(f"Namespace: {os.getenv('PINECONE_NAMESPACE', 'books_rag')}")
         
-        st.markdown("**Enhanced Ingestion Settings**")
-        st.text("Chunk Size: 1500 tokens")
-        st.text("Overlap: 200 tokens")
-        st.text("OCR: PaddleOCR (GPU-enabled)")
-        st.text("Verifier: LLM-based")
-        
         # Check connection
         pc, index = initialize_pinecone()
         if index:
@@ -449,7 +425,11 @@ with st.sidebar:
 # =============================================================================
 
 st.title("🤖 RAG-Based Book Bot")
-st.markdown("**Enhanced Pipeline** • Ask questions about your ingested books and get AI-powered answers with citations!")
+
+if FIVE_PASS_AVAILABLE and st.session_state.get('use_five_pass', False):
+    st.markdown("Ask questions and get AI-powered answers with **5-Pass Retrieval** 🚀")
+else:
+    st.markdown("Ask questions about your ingested books and get AI-powered answers with citations!")
 
 # Check if any books are available
 books = get_available_books()
@@ -488,28 +468,96 @@ with col2:
         help="Optionally filter to a specific chapter number"
     )
 
-# Query button
+# ✅ MODIFIED: Query button with 5-pass integration
 if st.button("🔍 Search", type="primary", disabled=not query):
     if query:
-        with st.spinner("🔎 Searching knowledge base..."):
-            matches = query_pinecone(
-                query,
-                top_k=top_k,
-                book_filter=book_filter if book_filter != "All Books" else None,
-                chapter_filter=chapter_filter if chapter_filter else None
-            )
+        # Determine which retrieval method to use
+        use_five_pass = FIVE_PASS_AVAILABLE and st.session_state.get('use_five_pass', False)
+        
+        if use_five_pass:
+            # ✅ NEW: Use 5-pass retrieval
+            with st.spinner("🔎 Searching with 5-pass retrieval..."):
+                try:
+                    final_context, matches, stats = query_with_five_pass(
+                        query_text=query,
+                        top_k=top_k,
+                        book_filter=book_filter if book_filter != "All Books" else None,
+                        chapter_filter=chapter_filter if chapter_filter else None,
+                        enable_multihop=st.session_state.get('enable_multihop', True),
+                        enable_expansion=st.session_state.get('enable_expansion', True)
+                    )
+                    st.session_state.retrieval_stats = stats
+                except Exception as e:
+                    st.error(f"❌ 5-Pass retrieval failed: {str(e)}\nFalling back to standard retrieval...")
+                    matches = query_pinecone_standard(
+                        query,
+                        top_k=top_k,
+                        book_filter=book_filter if book_filter != "All Books" else None,
+                        chapter_filter=chapter_filter if chapter_filter else None
+                    )
+                    st.session_state.retrieval_stats = None
+        else:
+            # Standard retrieval
+            with st.spinner("🔎 Searching knowledge base..."):
+                matches = query_pinecone_standard(
+                    query,
+                    top_k=top_k,
+                    book_filter=book_filter if book_filter != "All Books" else None,
+                    chapter_filter=chapter_filter if chapter_filter else None
+                )
+                st.session_state.retrieval_stats = None
         
         # Add to history
         st.session_state.query_history.insert(0, {
             'query': query,
             'results': len(matches),
-            'book_filter': book_filter
+            'book_filter': book_filter,
+            'used_five_pass': use_five_pass
         })
         
         if not matches:
             st.warning("🤷 No relevant results found. Try rephrasing your question or removing filters.")
         else:
             st.success(f"✅ Found {len(matches)} relevant chunks")
+            
+            # ✅ NEW: Show retrieval statistics
+            if use_five_pass and st.session_state.retrieval_stats and st.session_state.get('show_retrieval_stats', True):
+                stats = st.session_state.retrieval_stats
+                
+                with st.expander("📊 5-Pass Retrieval Statistics", expanded=False):
+                    st.markdown("### Pipeline Breakdown")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("Pass 1: Coarse Search", stats.get("pass1_count", 0))
+                        st.caption("Broad semantic search")
+                        
+                        st.metric("Pass 2: Reranking", stats.get("pass2_count", 0))
+                        st.caption("Cross-encoder precision")
+                    
+                    with col2:
+                        st.metric("Pass 3: Multi-Hop", stats.get("pass3_count", 0))
+                        st.caption("Cross-chapter discovery")
+                        
+                        st.metric("Pass 4: Expansion", stats.get("pass4_count", 0))
+                        st.caption("Cluster neighborhoods")
+                    
+                    with col3:
+                        st.metric("Final Chunks", stats.get("pass5_count", 0))
+                        st.caption("After deduplication")
+                        
+                        st.metric("Final Tokens", stats.get("final_tokens", 0))
+                        st.caption("Optimized context")
+                    
+                    # Summary
+                    st.markdown("---")
+                    dedup = stats.get("duplicate_removed", 0)
+                    if dedup > 0:
+                        st.info(f"🗑️ Removed {dedup} duplicate/similar chunks")
+                    
+                    if stats.get("pass3_count", 0) > 0:
+                        st.success(f"🔗 Found {stats['pass3_count']} cross-chapter connections")
             
             # Generate AI answer
             st.divider()
@@ -579,14 +627,10 @@ if st.button("🔍 Search", type="primary", disabled=not query):
                     
                     st.divider()
                     
-                    # Show metadata details
-                    st.json({
-                        "book": book_title,
-                        "chapter": f"{chapter_number}: {chapter_title}",
-                        "pages": f"{page_start}-{page_end}",
-                        "type": "code" if contains_code else "text",
-                        "relevance": f"{score:.2%}"
-                    })
+                    # Show content preview
+                    text_preview = metadata.get("text", "")[:500]
+                    if text_preview:
+                        st.text_area("Content Preview", text_preview, height=150, disabled=True)
 
 # Query History
 if st.session_state.query_history:
@@ -594,8 +638,12 @@ if st.session_state.query_history:
     st.subheader("🕐 Query History")
     
     for i, item in enumerate(st.session_state.query_history[:5]):
-        st.markdown(f"{i+1}. **{item['query']}** - {item['results']} results ({item['book_filter']})")
+        method = "🚀 5-Pass" if item.get('used_five_pass', False) else "📍 Standard"
+        st.markdown(f"{i+1}. **{item['query']}** - {item['results']} results ({item['book_filter']}) {method}")
 
 # Footer
 st.divider()
-st.caption("Built with Streamlit • Powered by Pinecone & OpenAI • Using Enhanced Ingestion Pipeline with PaddleOCR")
+footer_text = "Built with Streamlit • Powered by Pinecone & OpenAI"
+if FIVE_PASS_AVAILABLE and st.session_state.get('use_five_pass', False):
+    footer_text += " • 5-Pass Retrieval System 🚀"
+st.caption(footer_text)
