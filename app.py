@@ -7,6 +7,17 @@ import streamlit as st
 import os
 import sys
 from dotenv import load_dotenv
+from pinecone import Pinecone
+from sentence_transformers import SentenceTransformer
+from rag_based_book_bot.document_ingestion.enhanced_ingestion import (
+    EnhancedBookIngestorPaddle,
+    IngestorConfig
+)
+from rag_based_book_bot.agents.nodes import llm_reasoning_node
+from rag_based_book_bot.agents.states import (
+    AgentState, DocumentChunk, RetrievedChunk, 
+    ParsedQuery, QueryIntent
+)
 
 # MUST BE FIRST STREAMLIT COMMAND
 st.set_page_config(
@@ -17,23 +28,6 @@ st.set_page_config(
 )
 
 load_dotenv()
-
-# ✅ CORRECT IMPORTS
-from pinecone import Pinecone
-from sentence_transformers import SentenceTransformer
-
-# Import ENHANCED ingestion service
-from rag_based_book_bot.document_ingestion.enhanced_ingestion import (
-    EnhancedBookIngestorPaddle,
-    IngestorConfig
-)
-
-# Import agent components for answer generation
-from rag_based_book_bot.agents.nodes import llm_reasoning_node
-from rag_based_book_bot.agents.states import (
-    AgentState, DocumentChunk, RetrievedChunk, 
-    ParsedQuery, QueryIntent
-)
 
 # Custom CSS
 st.markdown("""
@@ -119,9 +113,9 @@ def load_embedding_model():
 def get_enhanced_ingestor():
     """Get cached semantic ingestor instance"""
     config = IngestorConfig(
-        similarity_threshold=0.75,  # ✅ NEW: Controls topic splitting
-        min_chunk_size=200,         # ✅ NEW: Minimum tokens per chunk
-        max_chunk_size=1500,        # ✅ NEW: Maximum tokens per chunk
+        similarity_threshold=0.75, 
+        min_chunk_size=200,
+        max_chunk_size=1500,
         debug=False
     )
     return EnhancedBookIngestorPaddle(config=config)
@@ -598,9 +592,7 @@ if st.button("🔍 Search", type="primary", disabled=not query):
                             st.divider()
                 else:
                     st.warning("No final chunks available")
-            # ==================== END FINAL CHUNKS ====================
-            
-            # ⭐⭐⭐ PIPELINE STATISTICS ⭐⭐⭐
+
             if final_state and final_state.reranked_chunks:
                 st.divider()
                 
@@ -643,7 +635,6 @@ if st.button("🔍 Search", type="primary", disabled=not query):
                         f"{avg_relevance:.1f}%",
                         delta_color="off"
                     )
-            # ⭐⭐⭐ END PIPELINE STATS ⭐⭐⭐
             
             # ==================== ANSWER DISPLAY SECTION ====================
             st.divider()
@@ -661,15 +652,9 @@ if st.button("🔍 Search", type="primary", disabled=not query):
                     f'</div>',
                     unsafe_allow_html=True
                 )
-                
-                # Show code snippets if available
-                if response.code_snippets:
-                    st.markdown("#### 💻 Code Examples")
-                    for i, code in enumerate(response.code_snippets, 1):
-                        st.code(code, language="python")
             else:
                 st.warning("⚠️ No response generated")
-            # ==================== END ANSWER DISPLAY ====================
+
 
 
 # Query History
