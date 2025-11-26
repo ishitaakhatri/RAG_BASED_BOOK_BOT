@@ -534,16 +534,13 @@ if st.button("🔍 Search", type="primary", disabled=not query):
         })
         
         if not matches:
-            st.warning("🤷 No relevant results found...")
+            st.warning("🤷 No relevant results found. Try rephrasing your question or removing filters.")
         else:
             st.success(f"✅ Found {len(matches)} relevant chunks")
             
             # Generate answer with user settings
-            st.divider()
-            st.subheader("💬 AI-Generated Answer")
-            
             with st.spinner("🤖 Generating answer..."):
-                response, error, final_state = generate_answer(  # ← Return state too!
+                response, error, final_state = generate_answer(
                     query, 
                     matches,
                     pass2_k=pass2_k,
@@ -551,7 +548,7 @@ if st.button("🔍 Search", type="primary", disabled=not query):
                     max_tokens=max_tokens
                 )
             
-            # ==================== SHOW FINAL CHUNKS ====================
+            # ==================== FINAL CHUNKS EXPANDER ====================
             with st.expander("🔍 Final Chunks (After 5-Pass Pipeline)", expanded=False):
                 if final_state and final_state.reranked_chunks:
                     st.markdown(f"**Showing final {len(final_state.reranked_chunks)} chunks after:**")
@@ -559,6 +556,7 @@ if st.button("🔍 Search", type="primary", disabled=not query):
                     st.markdown("- ✅ Multi-hop expansion")
                     st.markdown("- ✅ Cluster expansion")
                     st.markdown("- ✅ Deduplication & compression")
+                    st.markdown("---")
                     
                     for i, retrieved_chunk in enumerate(final_state.reranked_chunks[:5], 1):  # Show top 5
                         chunk = retrieved_chunk.chunk
@@ -576,27 +574,80 @@ if st.button("🔍 Search", type="primary", disabled=not query):
                         
                         # Show metadata
                         st.markdown("**Metadata:**")
-                        st.json({
+                        metadata_dict = {
                             "chunk_id": chunk.chunk_id,
                             "chapter": chunk.chapter,
                             "section": chunk.section if chunk.section else "N/A",
                             "page": chunk.page_number if chunk.page_number else "N/A",
                             "type": chunk.chunk_type,
-                        })
+                        }
+                        st.json(metadata_dict)
                         
                         # Show content
                         st.markdown("**Content:**")
+                        content_preview = chunk.content[:800] + ("..." if len(chunk.content) > 800 else "")
                         st.text_area(
                             f"Chunk {i} content",
-                            chunk.content[:800] + ("..." if len(chunk.content) > 800 else ""),
+                            content_preview,
                             height=200,
                             key=f"final_chunk_{i}",
                             label_visibility="collapsed"
                         )
                         
-                        st.divider()
+                        if i < len(final_state.reranked_chunks[:5]):  # Don't add divider after last chunk
+                            st.divider()
                 else:
                     st.warning("No final chunks available")
+            # ==================== END FINAL CHUNKS ====================
+            
+            # ⭐⭐⭐ PIPELINE STATISTICS ⭐⭐⭐
+            if final_state and final_state.reranked_chunks:
+                st.divider()
+                
+                st.markdown("### 📊 Pipeline Statistics")
+                
+                # Pipeline Statistics in 4 columns
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric(
+                        "Pass 1 → Pass 2",
+                        f"{len(matches)} → {pass2_k}",
+                        delta=f"-{len(matches) - pass2_k}",
+                        delta_color="normal"
+                    )
+                
+                with col2:
+                    st.metric(
+                        "After Multi-Hop",
+                        f"{len(final_state.reranked_chunks)}",
+                        delta=f"+{len(final_state.reranked_chunks) - pass2_k}",
+                        delta_color="normal"
+                    )
+                
+                with col3:
+                    # Get token count from assembled context
+                    token_count = len(final_state.assembled_context.split()) if final_state.assembled_context else 0
+                    st.metric(
+                        "Final Tokens",
+                        f"{token_count}",
+                        delta=f"Max: {max_tokens}",
+                        delta_color="off"
+                    )
+                
+                with col4:
+                    # Average relevance of final chunks
+                    avg_relevance = sum(c.relevance_percentage for c in final_state.reranked_chunks) / len(final_state.reranked_chunks)
+                    st.metric(
+                        "Avg Relevance",
+                        f"{avg_relevance:.1f}%",
+                        delta_color="off"
+                    )
+            # ⭐⭐⭐ END PIPELINE STATS ⭐⭐⭐
+            
+            # ==================== ANSWER DISPLAY SECTION ====================
+            st.divider()
+            st.subheader("💬 AI-Generated Answer")
             
             if error:
                 st.error(f"❌ {error}")
@@ -616,6 +667,10 @@ if st.button("🔍 Search", type="primary", disabled=not query):
                     st.markdown("#### 💻 Code Examples")
                     for i, code in enumerate(response.code_snippets, 1):
                         st.code(code, language="python")
+            else:
+                st.warning("⚠️ No response generated")
+            # ==================== END ANSWER DISPLAY ====================
+
 
 # Query History
 if st.session_state.query_history:
