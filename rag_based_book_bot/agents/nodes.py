@@ -26,7 +26,7 @@ from rag_based_book_bot.agents.states import (
 from rag_based_book_bot.retrieval.cross_encoder_reranker import CrossEncoderReranker
 from rag_based_book_bot.retrieval.multi_hop_expander import MultiHopExpander
 from rag_based_book_bot.retrieval.cluster_manager import ClusterManager
-from rag_based_book_bot.retrieval.context_compressor import ContextCompressor
+from rag_based_book_bot.retrieval.context_compressor import EnhancedContextCompressor
 
 load_dotenv()
 
@@ -83,7 +83,7 @@ def get_cluster_manager():
 
 def get_compressor(target_tokens=2000, max_tokens=4000):
     """Get context compressor with configurable token limits"""
-    return ContextCompressor(
+    return EnhancedContextCompressor(
         target_tokens=target_tokens,
         max_tokens=max_tokens
     )
