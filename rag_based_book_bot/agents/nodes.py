@@ -439,12 +439,8 @@ def cluster_expansion_node(state: AgentState) -> AgentState:
     return state
 
 
-def context_assembly_node(state: AgentState,max_tokens) -> AgentState:
-    """
-    PASS 5: Compression & Assembly
-    
-    Deduplicate, summarize, compress context to fit token budget.
-    """
+def context_assembly_node(state: AgentState, max_tokens) -> AgentState:
+    """PASS 5: Compression & Assembly"""
     state.current_node = "context_assembly"
     
     if not state.reranked_chunks or not state.parsed_query:
@@ -454,9 +450,13 @@ def context_assembly_node(state: AgentState,max_tokens) -> AgentState:
     try:
         print(f"\n[PASS 5] Context Compression & Assembly")
         
-        compressor = ContextCompressor(
-            target_tokens=int(max_tokens * 0.8),  # Target 80% of max
-            max_tokens=max_tokens
+        # Use ENHANCED compressor with semantic deduplication
+        from rag_based_book_bot.retrieval.context_compressor import EnhancedContextCompressor
+        
+        compressor = EnhancedContextCompressor(
+            target_tokens=int(max_tokens * 0.8),
+            max_tokens=max_tokens,
+            semantic_threshold=0.92  # Adjust: 0.90-0.95 recommended
         )
         
         # Convert chunks to format for compressor

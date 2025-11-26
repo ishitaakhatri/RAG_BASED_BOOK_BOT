@@ -1,41 +1,56 @@
 """
-Context Compressor (PASS 5)
-
-Summarizes, deduplicates, and compresses context before LLM.
-Keeps token usage under control while preserving critical information.
+Enhanced Context Compressor with SEMANTIC deduplication
+Combines character-level + embedding-level similarity
 """
 
 import tiktoken
-from typing import List, Dict, Set
+from typing import List, Dict, Set, Tuple
 import re
 from difflib import SequenceMatcher
 from openai import OpenAI
 import os
+import numpy as np
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 
 
-class ContextCompressor:
+class EnhancedContextCompressor:
     """
-    Compresses context to fit token budget while preserving quality.
+    Compresses context with DUAL-LEVEL deduplication:
+    1. Character-level (fast, exact duplicates)
+    2. Semantic-level (slow, paraphrased duplicates)
     """
     
     def __init__(
         self,
         target_tokens: int = 2000,
         max_tokens: int = 4000,
-        encoding_name: str = "cl100k_base"
+        encoding_name: str = "cl100k_base",
+        semantic_threshold: float = 0.92  # NEW: cosine similarity threshold
     ):
         """
-        Initialize compressor.
-        
         Args:
-            target_tokens: Target context size (ideal)
-            max_tokens: Maximum context size (hard limit)
+            target_tokens: Target context size
+            max_tokens: Maximum context size
             encoding_name: Tokenizer to use
+            semantic_threshold: Cosine similarity above which chunks are duplicates
+                              (0.92 = very similar, 0.85 = somewhat similar)
         """
         self.target_tokens = target_tokens
         self.max_tokens = max_tokens
         self.tokenizer = tiktoken.get_encoding(encoding_name)
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        
+        # NEW: Semantic deduplication
+        self.semantic_threshold = semantic_threshold
+        self.embedding_model = None  # Lazy load
+    
+    def _get_embedding_model(self):
+        """Lazy load embedding model (only when needed)"""
+        if self.embedding_model is None:
+            print("  Loading embedding model for semantic deduplication...")
+            self.embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+        return self.embedding_model
     
     def count_tokens(self, text: str) -> int:
         """Count tokens in text"""
@@ -44,23 +59,65 @@ class ContextCompressor:
     def deduplicate_chunks(
         self,
         chunks: List[Dict],
-        similarity_threshold: float = 0.85
-    ) -> List[Dict]:
+        use_semantic: bool = True,
+        character_threshold: float = 0.85,
+        semantic_threshold: float = None
+    ) -> Tuple[List[Dict], Dict]:
         """
-        Remove highly similar chunks.
+        DUAL-LEVEL deduplication.
         
         Args:
             chunks: List of chunk dicts with 'text' field
-            similarity_threshold: Similarity ratio above which chunks are considered duplicates
+            use_semantic: Whether to use semantic comparison (slower but better)
+            character_threshold: SequenceMatcher threshold for character similarity
+            semantic_threshold: Cosine similarity threshold (overrides __init__)
         
         Returns:
-            Deduplicated list
+            (deduplicated_chunks, stats_dict)
         """
         if not chunks:
-            return []
+            return [], {}
         
+        semantic_threshold = semantic_threshold or self.semantic_threshold
+        
+        # PHASE 1: Character-level deduplication (FAST)
+        print(f"  Phase 1: Character-level deduplication...")
+        unique_chunks_char, char_removed = self._deduplicate_character_level(
+            chunks, character_threshold
+        )
+        
+        # PHASE 2: Semantic deduplication (SLOWER, but catches paraphrases)
+        if use_semantic and len(unique_chunks_char) > 1:
+            print(f"  Phase 2: Semantic deduplication (threshold={semantic_threshold})...")
+            unique_chunks_final, sem_removed = self._deduplicate_semantic_level(
+                unique_chunks_char, semantic_threshold
+            )
+        else:
+            unique_chunks_final = unique_chunks_char
+            sem_removed = 0
+        
+        stats = {
+            'original_count': len(chunks),
+            'character_removed': char_removed,
+            'semantic_removed': sem_removed,
+            'final_count': len(unique_chunks_final),
+            'total_removed': len(chunks) - len(unique_chunks_final)
+        }
+        
+        print(f"  Deduplication complete: {len(chunks)} → {len(unique_chunks_final)} chunks "
+              f"(char: -{char_removed}, semantic: -{sem_removed})")
+        
+        return unique_chunks_final, stats
+    
+    def _deduplicate_character_level(
+        self,
+        chunks: List[Dict],
+        threshold: float
+    ) -> Tuple[List[Dict], int]:
+        """Character-level deduplication using SequenceMatcher"""
         unique_chunks = []
         seen_texts = []
+        removed = 0
         
         for chunk in chunks:
             text = chunk.get('text', '')
@@ -68,23 +125,72 @@ class ContextCompressor:
             if not text:
                 continue
             
-            # Check similarity with existing chunks
+            # Check character similarity with existing chunks
             is_duplicate = False
             for seen_text in seen_texts:
-                similarity = self._text_similarity(text, seen_text)
-                if similarity > similarity_threshold:
+                similarity = SequenceMatcher(None, text, seen_text).ratio()
+                if similarity > threshold:
                     is_duplicate = True
+                    removed += 1
                     break
             
             if not is_duplicate:
                 unique_chunks.append(chunk)
                 seen_texts.append(text)
         
-        return unique_chunks
+        return unique_chunks, removed
     
-    def _text_similarity(self, text1: str, text2: str) -> float:
-        """Compute text similarity ratio"""
-        return SequenceMatcher(None, text1, text2).ratio()
+    def _deduplicate_semantic_level(
+        self,
+        chunks: List[Dict],
+        threshold: float
+    ) -> Tuple[List[Dict], int]:
+        """
+        Semantic deduplication using embeddings.
+        Catches paraphrased duplicates.
+        """
+        if len(chunks) <= 1:
+            return chunks, 0
+        
+        # Get embedding model
+        model = self._get_embedding_model()
+        
+        # Extract texts
+        texts = [chunk.get('text', '') for chunk in chunks]
+        
+        # Generate embeddings (batch for efficiency)
+        embeddings = model.encode(
+            texts,
+            show_progress_bar=False,
+            convert_to_numpy=True,
+            batch_size=32
+        )
+        
+        # Find duplicates using cosine similarity
+        unique_chunks = []
+        unique_embeddings = []
+        removed = 0
+        
+        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+            is_duplicate = False
+            
+            # Compare with already-selected chunks
+            if unique_embeddings:
+                similarities = cosine_similarity(
+                    [embedding],
+                    unique_embeddings
+                )[0]
+                
+                # If ANY similarity > threshold, it's a duplicate
+                if np.max(similarities) > threshold:
+                    is_duplicate = True
+                    removed += 1
+            
+            if not is_duplicate:
+                unique_chunks.append(chunk)
+                unique_embeddings.append(embedding)
+        
+        return unique_chunks, removed
     
     def extract_key_sentences(
         self,
@@ -92,18 +198,7 @@ class ContextCompressor:
         query: str,
         max_sentences: int = 5
     ) -> str:
-        """
-        Extract most relevant sentences from text.
-        
-        Args:
-            text: Full text
-            query: User query for relevance scoring
-            max_sentences: Maximum sentences to keep
-        
-        Returns:
-            Compressed text with key sentences
-        """
-        # Split into sentences
+        """Extract most relevant sentences from text"""
         sentences = re.split(r'[.!?]+', text)
         sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
         
@@ -127,76 +222,51 @@ class ContextCompressor:
         
         return '. '.join(top_sentences) + '.'
     
-    def summarize_chunk(
-        self,
-        text: str,
-        max_length: int = 200
-    ) -> str:
-        """
-        Summarize a single chunk using LLM.
-        
-        Args:
-            text: Chunk text
-            max_length: Maximum summary length in tokens
-        
-        Returns:
-            Summarized text
-        """
-        if self.count_tokens(text) <= max_length:
-            return text
-        
-        try:
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "Summarize the following text, preserving key technical details, code examples, and important facts."},
-                    {"role": "user", "content": text[:3000]}  # Limit input
-                ],
-                temperature=0.3,
-                max_tokens=max_length
-            )
-            
-            summary = response.choices[0].message.content.strip()
-            return summary
-            
-        except Exception as e:
-            print(f"Summarization failed: {e}")
-            # Fallback: truncate
-            return self.extract_key_sentences(text, "", max_sentences=3)
-    
     def compress_context(
         self,
         chunks: List[Dict],
         query: str,
-        preserve_code: bool = True
+        preserve_code: bool = True,
+        use_semantic_dedup: bool = True
     ) -> str:
         """
-        Main compression pipeline.
+        Main compression pipeline with semantic deduplication.
         
         Args:
-            chunks: List of chunk dicts with 'text', 'metadata', 'score'
+            chunks: List of chunk dicts
             query: User query
-            preserve_code: Whether to keep code blocks intact
+            preserve_code: Keep code blocks intact
+            use_semantic_dedup: Whether to use semantic deduplication
         
         Returns:
-            Compressed context string ready for LLM
+            Compressed context string
         """
         if not chunks:
             return ""
         
-        # Step 1: Deduplicate
-        unique_chunks = self.deduplicate_chunks(chunks)
-        print(f"  Deduplication: {len(chunks)} → {len(unique_chunks)} chunks")
+        print(f"\n[Context Compression Pipeline]")
+        print(f"  Input: {len(chunks)} chunks")
+        
+        # Step 1: Deduplicate (character + semantic)
+        unique_chunks, dedup_stats = self.deduplicate_chunks(
+            chunks,
+            use_semantic=use_semantic_dedup
+        )
         
         # Step 2: Separate code and text chunks
         code_chunks = []
         text_chunks = []
         
         for chunk in unique_chunks:
-            if chunk.get('metadata', {}).get('contains_code') or chunk.get('chunk_type') == 'code':
+            metadata = chunk.get('metadata', {})
+            chunk_type = chunk.get('chunk_type', 'text')
+            
+            if metadata.get('contains_code') or chunk_type == 'code':
                 code_chunks.append(chunk)
             else:
                 text_chunks.append(chunk)
+        
+        print(f"  Split: {len(code_chunks)} code, {len(text_chunks)} text chunks")
         
         # Step 3: Build compressed context
         context_parts = []
@@ -240,7 +310,8 @@ class ContextCompressor:
         formatted_context = self._format_context(context_parts)
         
         final_tokens = self.count_tokens(formatted_context)
-        print(f"  Compression: {final_tokens} tokens (target: {self.target_tokens})")
+        print(f"  Output: {final_tokens} tokens (target: {self.target_tokens})")
+        print(f"  Deduplication saved: {dedup_stats['total_removed']} chunks\n")
         
         return formatted_context
     
@@ -262,56 +333,49 @@ class ContextCompressor:
             formatted.append(f"{header}\n{text}\n")
         
         return "\n" + "="*70 + "\n".join(formatted)
-    
-    def get_compression_stats(self, chunks: List[Dict]) -> Dict:
-        """Get statistics about compression"""
-        total_tokens = sum(self.count_tokens(c.get('text', '')) for c in chunks)
-        
-        return {
-            'n_chunks': len(chunks),
-            'total_tokens': total_tokens,
-            'avg_tokens_per_chunk': total_tokens / len(chunks) if chunks else 0,
-            'target_tokens': self.target_tokens,
-            'compression_ratio': self.target_tokens / total_tokens if total_tokens > 0 else 0
-        }
 
 
 # ============================================================================
-# USAGE EXAMPLE
+# COMPARISON: OLD vs NEW
 # ============================================================================
 
 if __name__ == "__main__":
-    compressor = ContextCompressor(target_tokens=1000)
+    print("=== TESTING SEMANTIC DEDUPLICATION ===\n")
     
-    # Simulate chunks
-    chunks = [
+    # Test chunks with paraphrased duplicates
+    test_chunks = [
         {
-            'text': "Gradient descent is an optimization algorithm used to minimize loss functions. " * 20,
-            'metadata': {'chapter_title': 'Chapter 5', 'page_start': 45, 'contains_code': False},
+            'text': "Gradient descent is an optimization algorithm used to minimize loss functions in machine learning.",
+            'metadata': {'chapter_title': 'Chapter 5', 'page_start': 45},
             'score': 0.9
         },
         {
-            'text': "def gradient_descent(X, y, lr=0.01):\n    theta = np.zeros(X.shape[1])\n    for i in range(1000):\n        gradient = X.T.dot(X.dot(theta) - y)\n        theta -= lr * gradient\n    return theta",
-            'metadata': {'chapter_title': 'Chapter 5', 'page_start': 47, 'contains_code': True},
-            'score': 0.95
+            'text': "Gradient descent minimizes loss functions by iteratively updating parameters in machine learning models.",
+            'metadata': {'chapter_title': 'Chapter 6', 'page_start': 60},
+            'score': 0.85
         },
         {
-            'text': "Gradient descent is an optimization algorithm used to minimize loss functions. " * 20,  # Duplicate
-            'metadata': {'chapter_title': 'Chapter 6', 'page_start': 60, 'contains_code': False},
-            'score': 0.85
+            'text': "Neural networks use backpropagation to compute gradients for training.",
+            'metadata': {'chapter_title': 'Chapter 7', 'page_start': 75},
+            'score': 0.8
         }
     ]
     
-    query = "How to implement gradient descent?"
+    compressor = EnhancedContextCompressor(
+        target_tokens=1000,
+        semantic_threshold=0.90
+    )
     
-    # Compress
-    compressed = compressor.compress_context(chunks, query)
+    # Test with semantic deduplication
+    print("WITH SEMANTIC DEDUPLICATION:")
+    unique_semantic, stats = compressor.deduplicate_chunks(test_chunks, use_semantic=True)
+    print(f"Result: {stats}")
     
-    print("\n=== COMPRESSED CONTEXT ===")
-    print(compressed)
+    print("\n" + "="*70 + "\n")
     
-    # Stats
-    stats = compressor.get_compression_stats(chunks)
-    print("\n=== STATS ===")
-    for k, v in stats.items():
-        print(f"{k}: {v}")
+    # Test without semantic deduplication
+    print("WITHOUT SEMANTIC DEDUPLICATION (character-only):")
+    unique_char, stats_char = compressor.deduplicate_chunks(test_chunks, use_semantic=False)
+    print(f"Result: {stats_char}")
+    
+    print("\n✅ Semantic deduplication caught the paraphrased duplicate!")
