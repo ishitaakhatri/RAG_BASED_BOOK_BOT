@@ -509,7 +509,9 @@ def cluster_expansion_node(state: AgentState) -> AgentState:
     return state
 
 
-def context_assembly_node(state: AgentState, max_tokens) -> AgentState:
+def context_assembly_node(state: AgentState) -> AgentState:
+
+    max_tokens = state.max_tokens
     """PASS 5: Compression & Assembly"""
     state.current_node = "context_assembly"
     

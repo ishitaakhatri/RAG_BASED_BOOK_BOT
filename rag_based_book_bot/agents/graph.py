@@ -6,7 +6,7 @@ from typing import Callable, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 
-from states import AgentState
+from rag_based_book_bot.agents.states import AgentState
 
 
 class NodeStatus(Enum):
@@ -171,7 +171,7 @@ class Graph:
 
 def build_indexing_graph() -> Graph:
     """Builds the graph for document indexing."""
-    from nodes import pdf_loader_node, chunking_embedding_node
+    from rag_based_book_bot.agents.nodes import pdf_loader_node, chunking_embedding_node
     
     graph = Graph(name="indexing_pipeline")
     
@@ -199,7 +199,7 @@ def build_query_graph() -> Graph:
     6. Context Compression & Assembly (Pass 5: Token management)
     7. LLM Reasoning (Final answer)
     """
-    from nodes import (
+    from rag_based_book_bot.agents.nodes import (
         user_query_node, vector_search_node, reranking_node,
         multi_hop_expansion_node, cluster_expansion_node,
         context_assembly_node, llm_reasoning_node
@@ -239,7 +239,7 @@ def build_query_graph() -> Graph:
 
 def build_full_graph() -> Graph:
     """Builds the complete RAG pipeline (indexing + query)."""
-    from nodes import (
+    from rag_based_book_bot.agents.nodes import (
         pdf_loader_node, chunking_embedding_node, user_query_node,
         vector_search_node, reranking_node, multi_hop_expansion_node,
         cluster_expansion_node, context_assembly_node, llm_reasoning_node

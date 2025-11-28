@@ -1,7 +1,6 @@
 """
 Streamlit App for RAG-Based Book Bot
-Using enhanced_ingestion.py for PDF processing
-WITH INTEGRATED ANSWER GENERATION
+UPDATED: Uses graph execution instead of manual node calls
 """
 import streamlit as st
 import os
@@ -13,11 +12,9 @@ from rag_based_book_bot.document_ingestion.enhanced_ingestion import (
     EnhancedBookIngestorPaddle,
     IngestorConfig
 )
-from rag_based_book_bot.agents.nodes import llm_reasoning_node
-from rag_based_book_bot.agents.states import (
-    AgentState, DocumentChunk, RetrievedChunk, 
-    ParsedQuery, QueryIntent
-)
+# UPDATED: Import graph execution
+from rag_based_book_bot.agents.graph import build_query_graph
+from rag_based_book_bot.agents.states import AgentState
 
 # MUST BE FIRST STREAMLIT COMMAND
 st.set_page_config(
@@ -121,40 +118,6 @@ def get_enhanced_ingestor():
     return EnhancedBookIngestorPaddle(config=config)
 
 
-def query_pinecone(query_text, top_k=5, book_filter=None, chapter_filter=None):
-    """Query Pinecone for relevant chunks"""
-    pc, index = initialize_pinecone()
-    if index is None:
-        return []
-    
-    model = load_embedding_model()
-    namespace = os.getenv("PINECONE_NAMESPACE", "books_rag")
-    
-    # Generate embedding
-    query_embedding = model.encode(query_text).tolist()
-    
-    # Build filter
-    filter_dict = {}
-    if book_filter and book_filter != "All Books":
-        filter_dict["book_title"] = book_filter
-    if chapter_filter:
-        filter_dict["chapter_numbers"] = {"$in": [chapter_filter]}
-    
-    # Query
-    try:
-        results = index.query(
-            vector=query_embedding,
-            top_k=top_k,
-            namespace=namespace,
-            filter=filter_dict if filter_dict else None,
-            include_metadata=True
-        )
-        return results.get("matches", [])
-    except Exception as e:
-        st.error(f"Query failed: {str(e)}")
-        return []
-
-
 def get_available_books():
     """Get list of books in Pinecone"""
     pc, index = initialize_pinecone()
@@ -185,7 +148,7 @@ def get_available_books():
 def ingest_book_enhanced(pdf_path, book_title, author):
     """Ingest a book into Pinecone using Semantic Chunking"""
     try:
-        # Get the ingestor (now returns SemanticBookIngestor)
+        # Get the ingestor
         ingestor = get_enhanced_ingestor()
         
         # Create progress container
@@ -220,124 +183,62 @@ def ingest_book_enhanced(pdf_path, book_title, author):
         return False, str(e)
 
 
-def parse_query_simple(query_text):
-    """Simple query parsing"""
-    query_lower = query_text.lower()
-    
-    # Detect intent
-    if any(w in query_lower for w in ['implement', 'code', 'write', 'build', 'create']):
-        intent = QueryIntent.CODE_REQUEST
-    elif any(w in query_lower for w in ['difference', 'compare', 'vs', 'versus']):
-        intent = QueryIntent.COMPARISON
-    elif any(w in query_lower for w in ['error', 'bug', 'fix', 'wrong', 'not working']):
-        intent = QueryIntent.DEBUGGING
-    elif any(w in query_lower for w in ['tutorial', 'walk through', 'step by step', 'guide']):
-        intent = QueryIntent.TUTORIAL
-    else:
-        intent = QueryIntent.CONCEPTUAL
-    
-    return ParsedQuery(
-        raw_query=query_text,
-        intent=intent,
-        topics=[],
-        keywords=query_text.split(),
-        complexity_hint="intermediate"
-    )
-
-
-def convert_pinecone_to_chunks(matches):
-    """Convert Pinecone matches to RetrievedChunk objects"""
-    chunks = []
-    
-    for match in matches:
-        metadata = match.get("metadata", {})
-        
-        # Handle metadata lists safely
-        chapter_numbers = metadata.get("chapter_numbers", [])
-        chapter_titles = metadata.get("chapter_titles", [])
-        section_titles = metadata.get("section_titles", [])
-        
-        chapter_num = chapter_numbers[0] if chapter_numbers else ""
-        chapter_title = chapter_titles[0] if chapter_titles else ""
-        
-        # Create DocumentChunk
-        chunk = DocumentChunk(
-            chunk_id=match["id"],
-            content=metadata.get("text", ""),
-            chapter=f"{chapter_num}: {chapter_title}" if chapter_num else chapter_title,
-            section=", ".join(section_titles) if section_titles else "",
-            page_number=metadata.get("page_start"),
-            chunk_type="code" if metadata.get("contains_code") else "text"
-        )
-        
-        # Create RetrievedChunk
-        retrieved_chunk = RetrievedChunk(
-            chunk=chunk,
-            similarity_score=match.get("score", 0.0),
-            rerank_score=match.get("score", 0.0),
-            relevance_percentage=round(match.get("score", 0.0) * 100, 1)
-        )
-        
-        chunks.append(retrieved_chunk)
-    
-    return chunks
-
-
-def generate_answer(query_text, matches, pass2_k=15, pass3_enabled=True, max_tokens=2500):
+def generate_answer_with_graph(
+    query_text: str,
+    pass1_k: int = 50,
+    pass2_k: int = 15,
+    pass3_enabled: bool = True,
+    pass3_max_hops: int = 2,
+    max_tokens: int = 2500,
+    book_filter: str = None
+):
     """
-    Generate AI answer using FULL 5-pass retrieval pipeline
+    Generate AI answer using FULL 5-pass retrieval pipeline with GRAPH execution
+    
+    UPDATED: Uses graph.execute() instead of manual node calls
     
     Returns:
         tuple: (response, error, final_state)
     """
     try:
-        from rag_based_book_bot.agents.nodes import (
-            user_query_node,
-            reranking_node,
-            multi_hop_expansion_node,
-            cluster_expansion_node,
-            context_assembly_node,
-            llm_reasoning_node
+        # Initialize state with all configuration
+        state = AgentState(
+            user_query=query_text,
+            vector_search_top_k=pass1_k,
+            pass2_k=pass2_k,
+            pass3_enabled=pass3_enabled,
+            pass3_max_hops=pass3_max_hops,
+            max_tokens=max_tokens,
+            book_filter=book_filter if book_filter and book_filter != "All Books" else None
         )
         
-        # Initialize state
-        state = AgentState(user_query=query_text)
+        # Build and execute query graph
+        print(f"\n{'='*70}")
+        print(f"EXECUTING 5-PASS RETRIEVAL GRAPH")
+        print(f"{'='*70}")
         
-        # Parse query
-        state = user_query_node(state)
+        graph = build_query_graph()
+        result = graph.execute(state)
         
-        # PASS 1 - Already done via UI
-        state.retrieved_chunks = convert_pinecone_to_chunks(matches)
-        print(f"\n[PASS 1] Vector Search")
-        print(f"  → Retrieved {len(state.retrieved_chunks)} candidates")
+        if not result.success:
+            error_msg = f"Graph execution failed at node '{result.failed_node}': {result.error_message}"
+            return None, error_msg, result.final_state
         
-        # PASS 2 - Cross-Encoder Reranking
-        state = reranking_node(state, top_k=pass2_k)
+        # Extract response from final state
+        final_state = result.final_state
         
-        # PASS 3 - Multi-Hop Expansion (optional)
-        if pass3_enabled:
-            state = multi_hop_expansion_node(state, max_hops=2)
+        if final_state.errors:
+            return None, f"Errors: {', '.join(final_state.errors)}", final_state
         
-        # PASS 4 - Cluster Expansion
-        state = cluster_expansion_node(state)
+        if not final_state.response:
+            return None, "No response generated", final_state
         
-        # PASS 5 - Context Compression
-        state = context_assembly_node(state, max_tokens=max_tokens)
-        
-        # FINAL - LLM Reasoning
-        state = llm_reasoning_node(state)
-        
-        if state.errors:
-            return None, f"Error: {', '.join(state.errors)}", state  # ← Return state
-        
-        return state.response, None, state  # ← Return state
+        return final_state.response, None, final_state
         
     except Exception as e:
         import traceback
-        return None, f"Pipeline failed: {str(e)}\n{traceback.format_exc()}", None
-
-
-
+        error_msg = f"Pipeline failed: {str(e)}\n{traceback.format_exc()}"
+        return None, error_msg, None
 
 
 # =============================================================================
@@ -446,6 +347,7 @@ with st.sidebar:
         
         st.markdown("**Pass 3:** Query Expansion")
         pass3_enabled = st.checkbox("Enable multi-hop", value=True)
+        pass3_max_hops = st.slider("Max hops", 1, 3, 2)
         
         st.markdown("**Pass 5:** Compression")
         max_tokens = st.slider("Max context tokens", 1500, 4000, 2500)
@@ -469,7 +371,7 @@ with st.sidebar:
 # =============================================================================
 
 st.title("🤖 RAG-Based Book Bot")
-st.markdown("**Enhanced Pipeline** • Ask questions about your ingested books and get AI-powered answers with citations!")
+st.markdown("**Graph-Based Pipeline** • Ask questions about your ingested books and get AI-powered answers with citations!")
 
 # Check if any books are available
 books = get_available_books()
@@ -501,53 +403,42 @@ with col1:
         help="Optionally filter results to a specific book"
     )
 
-with col2:
-    chapter_filter = st.text_input(
-        "Filter by Chapter",
-        placeholder="e.g., 1, 10, etc.",
-        help="Optionally filter to a specific chapter number"
-    )
-
 
 # Query button
 if st.button("🔍 Search", type="primary", disabled=not query):
     if query:
-        with st.spinner("🔎 Running 5-pass retrieval pipeline..."):
-            matches = query_pinecone(
-                query,
-                top_k=pass1_k,
-                book_filter=book_filter if book_filter != "All Books" else None,
-                chapter_filter=chapter_filter if chapter_filter else None
+        with st.spinner("🔎 Running 5-pass retrieval pipeline via GRAPH execution..."):
+            # UPDATED: Use graph execution
+            response, error, final_state = generate_answer_with_graph(
+                query_text=query,
+                pass1_k=pass1_k,
+                pass2_k=pass2_k,
+                pass3_enabled=pass3_enabled,
+                pass3_max_hops=pass3_max_hops,
+                max_tokens=max_tokens,
+                book_filter=book_filter
             )
         
         # Add to history
         st.session_state.query_history.insert(0, {
             'query': query,
-            'results': len(matches),
+            'results': len(final_state.reranked_chunks) if final_state else 0,
             'book_filter': book_filter
         })
         
-        if not matches:
+        if error:
+            st.error(f"❌ {error}")
+        elif not final_state or not final_state.reranked_chunks:
             st.warning("🤷 No relevant results found. Try rephrasing your question or removing filters.")
         else:
-            st.success(f"✅ Found {len(matches)} relevant chunks")
-            
-            # Generate answer with user settings
-            with st.spinner("🤖 Generating answer..."):
-                response, error, final_state = generate_answer(
-                    query, 
-                    matches,
-                    pass2_k=pass2_k,
-                    pass3_enabled=pass3_enabled,
-                    max_tokens=max_tokens
-                )
+            st.success(f"✅ Found {len(final_state.reranked_chunks)} relevant chunks")
             
             # ==================== FINAL CHUNKS EXPANDER ====================
             with st.expander("🔍 Final Chunks (After 5-Pass Pipeline)", expanded=False):
                 if final_state and final_state.reranked_chunks:
                     st.markdown(f"**Showing final {len(final_state.reranked_chunks)} chunks after:**")
                     st.markdown("- ✅ Cross-encoder reranking")
-                    st.markdown("- ✅ Multi-hop expansion")
+                    st.markdown("- ✅ Multi-hop expansion" if pass3_enabled else "- ⏭️ Multi-hop expansion (disabled)")
                     st.markdown("- ✅ Cluster expansion")
                     st.markdown("- ✅ Deduplication & compression")
                     st.markdown("---")
@@ -601,19 +492,22 @@ if st.button("🔍 Search", type="primary", disabled=not query):
                 # Pipeline Statistics in 4 columns
                 col1, col2, col3, col4 = st.columns(4)
                 
+                initial_count = len(final_state.retrieved_chunks) if final_state.retrieved_chunks else pass1_k
+                
                 with col1:
                     st.metric(
                         "Pass 1 → Pass 2",
-                        f"{len(matches)} → {pass2_k}",
-                        delta=f"-{len(matches) - pass2_k}",
+                        f"{initial_count} → {pass2_k}",
+                        delta=f"-{initial_count - pass2_k}",
                         delta_color="normal"
                     )
                 
                 with col2:
+                    expansion_delta = len(final_state.reranked_chunks) - pass2_k
                     st.metric(
                         "After Multi-Hop",
                         f"{len(final_state.reranked_chunks)}",
-                        delta=f"+{len(final_state.reranked_chunks) - pass2_k}",
+                        delta=f"+{expansion_delta}" if expansion_delta > 0 else "0",
                         delta_color="normal"
                     )
                 
@@ -656,7 +550,6 @@ if st.button("🔍 Search", type="primary", disabled=not query):
                 st.warning("⚠️ No response generated")
 
 
-
 # Query History
 if st.session_state.query_history:
     st.divider()
@@ -667,4 +560,4 @@ if st.session_state.query_history:
 
 # Footer
 st.divider()
-st.caption("Built with Streamlit • Powered by Pinecone & OpenAI • Using Semantic Chunking with Sentence Transformers")
+st.caption("Built with Streamlit • Powered by Pinecone & OpenAI • Graph-Based Execution • Using Semantic Chunking")

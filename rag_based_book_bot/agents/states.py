@@ -1,6 +1,8 @@
 """
 State definitions for the RAG Agent pipeline.
 These dataclasses define the structure of data flowing between nodes.
+
+UPDATED: Added pipeline configuration fields for graph execution
 """
 
 from dataclasses import dataclass, field
@@ -81,6 +83,8 @@ class AgentState:
     """
     Main state object that flows through the entire pipeline.
     Each node reads from and writes to this state.
+    
+    UPDATED: Added pipeline configuration fields for graph execution
     """
     # Input
     pdf_path: Optional[str] = None
@@ -111,7 +115,15 @@ class AgentState:
     
     # Optional filters
     book_filter: Optional[str] = None
-    chapter_filter: Optional[str] = None
+    
+    # ========================================================================
+    # NEW: Pipeline Configuration (set by UI, read by nodes)
+    # ========================================================================
+    vector_search_top_k: int = 50      # Pass 1: Initial vector search
+    pass2_k: int = 15                   # Pass 2: Reranking top-k
+    pass3_enabled: bool = True          # Pass 3: Multi-hop expansion toggle
+    pass3_max_hops: int = 2             # Pass 3: Maximum hops
+    max_tokens: int = 2500              # Pass 5: Context compression limit
     
     # Pipeline metadata
     current_node: str = ""
