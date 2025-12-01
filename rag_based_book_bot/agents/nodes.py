@@ -286,13 +286,26 @@ def chunking_embedding_node(state: AgentState) -> AgentState:
 # RETRIEVAL NODES (unchanged from original)
 # ============================================================================
 
-def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
-    """PASS 1: Coarse Semantic Search"""
+"""
+REPLACE the existing vector_search_node function in nodes.py
+This version reads top_k from state instead of parameter
+"""
+
+def vector_search_node(state: AgentState) -> AgentState:
+    """
+    PASS 1: Coarse Semantic Search
+    
+    UPDATED: Reads top_k from state.vector_search_top_k
+    This allows different pipelines to use different top_k values
+    """
     state.current_node = "vector_search"
     
     if not state.parsed_query:
         state.errors.append("Missing query for search")
         return state
+    
+    # Read top_k from state (allows different values per pipeline)
+    top_k = state.vector_search_top_k
     
     try:
         print(f"\n[PASS 1] Vector Search (top_k={top_k})")
@@ -343,6 +356,19 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
             ))
         
         state.retrieved_chunks = retrieved_chunks
+        
+        # NEW: For baseline pipeline (no reranking), populate reranked_chunks directly
+        if top_k <= 20:  # Heuristic: if top_k is small, this is baseline pipeline
+            # Copy to reranked_chunks with similarity as relevance
+            state.reranked_chunks = []
+            for rc in retrieved_chunks:
+                state.reranked_chunks.append(RetrievedChunk(
+                    chunk=rc.chunk,
+                    similarity_score=rc.similarity_score,
+                    rerank_score=rc.similarity_score,  # Use similarity as "rerank" score
+                    relevance_percentage=round(rc.similarity_score * 100, 1)
+                ))
+        
         print(f"  → Retrieved {len(retrieved_chunks)} candidates")
         
     except Exception as e:
@@ -350,14 +376,25 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
     
     return state
 
+"""
+REPLACE the existing reranking_node function in nodes.py
+This version reads top_k from state
+"""
 
-def reranking_node(state: AgentState, top_k: int = 15) -> AgentState:
-    """PASS 2: Cross-Encoder Reranking"""
+def reranking_node(state: AgentState) -> AgentState:
+    """
+    PASS 2: Cross-Encoder Reranking
+    
+    UPDATED: Reads top_k from state.pass2_k
+    """
     state.current_node = "reranking"
     
     if not state.retrieved_chunks or not state.parsed_query:
         state.errors.append("Missing chunks or query for reranking")
         return state
+    
+    # Read top_k from state
+    top_k = state.pass2_k
     
     try:
         print(f"\n[PASS 2] Cross-Encoder Reranking (top_k={top_k})")

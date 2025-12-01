@@ -1,6 +1,5 @@
 """
-Streamlit App for RAG-Based Book Bot
-UPDATED: Uses graph execution instead of manual node calls
+Streamlit App for RAG-Based Book Bot - WITH COMPARISON MODE
 """
 import streamlit as st
 import os
@@ -12,13 +11,13 @@ from rag_based_book_bot.document_ingestion.enhanced_ingestion import (
     EnhancedBookIngestorPaddle,
     IngestorConfig
 )
-# UPDATED: Import graph execution
-from rag_based_book_bot.agents.graph import build_query_graph
+from rag_based_book_bot.agents.graph import build_query_graph, build_query_graph_baseline
 from rag_based_book_bot.agents.states import AgentState
+from rag_based_book_bot.agents.comparison_utils import compare_pipeline_results
 
 # MUST BE FIRST STREAMLIT COMMAND
 st.set_page_config(
-    page_title="RAG Book Bot",
+    page_title="RAG Book Bot - Comparison Mode",
     page_icon="📚",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -26,7 +25,7 @@ st.set_page_config(
 
 load_dotenv()
 
-# Custom CSS
+# Custom CSS (same as before)
 st.markdown("""
 <style>
     .stAlert {
@@ -55,11 +54,27 @@ st.markdown("""
         border-left: 4px solid #28a745;
         margin: 1rem 0;
     }
+    .baseline-box {
+        background-color: #fff3cd;
+        padding: 1.5rem;
+        border-radius: 0.5rem;
+        border-left: 4px solid #ffc107;
+        margin: 1rem 0;
+    }
     .stats-box {
         background-color: #e8f4f8;
         padding: 1rem;
         border-radius: 0.5rem;
         margin: 0.5rem 0;
+    }
+    .comparison-header {
+        background: linear-gradient(90deg, #ffc107 0%, #28a745 100%);
+        color: white;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        text-align: center;
+        font-weight: bold;
+        margin: 1rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -71,10 +86,12 @@ if 'ingestion_complete' not in st.session_state:
     st.session_state.ingestion_complete = False
 if 'last_ingestion_stats' not in st.session_state:
     st.session_state.last_ingestion_stats = None
+if 'comparison_mode' not in st.session_state:
+    st.session_state.comparison_mode = True  # Default to comparison mode
 
 
 # =============================================================================
-# HELPER FUNCTIONS
+# HELPER FUNCTIONS (same as before)
 # =============================================================================
 
 @st.cache_resource
@@ -148,29 +165,23 @@ def get_available_books():
 def ingest_book_enhanced(pdf_path, book_title, author):
     """Ingest a book into Pinecone using Semantic Chunking"""
     try:
-        # Get the ingestor
         ingestor = get_enhanced_ingestor()
         
-        # Create progress container
         progress_text = st.empty()
         progress_bar = st.progress(0)
         
-        # Step 1: Extract text
         progress_text.text("📄 Step 1/3: Extracting text from PDF...")
         progress_bar.progress(0.33)
         
-        # Step 2: Semantic chunking
         progress_text.text("🧠 Step 2/3: Semantic chunking (grouping related content)...")
         progress_bar.progress(0.66)
         
-        # Ingest the book
         result = ingestor.ingest_book(
             pdf_path=pdf_path,
             book_title=book_title,
             author=author
         )
         
-        # Step 3: Complete
         progress_text.text("✅ Step 3/3: Ingestion complete!")
         progress_bar.progress(1.0)
         
@@ -183,7 +194,7 @@ def ingest_book_enhanced(pdf_path, book_title, author):
         return False, str(e)
 
 
-def generate_answer_with_graph(
+def run_both_pipelines(
     query_text: str,
     pass1_k: int = 50,
     pass2_k: int = 15,
@@ -193,56 +204,63 @@ def generate_answer_with_graph(
     book_filter: str = None
 ):
     """
-    Generate AI answer using FULL 5-pass retrieval pipeline with GRAPH execution
-    
-    UPDATED: Uses graph.execute() instead of manual node calls
+    Run BOTH pipelines and return comparison results.
     
     Returns:
-        tuple: (response, error, final_state)
+        tuple: (state_baseline, state_reranked, comparison_metrics)
     """
-    try:
-        # Initialize state with all configuration
-        state = AgentState(
-            user_query=query_text,
-            vector_search_top_k=pass1_k,
-            pass2_k=pass2_k,
-            pass3_enabled=pass3_enabled,
-            pass3_max_hops=pass3_max_hops,
-            max_tokens=max_tokens,
-            book_filter=book_filter if book_filter and book_filter != "All Books" else None
-        )
-        
-        # Build and execute query graph
-        print(f"\n{'='*70}")
-        print(f"EXECUTING 5-PASS RETRIEVAL GRAPH")
-        print(f"{'='*70}")
-        
-        graph = build_query_graph()
-        result = graph.execute(state)
-        
-        if not result.success:
-            error_msg = f"Graph execution failed at node '{result.failed_node}': {result.error_message}"
-            return None, error_msg, result.final_state
-        
-        # Extract response from final state
-        final_state = result.final_state
-        
-        if final_state.errors:
-            return None, f"Errors: {', '.join(final_state.errors)}", final_state
-        
-        if not final_state.response:
-            return None, "No response generated", final_state
-        
-        return final_state.response, None, final_state
-        
-    except Exception as e:
-        import traceback
-        error_msg = f"Pipeline failed: {str(e)}\n{traceback.format_exc()}"
-        return None, error_msg, None
+    print(f"\n{'='*70}")
+    print(f"RUNNING COMPARISON: BASELINE vs RERANKED")
+    print(f"{'='*70}")
+    
+    # ========== PIPELINE A: WITH RERANKING ==========
+    print(f"\n[PIPELINE A] WITH Reranking (50 → 15)")
+    state_reranked = AgentState(
+        user_query=query_text,
+        vector_search_top_k=pass1_k,  # 50
+        pass2_k=pass2_k,  # 15
+        pass3_enabled=pass3_enabled,
+        pass3_max_hops=pass3_max_hops,
+        max_tokens=max_tokens,
+        book_filter=book_filter if book_filter and book_filter != "All Books" else None
+    )
+    
+    graph_reranked = build_query_graph()
+    result_reranked = graph_reranked.execute(state_reranked)
+    
+    if not result_reranked.success:
+        return None, None, {"error": f"Reranked pipeline failed: {result_reranked.error_message}"}
+    
+    state_reranked = result_reranked.final_state
+    
+    # ========== PIPELINE B: WITHOUT RERANKING ==========
+    print(f"\n[PIPELINE B] WITHOUT Reranking (15 only)")
+    state_baseline = AgentState(
+        user_query=query_text,
+        vector_search_top_k=15,  # Only 15
+        pass2_k=15,  # Not used
+        pass3_enabled=pass3_enabled,
+        pass3_max_hops=pass3_max_hops,
+        max_tokens=max_tokens,
+        book_filter=book_filter if book_filter and book_filter != "All Books" else None
+    )
+    
+    graph_baseline = build_query_graph_baseline()
+    result_baseline = graph_baseline.execute(state_baseline)
+    
+    if not result_baseline.success:
+        return None, None, {"error": f"Baseline pipeline failed: {result_baseline.error_message}"}
+    
+    state_baseline = result_baseline.final_state
+    
+    # ========== COMPARE RESULTS ==========
+    comparison = compare_pipeline_results(state_baseline, state_reranked)
+    
+    return state_baseline, state_reranked, comparison
 
 
 # =============================================================================
-# SIDEBAR - INGESTION INTERFACE
+# SIDEBAR (same as before)
 # =============================================================================
 
 with st.sidebar:
@@ -275,15 +293,12 @@ with st.sidebar:
         
         if st.button("🚀 Ingest Book (Enhanced)", type="primary", disabled=not uploaded_file):
             if uploaded_file and book_title:
-                # Save uploaded file temporarily
                 temp_path = f"temp_{uploaded_file.name}"
                 with open(temp_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
                 
-                # Ingest using EnhancedBookIngestorPaddle
                 success, result = ingest_book_enhanced(temp_path, book_title, author or "Unknown")
                 
-                # Cleanup
                 try:
                     os.remove(temp_path)
                 except:
@@ -292,13 +307,11 @@ with st.sidebar:
                 if success:
                     st.success(f"✅ Successfully ingested '{book_title}'!")
                     
-                    # Display ingestion stats
                     st.markdown('<div class="stats-box">', unsafe_allow_html=True)
                     st.markdown("**📊 Ingestion Statistics:**")
                     st.markdown(f"- **Title:** {result.get('title', 'N/A')}")
                     st.markdown(f"- **Author:** {result.get('author', 'N/A')}")
                     st.markdown(f"- **Total Pages:** {result.get('total_pages', 'N/A')}")
-                    st.markdown(f"- **Chapters Detected:** {result.get('total_chapters', 'N/A')}")
                     st.markdown(f"- **Total Chunks:** {result.get('total_chunks', 'N/A')}")
                     st.markdown('</div>', unsafe_allow_html=True)
                     
@@ -311,7 +324,6 @@ with st.sidebar:
     
     st.divider()
     
-    # Show last ingestion stats if available
     if st.session_state.last_ingestion_stats:
         with st.expander("📊 Last Ingestion Stats", expanded=False):
             stats = st.session_state.last_ingestion_stats
@@ -319,13 +331,11 @@ with st.sidebar:
                 "title": stats.get("title"),
                 "author": stats.get("author"),
                 "total_pages": stats.get("total_pages"),
-                "total_chapters": stats.get("total_chapters"),
                 "total_chunks": stats.get("total_chunks")
             })
     
     st.divider()
     
-    # Available books
     st.subheader("📖 Available Books")
     books = get_available_books()
     
@@ -337,10 +347,23 @@ with st.sidebar:
     
     st.divider()
     
-    # Settings
-    with st.expander("⚙️ 5-Pass Retrieval Settings"):
-        st.markdown("**Pass 1:** Broad Vector Search")
-        pass1_k = st.slider("Initial candidates", 30, 100, 50)
+    # Comparison Mode Toggle
+    st.subheader("🔬 Comparison Mode")
+    comparison_mode = st.checkbox(
+        "Enable Pipeline Comparison",
+        value=True,
+        help="Compare WITH vs WITHOUT cross-encoder reranking"
+    )
+    st.session_state.comparison_mode = comparison_mode
+    
+    if comparison_mode:
+        st.info("📊 Will run both pipelines:\n- Baseline (15 chunks)\n- Reranked (50→15 chunks)")
+    
+    st.divider()
+    
+    with st.expander("⚙️ Pipeline Settings"):
+        st.markdown("**Pass 1:** Vector Search")
+        pass1_k = st.slider("Initial candidates (for reranked)", 30, 100, 50)
         
         st.markdown("**Pass 2:** Cross-Encoder Reranking")
         pass2_k = st.slider("After reranking", 10, 30, 15)
@@ -352,7 +375,6 @@ with st.sidebar:
         st.markdown("**Pass 5:** Compression")
         max_tokens = st.slider("Max context tokens", 1500, 4000, 2500)
         
-        # Check connection
         pc, index = initialize_pinecone()
         if index:
             st.success("✅ Connected to Pinecone")
@@ -367,13 +389,16 @@ with st.sidebar:
 
 
 # =============================================================================
-# MAIN INTERFACE - QUERY SYSTEM
+# MAIN INTERFACE
 # =============================================================================
 
 st.title("🤖 RAG-Based Book Bot")
-st.markdown("**Graph-Based Pipeline** • Ask questions about your ingested books and get AI-powered answers with citations!")
 
-# Check if any books are available
+if st.session_state.comparison_mode:
+    st.markdown("**🔬 COMPARISON MODE** • See how cross-encoder reranking improves results!")
+else:
+    st.markdown("**Standard Mode** • Using reranked pipeline")
+
 books = get_available_books()
 
 if not books:
@@ -391,7 +416,7 @@ with col1:
     )
 
 with col2:
-    top_k = st.slider("Results", 3, 10, 5, help="Number of chunks to retrieve")
+    top_k = st.slider("Results", 3, 10, 5, help="Number of chunks to display")
 
 # Filters
 col1, col2 = st.columns(2)
@@ -403,152 +428,170 @@ with col1:
         help="Optionally filter results to a specific book"
     )
 
-
 # Query button
-if st.button("🔍 Search", type="primary", disabled=not query):
+if st.button("🔍 Search & Compare", type="primary", disabled=not query):
     if query:
-        with st.spinner("🔎 Running 5-pass retrieval pipeline via GRAPH execution..."):
-            # UPDATED: Use graph execution
-            response, error, final_state = generate_answer_with_graph(
-                query_text=query,
-                pass1_k=pass1_k,
-                pass2_k=pass2_k,
-                pass3_enabled=pass3_enabled,
-                pass3_max_hops=pass3_max_hops,
-                max_tokens=max_tokens,
-                book_filter=book_filter
-            )
-        
-        # Add to history
-        st.session_state.query_history.insert(0, {
-            'query': query,
-            'results': len(final_state.reranked_chunks) if final_state else 0,
-            'book_filter': book_filter
-        })
-        
-        if error:
-            st.error(f"❌ {error}")
-        elif not final_state or not final_state.reranked_chunks:
-            st.warning("🤷 No relevant results found. Try rephrasing your question or removing filters.")
-        else:
-            st.success(f"✅ Found {len(final_state.reranked_chunks)} relevant chunks")
+        if st.session_state.comparison_mode:
+            # RUN COMPARISON
+            with st.spinner("🔬 Running comparison (2 pipelines)..."):
+                state_baseline, state_reranked, comparison = run_both_pipelines(
+                    query_text=query,
+                    pass1_k=pass1_k,
+                    pass2_k=pass2_k,
+                    pass3_enabled=pass3_enabled,
+                    pass3_max_hops=pass3_max_hops,
+                    max_tokens=max_tokens,
+                    book_filter=book_filter
+                )
             
-            # ==================== FINAL CHUNKS EXPANDER ====================
-            with st.expander("🔍 Final Chunks (After 5-Pass Pipeline)", expanded=False):
-                if final_state and final_state.reranked_chunks:
-                    st.markdown(f"**Showing final {len(final_state.reranked_chunks)} chunks after:**")
-                    st.markdown("- ✅ Cross-encoder reranking")
-                    st.markdown("- ✅ Multi-hop expansion" if pass3_enabled else "- ⏭️ Multi-hop expansion (disabled)")
-                    st.markdown("- ✅ Cluster expansion")
-                    st.markdown("- ✅ Deduplication & compression")
-                    st.markdown("---")
-                    
-                    for i, retrieved_chunk in enumerate(final_state.reranked_chunks[:5], 1):  # Show top 5
-                        chunk = retrieved_chunk.chunk
-                        
-                        st.markdown(f"### 🔹 Chunk {i}")
-                        
-                        # Show relevance scores
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Similarity", f"{retrieved_chunk.similarity_score:.2%}")
-                        with col2:
-                            st.metric("Rerank Score", f"{retrieved_chunk.rerank_score:.2%}")
-                        with col3:
-                            st.metric("Final Relevance", f"{retrieved_chunk.relevance_percentage:.1f}%")
-                        
-                        # Show metadata
-                        st.markdown("**Metadata:**")
-                        metadata_dict = {
-                            "chunk_id": chunk.chunk_id,
-                            "chapter": chunk.chapter,
-                            "section": chunk.section if chunk.section else "N/A",
-                            "page": chunk.page_number if chunk.page_number else "N/A",
-                            "type": chunk.chunk_type,
-                        }
-                        st.json(metadata_dict)
-                        
-                        # Show content
-                        st.markdown("**Content:**")
-                        content_preview = chunk.content[:800] + ("..." if len(chunk.content) > 800 else "")
-                        st.text_area(
-                            f"Chunk {i} content",
-                            content_preview,
-                            height=200,
-                            key=f"final_chunk_{i}",
-                            label_visibility="collapsed"
-                        )
-                        
-                        if i < len(final_state.reranked_chunks[:5]):  # Don't add divider after last chunk
-                            st.divider()
-                else:
-                    st.warning("No final chunks available")
-
-            if final_state and final_state.reranked_chunks:
-                st.divider()
+            if 'error' in comparison:
+                st.error(f"❌ {comparison['error']}")
+            else:
+                # ========== COMPARISON HEADER ==========
+                st.markdown('<div class="comparison-header">📊 PIPELINE COMPARISON RESULTS</div>', unsafe_allow_html=True)
                 
-                st.markdown("### 📊 Pipeline Statistics")
-                
-                # Pipeline Statistics in 4 columns
+                # ========== SUMMARY METRICS ==========
                 col1, col2, col3, col4 = st.columns(4)
-                
-                initial_count = len(final_state.retrieved_chunks) if final_state.retrieved_chunks else pass1_k
                 
                 with col1:
                     st.metric(
-                        "Pass 1 → Pass 2",
-                        f"{initial_count} → {pass2_k}",
-                        delta=f"-{initial_count - pass2_k}",
-                        delta_color="normal"
+                        "Chunk Overlap",
+                        f"{comparison['overlap']['overlap_count']}/15",
+                        delta=f"{comparison['overlap']['overlap_percentage']}%"
                     )
                 
                 with col2:
-                    expansion_delta = len(final_state.reranked_chunks) - pass2_k
                     st.metric(
-                        "After Multi-Hop",
-                        f"{len(final_state.reranked_chunks)}",
-                        delta=f"+{expansion_delta}" if expansion_delta > 0 else "0",
-                        delta_color="normal"
+                        "Different Chunks",
+                        comparison['overlap']['unique_to_b_count'],
+                        delta="Reranked found new"
                     )
                 
                 with col3:
-                    # Get token count from assembled context
-                    token_count = len(final_state.assembled_context.split()) if final_state.assembled_context else 0
                     st.metric(
-                        "Final Tokens",
-                        f"{token_count}",
-                        delta=f"Max: {max_tokens}",
-                        delta_color="off"
+                        "Avg Score Improvement",
+                        f"{comparison['stats_reranked']['avg_relevance']:.1f}%",
+                        delta=f"+{comparison['summary']['avg_score_improvement']}%"
                     )
                 
                 with col4:
-                    # Average relevance of final chunks
-                    avg_relevance = sum(c.relevance_percentage for c in final_state.reranked_chunks) / len(final_state.reranked_chunks)
+                    biggest_change = comparison['summary']['biggest_rank_change']
                     st.metric(
-                        "Avg Relevance",
-                        f"{avg_relevance:.1f}%",
-                        delta_color="off"
+                        "Biggest Rank Jump",
+                        f"±{abs(biggest_change)}",
+                        delta="positions moved"
                     )
-            
-            # ==================== ANSWER DISPLAY SECTION ====================
-            st.divider()
-            st.subheader("💬 AI-Generated Answer")
-            
-            if error:
-                st.error(f"❌ {error}")
-            elif response:
-                # Display answer in a nice box
-                st.markdown(
-                    f'<div class="answer-box">'
-                    f'<h4>Answer:</h4>'
-                    f'<p>{response.answer}</p>'
-                    f'<br><small>Confidence: {response.confidence:.1%}</small>'
-                    f'</div>',
-                    unsafe_allow_html=True
-                )
-            else:
-                st.warning("⚠️ No response generated")
-
+                
+                st.divider()
+                
+                # ========== SIDE-BY-SIDE CHUNKS ==========
+                st.subheader("📄 Top 5 Chunks Comparison")
+                
+                col_baseline, col_reranked = st.columns(2)
+                
+                with col_baseline:
+                    st.markdown("### 📋 WITHOUT Reranking (Baseline)")
+                    st.caption("Top 15 by vector similarity only")
+                    
+                    if state_baseline and state_baseline.reranked_chunks:
+                        for i, rc in enumerate(state_baseline.reranked_chunks[:5], 1):
+                            with st.expander(f"Chunk {i} - Score: {rc.relevance_percentage:.1f}%"):
+                                st.markdown(f"**Chapter:** {rc.chunk.chapter}")
+                                st.markdown(f"**Page:** {rc.chunk.page_number}")
+                                st.markdown(f"**Type:** {rc.chunk.chunk_type}")
+                                st.markdown(f"**Similarity:** {rc.similarity_score:.3f}")
+                                st.text_area(
+                                    "Content",
+                                    rc.chunk.content[:400] + "...",
+                                    height=150,
+                                    key=f"baseline_{i}"
+                                )
+                    else:
+                        st.warning("No baseline chunks")
+                
+                with col_reranked:
+                    st.markdown("### 🎯 WITH Reranking")
+                    st.caption("Top 15 from 50 candidates, reranked")
+                    
+                    if state_reranked and state_reranked.reranked_chunks:
+                        for i, rc in enumerate(state_reranked.reranked_chunks[:5], 1):
+                            # Check if this chunk is new (not in baseline top 15)
+                            is_new = rc.chunk.chunk_id in comparison['overlap']['unique_to_b_ids']
+                            badge = "🆕" if is_new else ""
+                            
+                            with st.expander(f"Chunk {i} {badge} - Score: {rc.relevance_percentage:.1f}%"):
+                                st.markdown(f"**Chapter:** {rc.chunk.chapter}")
+                                st.markdown(f"**Page:** {rc.chunk.page_number}")
+                                st.markdown(f"**Type:** {rc.chunk.chunk_type}")
+                                st.markdown(f"**Rerank Score:** {rc.rerank_score:.3f}")
+                                if is_new:
+                                    st.success("✨ This chunk was NOT in baseline top 15!")
+                                st.text_area(
+                                    "Content",
+                                    rc.chunk.content[:400] + "...",
+                                    height=150,
+                                    key=f"reranked_{i}"
+                                )
+                    else:
+                        st.warning("No reranked chunks")
+                
+                st.divider()
+                
+                # ========== RANK CHANGES ==========
+                with st.expander("📊 Detailed Rank Changes", expanded=False):
+                    if comparison['rank_changes']:
+                        st.markdown("**Chunks that appear in both pipelines:**")
+                        
+                        for change_info in comparison['rank_changes'][:10]:
+                            col1, col2, col3 = st.columns([2, 1, 1])
+                            
+                            with col1:
+                                st.text(f"Chunk: {change_info['chunk_id'][:20]}...")
+                            
+                            with col2:
+                                st.text(f"Baseline: #{change_info['rank_baseline'] + 1}")
+                            
+                            with col3:
+                                change = change_info['change']
+                                if change > 0:
+                                    st.success(f"Reranked: #{change_info['rank_reranked'] + 1} (⬆️ +{change})")
+                                elif change < 0:
+                                    st.error(f"Reranked: #{change_info['rank_reranked'] + 1} (⬇️ {change})")
+                                else:
+                                    st.info(f"Reranked: #{change_info['rank_reranked'] + 1} (→)")
+                    else:
+                        st.info("No common chunks to compare")
+                
+                st.divider()
+                
+                # ========== ANSWERS COMPARISON ==========
+                st.subheader("💬 Generated Answers Comparison")
+                
+                col_baseline, col_reranked = st.columns(2)
+                
+                with col_baseline:
+                    st.markdown("### 📋 Baseline Answer")
+                    if state_baseline.response:
+                        st.markdown('<div class="baseline-box">', unsafe_allow_html=True)
+                        st.write(state_baseline.response.answer)
+                        st.markdown('</div>', unsafe_allow_html=True)
+                        st.caption(f"Length: {comparison['answers']['baseline_length']} chars")
+                    else:
+                        st.warning("No baseline answer generated")
+                
+                with col_reranked:
+                    st.markdown("### 🎯 Reranked Answer")
+                    if state_reranked.response:
+                        st.markdown('<div class="answer-box">', unsafe_allow_html=True)
+                        st.write(state_reranked.response.answer)
+                        st.markdown('</div>', unsafe_allow_html=True)
+                        st.caption(f"Length: {comparison['answers']['reranked_length']} chars")
+                    else:
+                        st.warning("No reranked answer generated")
+        
+        else:
+            # STANDARD MODE (original functionality)
+            st.info("Standard mode - use comparison mode to see the difference!")
 
 # Query History
 if st.session_state.query_history:
@@ -556,8 +599,8 @@ if st.session_state.query_history:
     st.subheader("🕐 Query History")
     
     for i, item in enumerate(st.session_state.query_history[:5]):
-        st.markdown(f"{i+1}. **{item['query']}** - {item['results']} results ({item['book_filter']})")
+        st.markdown(f"{i+1}. **{item['query']}** ({item['book_filter']})")
 
 # Footer
 st.divider()
-st.caption("Built with Streamlit • Powered by Pinecone & OpenAI • Graph-Based Execution • Using Semantic Chunking")
+st.caption("Built with Streamlit • Comparison Mode for Research • Powered by Pinecone & OpenAI")

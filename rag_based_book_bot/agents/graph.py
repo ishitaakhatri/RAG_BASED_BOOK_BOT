@@ -237,6 +237,62 @@ def build_query_graph() -> Graph:
     return graph
 
 
+
+"""
+Add this function to rag_based_book_bot/agents/graph.py
+Insert it after build_query_graph() function
+"""
+
+def build_query_graph_baseline() -> Graph:
+    """
+    Builds the BASELINE query graph WITHOUT reranking.
+    
+    Pipeline:
+    1. Query Parser
+    2. Vector Search (Pass 1: Gets only 15 directly)
+    3. [SKIP Pass 2 - No Cross-Encoder]
+    4. Multi-Hop Expansion (Pass 3)
+    5. Cluster Expansion (Pass 4)
+    6. Context Compression & Assembly (Pass 5)
+    7. LLM Reasoning (Final answer)
+    """
+    from rag_based_book_bot.agents.nodes import (
+        user_query_node, vector_search_node,
+        multi_hop_expansion_node, cluster_expansion_node,
+        context_assembly_node, llm_reasoning_node
+    )
+    
+    graph = Graph(name="baseline_query_pipeline_no_rerank")
+    
+    # Add nodes (NO reranking node)
+    graph.add_node("query_parser", user_query_node, 
+                   "Parse user query")
+    graph.add_node("vector_search", vector_search_node, 
+                   "PASS 1: Vector search (top 15 directly)")
+    # SKIP: cross_encoder_reranking
+    graph.add_node("multi_hop_expansion", multi_hop_expansion_node, 
+                   "PASS 3: Multi-hop retrieval")
+    graph.add_node("cluster_expansion", cluster_expansion_node, 
+                   "PASS 4: Cluster-based expansion")
+    graph.add_node("context_compression", context_assembly_node, 
+                   "PASS 5: Compression & deduplication")
+    graph.add_node("llm_reasoning", llm_reasoning_node, 
+                   "Generate final answer")
+    
+    # Connect nodes (skip reranking edge)
+    graph.add_edge("query_parser", "vector_search")
+    graph.add_edge("vector_search", "multi_hop_expansion")  # Direct connection
+    graph.add_edge("multi_hop_expansion", "cluster_expansion")
+    graph.add_edge("cluster_expansion", "context_compression")
+    graph.add_edge("context_compression", "llm_reasoning")
+    
+    graph.set_entry_point("query_parser")
+    graph.set_end_point("llm_reasoning")
+    
+    return graph
+
+
+
 def build_full_graph() -> Graph:
     """Builds the complete RAG pipeline (indexing + query)."""
     from rag_based_book_bot.agents.nodes import (
