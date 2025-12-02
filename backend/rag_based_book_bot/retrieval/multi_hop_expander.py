@@ -10,7 +10,7 @@ This solves the "cross-chapter information" problem.
 import re
 from typing import List, Set, Callable
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.schema import HumanMessage
+from langchain_core.messages import HumanMessage
 import os
 
 

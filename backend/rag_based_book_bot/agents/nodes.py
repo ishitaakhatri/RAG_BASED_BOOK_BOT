@@ -18,7 +18,7 @@ from sentence_transformers import SentenceTransformer
 
 # LangChain imports
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain.output_parsers import ResponseSchema, StructuredOutputParser
 
 from rag_based_book_bot.agents.states import (
