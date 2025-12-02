@@ -1,5 +1,5 @@
 """
-Multi-Hop Query Expander (PASS 3)
+Multi-Hop Query Expander (PASS 3) - Updated to use LangChain
 
 Extracts key concepts from initial retrieval results,
 generates secondary queries, and retrieves additional context.
@@ -9,7 +9,8 @@ This solves the "cross-chapter information" problem.
 
 import re
 from typing import List, Set, Callable
-from openai import OpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.schema import HumanMessage
 import os
 
 
@@ -21,12 +22,17 @@ class MultiHopExpander:
     
     def __init__(self, api_key: str = None):
         """
-        Initialize with OpenAI for concept extraction.
+        Initialize with Gemini LLM via LangChain for concept extraction.
         
         Args:
-            api_key: OpenAI API key (defaults to env var)
+            api_key: Google API key (defaults to env var)
         """
-        self.client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash",
+            google_api_key=api_key or os.getenv("GOOGLE_API_KEY"),
+            temperature=0.3,
+            max_output_tokens=200
+        )
     
     def extract_concepts(
         self,
@@ -60,14 +66,8 @@ Extract specific technical terms, algorithm names, related concepts, or prerequi
 Return ONLY the concepts, one per line, no explanations."""
 
         try:
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=200
-            )
-            
-            concepts_text = response.choices[0].message.content.strip()
+            response = self.llm.invoke([HumanMessage(content=prompt)])
+            concepts_text = response.content.strip()
             concepts = [c.strip() for c in concepts_text.split('\n') if c.strip()]
             
             # Clean and deduplicate

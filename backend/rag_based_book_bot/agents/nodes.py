@@ -1,7 +1,9 @@
 """
-Updated Node implementations with LLM-based query parsing and enhanced book metadata handling
+Updated Node implementations with LangChain and Gemini
 
 CHANGES:
+- Switched from direct OpenAI API calls to LangChain
+- Using Google's Gemini (ChatGoogleGenerativeAI)
 - Enhanced metadata handling to preserve book_title throughout pipeline
 - Better chunk formatting with book information
 """
@@ -13,7 +15,11 @@ from typing import List
 from dotenv import load_dotenv
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
-from openai import OpenAI
+
+# LangChain imports
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.schema import HumanMessage, SystemMessage
+from langchain.output_parsers import ResponseSchema, StructuredOutputParser
 
 from rag_based_book_bot.agents.states import (
     AgentState, DocumentChunk, RetrievedChunk, 
@@ -33,6 +39,21 @@ INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "coding-books")
 NAMESPACE = os.getenv("PINECONE_NAMESPACE", "books_rag")
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
+# ============================================================================
+# LANGCHAIN LLM INITIALIZATION (Gemini)
+# ============================================================================
+
+# Initialize Gemini LLM at module level
+llm = ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash",
+    google_api_key=os.getenv("GOOGLE_API_KEY"),
+    temperature=0.7,
+    max_output_tokens=2048,
+    convert_system_message_to_human=True  # Gemini doesn't support system messages natively
+)
+
+print(f"✅ Initialized Gemini LLM: gemini-1.5-flash")
+
 # Global instances (lazy loading)
 _pc = None
 _index = None
@@ -41,7 +62,6 @@ _cross_encoder = None
 _multi_hop = None
 _cluster_manager = None
 _compressor = None
-_llm_client = None
 
 def get_pinecone_index():
     """Get Pinecone index (lazy initialization)"""
@@ -86,21 +106,14 @@ def get_compressor(target_tokens=2000, max_tokens=4000):
         max_tokens=max_tokens
     )
 
-def get_llm_client():
-    """Get cached OpenAI client for query parsing"""
-    global _llm_client
-    if _llm_client is None:
-        _llm_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    return _llm_client
-
 
 # ============================================================================
-# UPDATED: LLM-BASED QUERY PARSING NODE
+# UPDATED: LLM-BASED QUERY PARSING NODE WITH LANGCHAIN
 # ============================================================================
 
 def user_query_node(state: AgentState) -> AgentState:
     """
-    ✨ LLM-based query parsing for intelligent intent detection
+    ✨ LLM-based query parsing for intelligent intent detection using LangChain
     """
     state.current_node = "user_query"
     
@@ -138,8 +151,7 @@ def user_query_node(state: AgentState) -> AgentState:
 
 
 def _parse_query_with_llm(query: str) -> dict:
-    """Intelligent query parsing using GPT-4"""
-    client = get_llm_client()
+    """Intelligent query parsing using Gemini via LangChain"""
     
     system_prompt = """You are an expert query analyzer for a coding book learning assistant.
 
@@ -179,18 +191,24 @@ Respond with ONLY valid JSON:
 
     user_prompt = f'Analyze this query: "{query}"'
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        temperature=0.2,
-        max_tokens=400,
-        response_format={"type": "json_object"}
-    )
+    # Use LangChain to invoke Gemini
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_prompt)
+    ]
     
-    parsed = json.loads(response.choices[0].message.content)
+    response = llm.invoke(messages)
+    
+    # Parse the response
+    response_text = response.content.strip()
+    
+    # Remove markdown code blocks if present
+    if response_text.startswith("```json"):
+        response_text = response_text.replace("```json", "").replace("```", "").strip()
+    elif response_text.startswith("```"):
+        response_text = response_text.replace("```", "").strip()
+    
+    parsed = json.loads(response_text)
     
     # Validate and set defaults
     return {
@@ -266,7 +284,7 @@ def chunking_embedding_node(state: AgentState) -> AgentState:
 
 
 # ============================================================================
-# UPDATED: RETRIEVAL NODES WITH ENHANCED METADATA
+# RETRIEVAL NODES (unchanged - no LLM calls here)
 # ============================================================================
 
 def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
@@ -304,7 +322,6 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
         for match in results.get("matches", []):
             metadata = match.get("metadata", {})
             
-            # Extract ALL metadata fields including book information
             chapter_titles = metadata.get("chapter_titles", [])
             chapter_numbers = metadata.get("chapter_numbers", [])
             section_titles = metadata.get("section_titles", [])
@@ -321,7 +338,7 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
                 section=", ".join(section_titles) if section_titles else "",
                 page_number=metadata.get("page_start"),
                 chunk_type="code" if metadata.get("contains_code") else "text",
-                book_title=book_title,  # IMPORTANT: Preserve book title
+                book_title=book_title,
                 author=author,
                 chapter_title=chapter_title,
                 chapter_number=chapter_number
@@ -363,7 +380,7 @@ def reranking_node(state: AgentState, top_k: int = 15) -> AgentState:
                     'chapter': rc.chunk.chapter,
                     'page': rc.chunk.page_number,
                     'type': rc.chunk.chunk_type,
-                    'book_title': rc.chunk.book_title,  # Preserve book title
+                    'book_title': rc.chunk.book_title,
                     'author': rc.chunk.author
                 },
                 'similarity_score': rc.similarity_score
@@ -509,7 +526,7 @@ def cluster_expansion_node(state: AgentState) -> AgentState:
     return state
 
 
-def context_assembly_node(state: AgentState, max_tokens) -> AgentState:
+def context_assembly_node(state: AgentState, max_tokens: int = 2500) -> AgentState:
     """PASS 5: Compression & Assembly"""
     state.current_node = "context_assembly"
     
@@ -520,12 +537,9 @@ def context_assembly_node(state: AgentState, max_tokens) -> AgentState:
     try:
         print(f"\n[PASS 5] Context Compression & Assembly")
         
-        from rag_based_book_bot.retrieval.context_compressor import EnhancedContextCompressor
-        
-        compressor = EnhancedContextCompressor(
+        compressor = get_compressor(
             target_tokens=int(max_tokens * 0.8),
-            max_tokens=max_tokens,
-            semantic_threshold=0.92
+            max_tokens=max_tokens
         )
         
         chunks_for_compression = []
@@ -571,7 +585,6 @@ Your role:
 - The users will be someone having no knowledge about the topics, so explain everything that can be confusing for a new user
 - ALWAYS mention the book title when referencing examples or concepts from specific books
 
-
 Always reference sources WITH BOOK TITLES and ensure code is correct and follows best practices."""
     
     intent_prompts = {
@@ -591,8 +604,12 @@ Always reference sources WITH BOOK TITLES and ensure code is correct and follows
     return base + intent_prompts.get(query.intent, "") + complexity.get(query.complexity_hint, "")
 
 
+# ============================================================================
+# UPDATED: LLM REASONING NODE WITH LANGCHAIN & GEMINI
+# ============================================================================
+
 def llm_reasoning_node(state: AgentState) -> AgentState:
-    """Call OpenAI LLM for answer generation"""
+    """Call Gemini LLM via LangChain for answer generation"""
     state.current_node = "llm_reasoning"
     
     if not state.reranked_chunks or not state.parsed_query:
@@ -603,21 +620,17 @@ def llm_reasoning_node(state: AgentState) -> AgentState:
         state = context_assembly_node(state, max_tokens=2500)
     
     try:
-        client = get_llm_client()
+        print(f"\n[FINAL] LLM Reasoning with Gemini")
         
-        print(f"\n[FINAL] LLM Reasoning")
+        # Prepare messages for LangChain
+        messages = [
+            SystemMessage(content=state.system_prompt),
+            HumanMessage(content=f"{state.assembled_context}\n\nQuestion: {state.parsed_query.raw_query}")
+        ]
         
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": state.system_prompt},
-                {"role": "user", "content": f"{state.assembled_context}\n\nQuestion: {state.parsed_query.raw_query}"}
-            ],
-            temperature=0.7,
-            max_tokens=2048
-        )
-        
-        answer = response.choices[0].message.content
+        # Invoke Gemini via LangChain
+        response = llm.invoke(messages)
+        answer = response.content
         
         chunks = state.reranked_chunks
         code_snippets = [c.chunk.content for c in chunks if c.chunk.chunk_type == "code"]
