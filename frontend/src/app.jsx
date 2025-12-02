@@ -111,7 +111,7 @@ export default function RAGBookBot() {
     formData.append('file', uploadFile);
     // Book title and author will be auto-extracted from filename
 
-    setUploadProgress({ status: 'uploading', message: 'Uploading PDF...' });
+    setUploadProgress({ status: 'uploading', message: 'Uploading and processing PDF...' });
 
     try {
       const response = await fetch(`${API_BASE_URL}/ingest`, {
@@ -122,17 +122,35 @@ export default function RAGBookBot() {
       const data = await response.json();
 
       if (data.success) {
+        // Show success message
         setUploadProgress({
           status: 'success',
           message: `Successfully ingested "${data.result.title}" by ${data.result.author}! Created ${data.result.total_chunks} chunks.`,
           result: data.result
         });
-        fetchBooks();
+        
+        // FIXED: Show refreshing state
+        setUploadProgress(prev => ({
+          ...prev,
+          message: prev.message + ' Refreshing book list...'
+        }));
+        
+        // Refresh book list and wait for completion
+        await fetchBooks();
+        
+        // Update message to show completion
+        setUploadProgress(prev => ({
+          ...prev,
+          message: `✅ ${data.result.title} added successfully!`
+        }));
+        
+        // Then close the upload panel after a brief delay
         setTimeout(() => {
           setShowUpload(false);
           setUploadFile(null);
           setUploadProgress(null);
-        }, 4000);
+        }, 2000);
+        
       } else {
         setUploadProgress({
           status: 'error',
