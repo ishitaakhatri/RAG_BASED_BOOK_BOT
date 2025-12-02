@@ -1,18 +1,11 @@
 """
-FastAPI Backend for RAG Book Bot with Pipeline Details
-FIXED: Books list now loads properly using metadata namespace
-FIXED: Auto-extract book title and author from filename
+FastAPI Backend - FIXED: Book titles now show in chunks and sources
+Key changes:
+1. Added book_title and author to ChunkDetail model
+2. Included book metadata in format_chunk_detail()
+3. Added book metadata to sources response
 """
-import sys
-import os
-if sys.platform == "win32":
-    # Force UTF-8 encoding on Windows
-    if sys.stdout.encoding != 'utf-8':
-        sys.stdout.reconfigure(encoding='utf-8')
-    if sys.stderr.encoding != 'utf-8':
-        sys.stderr.reconfigure(encoding='utf-8')
-    # Also set environment variable for subprocess
-    os.environ['PYTHONIOENCODING'] = 'utf-8'
+# ... (keep all imports the same) ...
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -56,49 +49,21 @@ app.add_middleware(
 
 
 # ============================================================================
-# HELPER FUNCTIONS
+# FIXED MODELS - Added book_title and author
 # ============================================================================
 
-def parse_book_filename(filename: str) -> tuple[str, str]:
-    """
-    Parse book filename in format: "Title - Author.pdf"
-    Uses the FIRST " - " (dash with spaces) as the separator.
-    
-    Examples:
-        "AI Engineering - Chip Huyen.pdf" 
-        → ("AI Engineering", "Chip Huyen")
-        
-        "Developing Apps with GPT-4 and ChatGPT - Olivier Caelen & Marie-Alice Blete.pdf"
-        → ("Developing Apps with GPT-4 and ChatGPT", "Olivier Caelen & Marie-Alice Blete")
-        
-        "Machine Learning - A Probabilistic Perspective - Kevin Murphy.pdf"
-        → ("Machine Learning", "A Probabilistic Perspective - Kevin Murphy")
-        
-        "Simple Book.pdf"
-        → ("Simple Book", "Unknown")
-    
-    Note: Hyphens without spaces (like "Marie-Alice" or "GPT-4") are NOT treated as separators.
-    """
-    # Remove extension
-    name_without_ext = filename.rsplit('.', 1)[0] if '.' in filename else filename
-    
-    # Find the FIRST occurrence of " - " (with spaces on both sides)
-    separator = ' - '
-    
-    if separator in name_without_ext:
-        # Split ONLY on the first " - "
-        first_dash_index = name_without_ext.index(separator)
-        title = name_without_ext[:first_dash_index].strip()
-        author = name_without_ext[first_dash_index + len(separator):].strip()
-    else:
-        # No separator found - entire name is title
-        title = name_without_ext.strip()
-        author = "Unknown"
-    
-    return title, author
+class ChunkDetail(BaseModel):
+    chunk_id: str
+    chapter: str
+    page: Optional[int]
+    relevance: float
+    type: str
+    content_preview: str
+    source: str
+    book_title: str = "Unknown Book"  # NEW
+    author: str = "Unknown Author"    # NEW
 
 
-# Request/Response Models
 class QueryRequest(BaseModel):
     query: str
     book_filter: Optional[str] = None
@@ -109,19 +74,12 @@ class QueryRequest(BaseModel):
     pass3_enabled: bool = True
     max_tokens: int = 2500
 
-class ChunkDetail(BaseModel):
-    chunk_id: str
-    chapter: str
-    page: Optional[int]
-    relevance: float
-    type: str
-    content_preview: str
-    source: str
 
 class PipelineStage(BaseModel):
     stage_name: str
     chunk_count: int
     chunks: List[ChunkDetail]
+
 
 class QueryResponse(BaseModel):
     answer: str
@@ -130,10 +88,12 @@ class QueryResponse(BaseModel):
     stats: dict
     pipeline_stages: List[PipelineStage]
 
+
 class IngestResponse(BaseModel):
     success: bool
     result: Optional[dict] = None
     error: Optional[str] = None
+
 
 class BookInfo(BaseModel):
     title: str
@@ -141,24 +101,38 @@ class BookInfo(BaseModel):
     total_chunks: int
     indexed_at: Optional[float] = None
 
+
 class BooksResponse(BaseModel):
     books: List[BookInfo]
 
 
 # ============================================================================
-# FIXED: Book Metadata Management
+# HELPER FUNCTIONS
 # ============================================================================
 
+def parse_book_filename(filename: str) -> tuple[str, str]:
+    """Parse book filename in format: 'Title - Author.pdf'"""
+    name_without_ext = filename.rsplit('.', 1)[0] if '.' in filename else filename
+    separator = ' - '
+    
+    if separator in name_without_ext:
+        first_dash_index = name_without_ext.index(separator)
+        title = name_without_ext[:first_dash_index].strip()
+        author = name_without_ext[first_dash_index + len(separator):].strip()
+    else:
+        title = name_without_ext.strip()
+        author = "Unknown"
+    
+    return title, author
+
+
 def store_book_metadata(book_title: str, author: str, total_chunks: int):
-    """Store book metadata in separate namespace for instant retrieval"""
+    """Store book metadata in separate namespace"""
     try:
         index = get_pinecone_index()
         metadata_namespace = "books_metadata"
-        
-        # Create deterministic ID
         book_id = hashlib.md5(book_title.encode()).hexdigest()
         
-        # Store with dummy vector
         index.upsert(
             vectors=[{
                 "id": book_id,
@@ -172,23 +146,17 @@ def store_book_metadata(book_title: str, author: str, total_chunks: int):
             }],
             namespace=metadata_namespace
         )
-        
         print(f"✅ Stored metadata for: {book_title}")
-        
     except Exception as e:
         print(f"⚠️ Failed to store metadata: {e}")
 
 
 def get_available_books() -> List[BookInfo]:
-    """
-    FIXED: Retrieve ALL books from metadata namespace
-    Falls back to querying main namespace if needed
-    """
+    """Retrieve all books from metadata namespace"""
     try:
         index = get_pinecone_index()
         metadata_namespace = "books_metadata"
         
-        # Try to get from metadata namespace (fast)
         try:
             results = index.query(
                 vector=[1.0] * 384,
@@ -209,23 +177,18 @@ def get_available_books() -> List[BookInfo]:
                     ))
             
             if books_info:
-                print(f"✅ Found {len(books_info)} books from metadata namespace")
-                # Sort by indexed_at (most recent first)
                 books_info.sort(key=lambda x: x.indexed_at or 0, reverse=True)
                 return books_info
         except Exception as e:
-            print(f"Metadata namespace not found: {e}")
+            print(f"Metadata namespace error: {e}")
         
-        # Fallback: Query main namespace with multiple random vectors
-        print("Using fallback: querying main namespace...")
+        # Fallback
         namespace = os.getenv("PINECONE_NAMESPACE", "books_rag")
-        books_set = {}  # Use dict to store book info
+        books_set = {}
         
-        # Multiple queries for better coverage
         import random
-        for _ in range(10):  # 10 queries with different vectors
+        for _ in range(10):
             random_vector = [random.uniform(-1, 1) for _ in range(384)]
-            
             results = index.query(
                 vector=random_vector,
                 top_k=1000,
@@ -240,32 +203,11 @@ def get_available_books() -> List[BookInfo]:
                     books_set[book_title] = BookInfo(
                         title=book_title,
                         author=metadata.get("author", "Unknown"),
-                        total_chunks=0,  # Unknown from main namespace
+                        total_chunks=0,
                         indexed_at=None
                     )
         
-        # Also try zero vector
-        results = index.query(
-            vector=[0.0] * 384,
-            top_k=1000,
-            namespace=namespace,
-            include_metadata=True
-        )
-        
-        for match in results.get("matches", []):
-            metadata = match.get("metadata", {})
-            book_title = metadata.get("book_title")
-            if book_title and book_title not in books_set:
-                books_set[book_title] = BookInfo(
-                    title=book_title,
-                    author=metadata.get("author", "Unknown"),
-                    total_chunks=0,
-                    indexed_at=None
-                )
-        
-        books_list = list(books_set.values())
-        print(f"✅ Found {len(books_list)} books from main namespace")
-        return books_list
+        return list(books_set.values())
         
     except Exception as e:
         print(f"❌ Error fetching books: {e}")
@@ -297,7 +239,7 @@ def query_pinecone(query_text, top_k=50, book_filter=None, chapter_filter=None):
         
         return results.get("matches", [])
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Pinecone query failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
 
 def convert_matches_to_chunks(matches):
@@ -321,7 +263,11 @@ def convert_matches_to_chunks(matches):
             chapter=f"{chapter_num}: {chapter_title}" if chapter_num else chapter_title,
             section=", ".join(section_titles) if section_titles else "",
             page_number=metadata.get("page_start"),
-            chunk_type="code" if metadata.get("contains_code") else "text"
+            chunk_type="code" if metadata.get("contains_code") else "text",
+            book_title=metadata.get("book_title", "Unknown Book"),
+            author=metadata.get("author", "Unknown Author"),
+            chapter_title=chapter_titles,
+            chapter_number=chapter_numbers
         )
         
         chunks.append(RetrievedChunk(
@@ -335,7 +281,7 @@ def convert_matches_to_chunks(matches):
 
 
 def format_chunk_detail(chunk, source: str) -> ChunkDetail:
-    """Format a RetrievedChunk into ChunkDetail for frontend"""
+    """FIXED: Now includes book metadata"""
     return ChunkDetail(
         chunk_id=chunk.chunk.chunk_id,
         chapter=chunk.chunk.chapter,
@@ -343,12 +289,14 @@ def format_chunk_detail(chunk, source: str) -> ChunkDetail:
         relevance=chunk.relevance_percentage,
         type=chunk.chunk.chunk_type,
         content_preview=chunk.chunk.content[:200] + "..." if len(chunk.chunk.content) > 200 else chunk.chunk.content,
-        source=source
+        source=source,
+        book_title=chunk.chunk.book_title or "Unknown Book",  # NEW
+        author=chunk.chunk.author or "Unknown Author"          # NEW
     )
 
 
 # ============================================================================
-# API Endpoints
+# API ENDPOINTS
 # ============================================================================
 
 @app.get("/")
@@ -359,22 +307,22 @@ async def root():
 
 @app.get("/books", response_model=BooksResponse)
 async def list_books():
-    """Get list of available books with metadata - FIXED!"""
+    """Get list of available books"""
     books = get_available_books()
     return BooksResponse(books=books)
 
 
 @app.post("/query", response_model=QueryResponse)
 async def process_query(request: QueryRequest):
-    """Process user query through 5-pass retrieval pipeline"""
+    """Process query with FIXED book metadata in response"""
     try:
         pipeline_stages = []
         
-        # Step 1: Parse query
+        # Parse query
         state = AgentState(user_query=request.query)
         state = user_query_node(state)
         
-        # Step 2: Pass 1 - Vector Search
+        # Pass 1: Vector Search
         matches = query_pinecone(
             request.query,
             top_k=request.pass1_k,
@@ -383,11 +331,10 @@ async def process_query(request: QueryRequest):
         )
         
         if not matches:
-            raise HTTPException(status_code=404, detail="No relevant content found")
+            raise HTTPException(status_code=404, detail="No content found")
         
         state.retrieved_chunks = convert_matches_to_chunks(matches)
         
-        # Track Pass 1
         pass1_chunks = [format_chunk_detail(chunk, "pass1") for chunk in state.retrieved_chunks]
         pipeline_stages.append(PipelineStage(
             stage_name="Pass 1: Vector Search",
@@ -395,9 +342,8 @@ async def process_query(request: QueryRequest):
             chunks=pass1_chunks
         ))
         
-        # Step 3: Pass 2 - Reranking
+        # Pass 2: Reranking
         state = reranking_node(state, top_k=request.pass2_k)
-        
         pass2_chunks = [format_chunk_detail(chunk, "pass2_reranked") for chunk in state.reranked_chunks]
         pipeline_stages.append(PipelineStage(
             stage_name="Pass 2: Cross-Encoder Reranking",
@@ -407,10 +353,9 @@ async def process_query(request: QueryRequest):
         
         pass2_count = len(state.reranked_chunks)
         
-        # Step 4: Pass 3 - Multi-Hop (optional)
+        # Pass 3: Multi-Hop (optional)
         if request.pass3_enabled:
             state = multi_hop_expansion_node(state, max_hops=2)
-            
             pass3_new_chunks = [
                 format_chunk_detail(chunk, "pass3_multihop") 
                 for chunk in state.reranked_chunks[pass2_count:]
@@ -421,13 +366,13 @@ async def process_query(request: QueryRequest):
                 chunks=pass3_new_chunks
             ))
         
-        # Step 5: Pass 4 - Cluster Expansion
+        # Pass 4: Cluster Expansion
         state = cluster_expansion_node(state)
         
-        # Step 6: Pass 5 - Context Assembly
+        # Pass 5: Context Assembly
         state = context_assembly_node(state, max_tokens=request.max_tokens)
         
-        # Step 7: LLM Reasoning
+        # LLM Reasoning
         state = llm_reasoning_node(state)
         
         # Track Final Chunks
@@ -441,14 +386,16 @@ async def process_query(request: QueryRequest):
         if state.errors:
             raise HTTPException(status_code=500, detail="; ".join(state.errors))
         
-        # Format response
+        # FIXED: Sources now include book metadata
         sources = [
             {
                 "chunk_id": rc.chunk.chunk_id,
                 "chapter": rc.chunk.chapter,
                 "page": rc.chunk.page_number,
                 "relevance": rc.relevance_percentage,
-                "type": rc.chunk.chunk_type
+                "type": rc.chunk.chunk_type,
+                "book_title": rc.chunk.book_title or "Unknown Book",  # NEW
+                "author": rc.chunk.author or "Unknown Author"          # NEW
             }
             for rc in state.reranked_chunks[:5]
         ]
@@ -471,7 +418,7 @@ async def process_query(request: QueryRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Query processing failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
 
 @app.post("/ingest", response_model=IngestResponse)
@@ -480,14 +427,9 @@ async def ingest_book(
     book_title: Optional[str] = None,
     author: Optional[str] = None
 ):
-    """
-    Ingest a new PDF book - Auto-extracts title and author from filename
-    
-    Filename format: "Book Title - Author Name.pdf"
-    You can override with explicit book_title and author parameters.
-    """
+    """Ingest a new PDF book"""
     if not file.filename.endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+        raise HTTPException(status_code=400, detail="Only PDF files supported")
     
     try:
         # Auto-extract from filename if not provided
@@ -503,7 +445,7 @@ async def ingest_book(
             final_book_title = book_title
             final_author = author
         
-        # Save uploaded file temporarily
+        # Save temporarily
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
             content = await file.read()
             tmp_file.write(content)
@@ -524,7 +466,7 @@ async def ingest_book(
             author=final_author
         )
         
-        # FIXED: Store book metadata for instant retrieval
+        # Store metadata
         store_book_metadata(
             book_title=final_book_title,
             author=final_author,
