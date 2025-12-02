@@ -1,6 +1,10 @@
 // frontend/src/App.jsx
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, BookOpen, Upload, Settings, MessageSquare, FileText, Code, Sparkles, AlertCircle, CheckCircle, Loader, Book, ChevronDown, ChevronUp } from 'lucide-react';
+import { 
+  Search, BookOpen, Upload, Settings, MessageSquare, FileText, Code, 
+  Sparkles, AlertCircle, CheckCircle, Loader, Book, ChevronDown, 
+  ChevronUp, Eye, Filter, Layers
+} from 'lucide-react';
 
 const API_BASE_URL = 'http://localhost:8000';
 
@@ -71,10 +75,10 @@ export default function RAGBookBot() {
 
       const data = await response.json();
 
-      if (data.error) {
+      if (data.error || data.detail) {
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: `Error: ${data.error}`,
+          content: `Error: ${data.error || data.detail}`,
           error: true
         }]);
       } else {
@@ -83,7 +87,8 @@ export default function RAGBookBot() {
           content: data.answer,
           sources: data.sources,
           stats: data.stats,
-          confidence: data.confidence
+          confidence: data.confidence,
+          pipeline_stages: data.pipeline_stages  // NEW: Pipeline data
         }]);
       }
     } catch (error) {
@@ -154,7 +159,7 @@ export default function RAGBookBot() {
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-white">RAG Book Bot</h1>
-                <p className="text-sm text-purple-200">AI-Powered Book Assistant</p>
+                <p className="text-sm text-purple-200">AI-Powered Book Assistant with 5-Pass Retrieval</p>
               </div>
             </div>
             <div className="flex items-center space-x-3">
@@ -352,7 +357,7 @@ export default function RAGBookBot() {
                       Welcome to RAG Book Bot
                     </h3>
                     <p className="text-purple-200 max-w-md">
-                      Ask questions about your ingested books and get AI-powered answers with citations!
+                      Ask questions about your ingested books and get AI-powered answers with full pipeline visibility!
                     </p>
                   </div>
                 ) : (
@@ -400,6 +405,8 @@ export default function RAGBookBot() {
 
 function MessageBubble({ message }) {
   const [showSources, setShowSources] = useState(false);
+  const [showPipeline, setShowPipeline] = useState(false);
+  const [selectedStage, setSelectedStage] = useState(null);
 
   if (message.role === 'user') {
     return (
@@ -413,7 +420,7 @@ function MessageBubble({ message }) {
 
   return (
     <div className="flex justify-start">
-      <div className="max-w-3xl bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg px-4 py-3 text-white">
+      <div className="max-w-3xl bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg px-4 py-3 text-white w-full">
         {message.error ? (
           <div className="flex items-start space-x-2 text-red-300">
             <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
@@ -429,6 +436,77 @@ function MessageBubble({ message }) {
               </div>
             )}
 
+            {/* Pipeline Visualization - NEW! */}
+            {message.pipeline_stages && message.pipeline_stages.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-white/20">
+                <button
+                  onClick={() => setShowPipeline(!showPipeline)}
+                  className="flex items-center space-x-2 text-sm text-purple-300 hover:text-purple-100 transition-colors mb-2"
+                >
+                  <Layers className="w-4 h-4" />
+                  <span>View Retrieval Pipeline ({message.pipeline_stages.length} stages)</span>
+                  {showPipeline ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+                
+                {showPipeline && (
+                  <div className="mt-3 space-y-3">
+                    {message.pipeline_stages.map((stage, stageIdx) => (
+                      <div key={stageIdx} className="bg-white/5 rounded-lg p-3 border border-white/10">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-sm font-semibold text-white flex items-center">
+                            <Filter className="w-4 h-4 mr-2" />
+                            {stage.stage_name}
+                          </h4>
+                          <span className="text-xs bg-purple-500/30 px-2 py-1 rounded">
+                            {stage.chunk_count} chunks
+                          </span>
+                        </div>
+                        
+                        <button
+                          onClick={() => setSelectedStage(selectedStage === stageIdx ? null : stageIdx)}
+                          className="text-xs text-purple-300 hover:text-purple-100 flex items-center space-x-1"
+                        >
+                          <Eye className="w-3 h-3" />
+                          <span>{selectedStage === stageIdx ? 'Hide' : 'Show'} chunks</span>
+                        </button>
+                        
+                        {selectedStage === stageIdx && (
+                          <div className="mt-2 space-y-2 max-h-64 overflow-y-auto">
+                            {stage.chunks.map((chunk, chunkIdx) => (
+                              <div key={chunkIdx} className="bg-white/5 rounded p-2 text-xs border border-white/5">
+                                <div className="flex items-start justify-between mb-1">
+                                  <span className="text-purple-200 font-mono text-[10px]">
+                                    {chunk.chunk_id.substring(0, 12)}...
+                                  </span>
+                                  <span className={`px-2 py-0.5 rounded text-[10px] ${
+                                    chunk.type === 'code' 
+                                      ? 'bg-green-500/30 text-green-200' 
+                                      : 'bg-blue-500/30 text-blue-200'
+                                  }`}>
+                                    {chunk.type}
+                                  </span>
+                                </div>
+                                <div className="text-purple-300 text-[11px] mb-1">
+                                  {chunk.chapter} {chunk.page && `• Page ${chunk.page}`}
+                                </div>
+                                <div className="text-purple-200 mb-1 text-[11px]">
+                                  Relevance: {chunk.relevance.toFixed(1)}%
+                                </div>
+                                <div className="text-gray-300 text-[10px] bg-black/20 p-1 rounded">
+                                  {chunk.content_preview}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Regular Sources View */}
             {message.sources && message.sources.length > 0 && (
               <div className="mt-3 pt-3 border-t border-white/20">
                 <button
@@ -436,7 +514,7 @@ function MessageBubble({ message }) {
                   className="flex items-center space-x-2 text-sm text-purple-300 hover:text-purple-100 transition-colors"
                 >
                   {showSources ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                  <span>{message.sources.length} Sources</span>
+                  <span>{message.sources.length} Sources Used</span>
                 </button>
                 
                 {showSources && (
