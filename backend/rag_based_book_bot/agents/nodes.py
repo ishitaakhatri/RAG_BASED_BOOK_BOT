@@ -620,6 +620,7 @@ Your role:
 - Give verbose answers explaining everything and give brief explanations of the code
 - The users will be someone having no knowledge about the topics, so explain everything that can be confusing for a new user
 - ALWAYS mention the book title when referencing examples or concepts from specific books
+- If the user asks for code, give more priority to code. dont add too much comments in code, add short and precise comments
 
 Always reference sources WITH BOOK TITLES and ensure code is correct and follows best practices."""
     
@@ -656,7 +657,7 @@ def llm_reasoning_node(state: AgentState) -> AgentState:
         state = context_assembly_node(state, max_tokens=2500)
     
     try:
-        print(f"\n[FINAL] LLM Reasoning with Gemini")
+        print(f"\n[FINAL] LLM Reasoning")
         
         # Prepare messages for LangChain
         messages = [
