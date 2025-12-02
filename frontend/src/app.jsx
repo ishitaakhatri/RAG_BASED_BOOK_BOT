@@ -5,6 +5,7 @@ import {
   Sparkles, AlertCircle, CheckCircle, Loader, Book, ChevronDown, 
   ChevronUp, Eye, Filter, Layers, Tag
 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 
 const API_BASE_URL = 'http://localhost:8000';
 
@@ -444,7 +445,25 @@ function MessageBubble({ message }) {
                 <MessageSquare className="w-5 h-5 text-purple-300" />
                 <h4 className="font-semibold text-purple-100">Answer</h4>
               </div>
-              <p className="whitespace-pre-wrap text-gray-100 leading-relaxed">{message.content}</p>
+              <div className="prose prose-invert prose-p:leading-relaxed prose-pre:bg-black/50 max-w-none text-gray-100">
+                <ReactMarkdown
+                  components={{
+                    // Optional: Override specific elements if needed
+                    code: ({node, inline, className, children, ...props}) => {
+                      return (
+                        <code
+                          className={`${className} ${inline ? 'bg-white/10 rounded px-1 py-0.5' : 'block bg-black/30 p-4 rounded-lg overflow-x-auto'}`}
+                          {...props}
+                        >
+                          {children}
+                        </code>
+                      );
+                    }
+                  }}
+                >
+                  {message.content}
+                </ReactMarkdown>
+              </div>
               
               {message.confidence && (
                 <div className="mt-3 pt-3 border-t border-white/10">
