@@ -3,6 +3,17 @@ FastAPI Backend for RAG Book Bot with Pipeline Details
 FIXED: Books list now loads properly using metadata namespace
 FIXED: Auto-extract book title and author from filename
 """
+import sys
+import os
+if sys.platform == "win32":
+    # Force UTF-8 encoding on Windows
+    if sys.stdout.encoding != 'utf-8':
+        sys.stdout.reconfigure(encoding='utf-8')
+    if sys.stderr.encoding != 'utf-8':
+        sys.stderr.reconfigure(encoding='utf-8')
+    # Also set environment variable for subprocess
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
