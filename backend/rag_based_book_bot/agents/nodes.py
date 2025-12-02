@@ -19,7 +19,6 @@ from sentence_transformers import SentenceTransformer
 # LangChain imports
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain.output_parsers import ResponseSchema, StructuredOutputParser
 
 from rag_based_book_bot.agents.states import (
     AgentState, DocumentChunk, RetrievedChunk, 
@@ -51,8 +50,6 @@ llm = ChatGoogleGenerativeAI(
     max_output_tokens=2048,
     convert_system_message_to_human=True  # Gemini doesn't support system messages natively
 )
-
-print(f"✅ Initialized Gemini LLM: gemini-1.5-flash")
 
 # Global instances (lazy loading)
 _pc = None
