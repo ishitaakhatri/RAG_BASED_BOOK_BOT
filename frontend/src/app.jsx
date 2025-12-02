@@ -464,25 +464,6 @@ function MessageBubble({ message }) {
                   {message.content}
                 </ReactMarkdown>
               </div>
-              
-              {message.confidence && (
-                <div className="mt-3 pt-3 border-t border-white/10">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-purple-200">Confidence</span>
-                    <div className="flex items-center space-x-2">
-                      <div className="w-32 h-2 bg-white/10 rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-gradient-to-r from-green-400 to-green-500 rounded-full transition-all"
-                          style={{ width: `${message.confidence * 100}%` }}
-                        />
-                      </div>
-                      <span className="text-white font-semibold">
-                        {(message.confidence * 100).toFixed(1)}%
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* NEW: Enhanced Pipeline Visualization */}
