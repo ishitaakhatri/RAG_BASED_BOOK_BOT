@@ -1,6 +1,7 @@
 """
 FastAPI Backend for RAG Book Bot with Pipeline Details
 FIXED: Books list now loads properly using metadata namespace
+FIXED: Auto-extract book title and author from filename
 """
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,6 +43,50 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def parse_book_filename(filename: str) -> tuple[str, str]:
+    """
+    Parse book filename in format: "Title - Author.pdf"
+    Uses the FIRST " - " (dash with spaces) as the separator.
+    
+    Examples:
+        "AI Engineering - Chip Huyen.pdf" 
+        → ("AI Engineering", "Chip Huyen")
+        
+        "Developing Apps with GPT-4 and ChatGPT - Olivier Caelen & Marie-Alice Blete.pdf"
+        → ("Developing Apps with GPT-4 and ChatGPT", "Olivier Caelen & Marie-Alice Blete")
+        
+        "Machine Learning - A Probabilistic Perspective - Kevin Murphy.pdf"
+        → ("Machine Learning", "A Probabilistic Perspective - Kevin Murphy")
+        
+        "Simple Book.pdf"
+        → ("Simple Book", "Unknown")
+    
+    Note: Hyphens without spaces (like "Marie-Alice" or "GPT-4") are NOT treated as separators.
+    """
+    # Remove extension
+    name_without_ext = filename.rsplit('.', 1)[0] if '.' in filename else filename
+    
+    # Find the FIRST occurrence of " - " (with spaces on both sides)
+    separator = ' - '
+    
+    if separator in name_without_ext:
+        # Split ONLY on the first " - "
+        first_dash_index = name_without_ext.index(separator)
+        title = name_without_ext[:first_dash_index].strip()
+        author = name_without_ext[first_dash_index + len(separator):].strip()
+    else:
+        # No separator found - entire name is title
+        title = name_without_ext.strip()
+        author = "Unknown"
+    
+    return title, author
+
+
 # Request/Response Models
 class QueryRequest(BaseModel):
     query: str
@@ -79,8 +124,14 @@ class IngestResponse(BaseModel):
     result: Optional[dict] = None
     error: Optional[str] = None
 
+class BookInfo(BaseModel):
+    title: str
+    author: str
+    total_chunks: int
+    indexed_at: Optional[float] = None
+
 class BooksResponse(BaseModel):
-    books: List[str]
+    books: List[BookInfo]
 
 
 # ============================================================================
@@ -117,7 +168,7 @@ def store_book_metadata(book_title: str, author: str, total_chunks: int):
         print(f"⚠️ Failed to store metadata: {e}")
 
 
-def get_available_books() -> List[str]:
+def get_available_books() -> List[BookInfo]:
     """
     FIXED: Retrieve ALL books from metadata namespace
     Falls back to querying main namespace if needed
@@ -135,22 +186,29 @@ def get_available_books() -> List[str]:
                 include_metadata=True
             )
             
-            books = []
+            books_info = []
             for match in results.get("matches", []):
-                book_title = match.get("metadata", {}).get("book_title")
-                if book_title:
-                    books.append(book_title)
+                metadata = match.get("metadata", {})
+                if metadata.get("book_title"):
+                    books_info.append(BookInfo(
+                        title=metadata.get("book_title", "Unknown"),
+                        author=metadata.get("author", "Unknown"),
+                        total_chunks=metadata.get("total_chunks", 0),
+                        indexed_at=metadata.get("indexed_at")
+                    ))
             
-            if books:
-                print(f"✅ Found {len(books)} books from metadata namespace")
-                return sorted(books)
+            if books_info:
+                print(f"✅ Found {len(books_info)} books from metadata namespace")
+                # Sort by indexed_at (most recent first)
+                books_info.sort(key=lambda x: x.indexed_at or 0, reverse=True)
+                return books_info
         except Exception as e:
             print(f"Metadata namespace not found: {e}")
         
         # Fallback: Query main namespace with multiple random vectors
         print("Using fallback: querying main namespace...")
         namespace = os.getenv("PINECONE_NAMESPACE", "books_rag")
-        books_set = set()
+        books_set = {}  # Use dict to store book info
         
         # Multiple queries for better coverage
         import random
@@ -165,9 +223,15 @@ def get_available_books() -> List[str]:
             )
             
             for match in results.get("matches", []):
-                book_title = match.get("metadata", {}).get("book_title")
-                if book_title:
-                    books_set.add(book_title)
+                metadata = match.get("metadata", {})
+                book_title = metadata.get("book_title")
+                if book_title and book_title not in books_set:
+                    books_set[book_title] = BookInfo(
+                        title=book_title,
+                        author=metadata.get("author", "Unknown"),
+                        total_chunks=0,  # Unknown from main namespace
+                        indexed_at=None
+                    )
         
         # Also try zero vector
         results = index.query(
@@ -178,11 +242,17 @@ def get_available_books() -> List[str]:
         )
         
         for match in results.get("matches", []):
-            book_title = match.get("metadata", {}).get("book_title")
-            if book_title:
-                books_set.add(book_title)
+            metadata = match.get("metadata", {})
+            book_title = metadata.get("book_title")
+            if book_title and book_title not in books_set:
+                books_set[book_title] = BookInfo(
+                    title=book_title,
+                    author=metadata.get("author", "Unknown"),
+                    total_chunks=0,
+                    indexed_at=None
+                )
         
-        books_list = sorted(list(books_set))
+        books_list = list(books_set.values())
         print(f"✅ Found {len(books_list)} books from main namespace")
         return books_list
         
@@ -278,7 +348,7 @@ async def root():
 
 @app.get("/books", response_model=BooksResponse)
 async def list_books():
-    """Get list of available books - FIXED!"""
+    """Get list of available books with metadata - FIXED!"""
     books = get_available_books()
     return BooksResponse(books=books)
 
@@ -397,13 +467,31 @@ async def process_query(request: QueryRequest):
 async def ingest_book(
     file: UploadFile = File(...),
     book_title: Optional[str] = None,
-    author: str = "Unknown"
+    author: Optional[str] = None
 ):
-    """Ingest a new PDF book - FIXED: Now stores metadata"""
+    """
+    Ingest a new PDF book - Auto-extracts title and author from filename
+    
+    Filename format: "Book Title - Author Name.pdf"
+    You can override with explicit book_title and author parameters.
+    """
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
     
     try:
+        # Auto-extract from filename if not provided
+        if not book_title or not author:
+            extracted_title, extracted_author = parse_book_filename(file.filename)
+            final_book_title = book_title or extracted_title
+            final_author = author or extracted_author
+            
+            print(f"📖 Auto-extracted from filename:")
+            print(f"   Title: {final_book_title}")
+            print(f"   Author: {final_author}")
+        else:
+            final_book_title = book_title
+            final_author = author
+        
         # Save uploaded file temporarily
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
             content = await file.read()
@@ -419,18 +507,16 @@ async def ingest_book(
         )
         ingestor = EnhancedBookIngestorPaddle(config=config)
         
-        final_book_title = book_title or file.filename.replace('.pdf', '')
-        
         result = ingestor.ingest_book(
             pdf_path=tmp_path,
             book_title=final_book_title,
-            author=author
+            author=final_author
         )
         
         # FIXED: Store book metadata for instant retrieval
         store_book_metadata(
             book_title=final_book_title,
-            author=author,
+            author=final_author,
             total_chunks=result.get('total_chunks', 0)
         )
         
