@@ -184,14 +184,26 @@ Return ONLY the concepts, one per line, no explanations."""
             # Deduplicate
             new_results = []
             for r in hop_results:
-                r_id = r.get('id', str(len(all_results)))
+                # FIXED: More robust ID handling
+                if 'id' in r and r['id']:
+                    r_id = r['id']
+                else:
+                    # Generate stable ID from content hash
+                    import hashlib
+                    text_hash = hashlib.md5(r.get('text', '')[:500].encode()).hexdigest()[:8]
+                    r_id = f"hop_{hop}_{text_hash}"
+                    r['id'] = r_id  # Add ID to result
+                
                 if r_id not in seen_ids:
                     seen_ids.add(r_id)
                     new_results.append(r)
                     all_results.append(r)
             
             if not new_results:
+                print(f"  → No new unique chunks found in hop {hop + 1}, stopping")
                 break
+
+            print(f"  → Added {len(new_results)} new unique chunks")
             
             # Prepare for next hop
             current_chunks = [r.get('text', '') for r in new_results[:3]]

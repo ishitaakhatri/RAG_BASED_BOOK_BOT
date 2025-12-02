@@ -417,7 +417,6 @@ export default function RAGBookBot() {
 function MessageBubble({ message }) {
   const [showSources, setShowSources] = useState(false);
   const [showPipeline, setShowPipeline] = useState(false);
-  const [selectedStage, setSelectedStage] = useState(null);
 
   if (message.role === 'user') {
     return (
@@ -439,129 +438,120 @@ function MessageBubble({ message }) {
           </div>
         ) : (
           <>
-            <p className="whitespace-pre-wrap mb-3">{message.content}</p>
-            
-            {message.confidence && (
-              <div className="text-sm text-purple-200 mb-2">
-                Confidence: {(message.confidence * 100).toFixed(1)}%
+            {/* Answer Section */}
+            <div className="bg-white/5 rounded-lg p-4 mb-3 border border-white/10">
+              <div className="flex items-center space-x-2 mb-2">
+                <MessageSquare className="w-5 h-5 text-purple-300" />
+                <h4 className="font-semibold text-purple-100">Answer</h4>
               </div>
-            )}
+              <p className="whitespace-pre-wrap text-gray-100 leading-relaxed">{message.content}</p>
+              
+              {message.confidence && (
+                <div className="mt-3 pt-3 border-t border-white/10">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-purple-200">Confidence</span>
+                    <div className="flex items-center space-x-2">
+                      <div className="w-32 h-2 bg-white/10 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-gradient-to-r from-green-400 to-green-500 rounded-full transition-all"
+                          style={{ width: `${message.confidence * 100}%` }}
+                        />
+                      </div>
+                      <span className="text-white font-semibold">
+                        {(message.confidence * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
 
-            {/* Pipeline Visualization - ENHANCED WITH BOOK TITLES */}
+            {/* NEW: Enhanced Pipeline Visualization */}
             {message.pipeline_stages && message.pipeline_stages.length > 0 && (
-              <div className="mt-3 pt-3 border-t border-white/20">
+              <div className="mb-3">
                 <button
                   onClick={() => setShowPipeline(!showPipeline)}
-                  className="flex items-center space-x-2 text-sm text-purple-300 hover:text-purple-100 transition-colors mb-2"
+                  className="flex items-center space-x-2 text-sm text-purple-300 hover:text-purple-100 transition-colors mb-2 w-full justify-between bg-white/5 p-3 rounded-lg border border-white/10 hover:border-purple-400/50"
                 >
-                  <Layers className="w-4 h-4" />
-                  <span>View Retrieval Pipeline ({message.pipeline_stages.length} stages)</span>
+                  <div className="flex items-center space-x-2">
+                    <Layers className="w-4 h-4" />
+                    <span className="font-semibold">
+                      Retrieval Pipeline ({message.stats?.final || 0} final chunks)
+                    </span>
+                  </div>
                   {showPipeline ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                 </button>
                 
                 {showPipeline && (
-                  <div className="mt-3 space-y-3">
-                    {message.pipeline_stages.map((stage, stageIdx) => (
-                      <div key={stageIdx} className="bg-white/5 rounded-lg p-3 border border-white/10">
-                        <div className="flex items-center justify-between mb-2">
-                          <h4 className="text-sm font-semibold text-white flex items-center">
-                            <Filter className="w-4 h-4 mr-2" />
-                            {stage.stage_name}
-                          </h4>
-                          <span className="text-xs bg-purple-500/30 px-2 py-1 rounded">
-                            {stage.chunk_count} chunks
-                          </span>
-                        </div>
-                        
-                        <button
-                          onClick={() => setSelectedStage(selectedStage === stageIdx ? null : stageIdx)}
-                          className="text-xs text-purple-300 hover:text-purple-100 flex items-center space-x-1"
-                        >
-                          <Eye className="w-3 h-3" />
-                          <span>{selectedStage === stageIdx ? 'Hide' : 'Show'} chunks</span>
-                        </button>
-                        
-                        {selectedStage === stageIdx && (
-                          <div className="mt-2 space-y-2 max-h-64 overflow-y-auto">
-                            {stage.chunks.map((chunk, chunkIdx) => (
-                              <div key={chunkIdx} className="bg-white/5 rounded p-2 text-xs border border-white/5">
-                                {/* NEW: Show Book Title prominently */}
-                                <div className="flex items-center space-x-2 mb-2 pb-2 border-b border-white/10">
-                                  <Book className="w-3 h-3 text-purple-300" />
-                                  <span className="text-purple-200 font-semibold text-[11px]">
-                                    {chunk.book_title || 'Unknown Book'}
-                                  </span>
-                                  {chunk.author && (
-                                    <span className="text-purple-300 text-[10px]">
-                                      by {chunk.author}
-                                    </span>
-                                  )}
-                                </div>
-                                
-                                <div className="flex items-start justify-between mb-1">
-                                  <span className="text-purple-200 font-mono text-[10px]">
-                                    {chunk.chunk_id.substring(0, 12)}...
-                                  </span>
-                                  <span className={`px-2 py-0.5 rounded text-[10px] ${
-                                    chunk.type === 'code' 
-                                      ? 'bg-green-500/30 text-green-200' 
-                                      : 'bg-blue-500/30 text-blue-200'
-                                  }`}>
-                                    {chunk.type}
-                                  </span>
-                                </div>
-                                <div className="text-purple-300 text-[11px] mb-1">
-                                  {chunk.chapter} {chunk.page && `• Page ${chunk.page}`}
-                                </div>
-                                <div className="text-purple-200 mb-1 text-[11px]">
-                                  Relevance: {chunk.relevance.toFixed(1)}%
-                                </div>
-                                <div className="text-gray-300 text-[10px] bg-black/20 p-1 rounded">
-                                  {chunk.content_preview}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                  <EnhancedPipelineDisplay 
+                    stages={message.pipeline_stages}
+                    stats={message.stats}
+                  />
                 )}
               </div>
             )}
 
-            {/* Regular Sources View - ENHANCED */}
+            {/* Sources Section */}
             {message.sources && message.sources.length > 0 && (
-              <div className="mt-3 pt-3 border-t border-white/20">
+              <div className="mt-3">
                 <button
                   onClick={() => setShowSources(!showSources)}
-                  className="flex items-center space-x-2 text-sm text-purple-300 hover:text-purple-100 transition-colors"
+                  className="flex items-center space-x-2 text-sm text-purple-300 hover:text-purple-100 transition-colors w-full justify-between bg-white/5 p-3 rounded-lg border border-white/10 hover:border-purple-400/50"
                 >
+                  <div className="flex items-center space-x-2">
+                    <Book className="w-4 h-4" />
+                    <span className="font-semibold">{message.sources.length} Source{message.sources.length > 1 ? 's' : ''}</span>
+                  </div>
                   {showSources ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                  <span>{message.sources.length} Sources Used</span>
                 </button>
                 
                 {showSources && (
                   <div className="mt-2 space-y-2">
                     {message.sources.map((source, idx) => (
-                      <div key={idx} className="bg-white/5 rounded p-2 text-sm">
-                        <div className="flex items-start space-x-2 text-purple-200">
-                          <Book className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                          <div className="flex-1">
-                            {/* NEW: Show book title if available */}
-                            {source.book_title && (
-                              <div className="text-xs font-semibold text-purple-100 mb-1">
-                                📚 {source.book_title}
-                                {source.author && <span className="text-purple-300"> by {source.author}</span>}
+                      <div key={idx} className="bg-white/5 rounded-lg p-3 border border-white/10">
+                        <div className="flex items-start space-x-3">
+                          <div className="bg-gradient-to-br from-purple-500 to-pink-500 rounded p-2 flex-shrink-0">
+                            <Book className="w-4 h-4 text-white" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-semibold text-white mb-1">
+                              {source.book_title}
+                            </div>
+                            {source.author && (
+                              <div className="text-xs text-purple-300 mb-2">
+                                by {source.author}
                               </div>
                             )}
-                            <div className="text-xs">{source.chapter}</div>
-                            {source.relevance && (
-                              <span className="text-xs text-purple-400">
-                                {source.relevance.toFixed(1)}% relevant
-                              </span>
-                            )}
+                            <div className="text-xs text-purple-200 space-y-1">
+                              <div className="flex items-center space-x-2">
+                                <FileText className="w-3 h-3" />
+                                <span>{source.chapter}</span>
+                              </div>
+                              {source.page && (
+                                <div>Page {source.page}</div>
+                              )}
+                              {source.relevance && (
+                                <div className="flex items-center space-x-2 mt-2">
+                                  <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                                    <div 
+                                      className="h-full bg-gradient-to-r from-green-400 to-green-500 rounded-full"
+                                      style={{ width: `${source.relevance}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-green-300 text-xs font-mono">
+                                    {source.relevance.toFixed(0)}%
+                                  </span>
+                                </div>
+                              )}
+                            </div>
                           </div>
+                          <span className={`px-2 py-1 rounded text-xs flex-shrink-0 ${
+                            source.type === 'code' 
+                              ? 'bg-green-500/30 text-green-200' 
+                              : 'bg-blue-500/30 text-blue-200'
+                          }`}>
+                            {source.type}
+                          </span>
                         </div>
                       </div>
                     ))}
@@ -569,16 +559,155 @@ function MessageBubble({ message }) {
                 )}
               </div>
             )}
-
-            {message.stats && (
-              <div className="mt-3 pt-3 border-t border-white/20 text-xs text-purple-300 space-y-1">
-                <div>Pipeline: {message.stats.pass1} → {message.stats.pass2} → {message.stats.final} chunks</div>
-                <div>Tokens: {message.stats.tokens}</div>
-              </div>
-            )}
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+// ADD this new component for the enhanced pipeline display
+function EnhancedPipelineDisplay({ stages, stats }) {
+  const [expandedStage, setExpandedStage] = useState(null);
+  const [showingChunks, setShowingChunks] = useState({});
+
+  const getStageColor = (index) => {
+    const colors = [
+      'from-blue-500 to-blue-600',
+      'from-purple-500 to-purple-600',
+      'from-pink-500 to-pink-600',
+      'from-green-500 to-green-600'
+    ];
+    return colors[index % colors.length];
+  };
+
+  const getChangeIndicator = (currentCount, previousCount) => {
+    if (previousCount === null) return null;
+    
+    const diff = currentCount - previousCount;
+    if (diff > 0) {
+      return (
+        <span className="text-green-300 text-xs ml-2">
+          (+{diff})
+        </span>
+      );
+    } else if (diff < 0) {
+      return (
+        <span className="text-orange-300 text-xs ml-2">
+          ({diff})
+        </span>
+      );
+    }
+    return null;
+  };
+
+  return (
+    <div className="mt-3 space-y-3 bg-black/20 p-4 rounded-lg">
+      {/* Flow Summary */}
+      <div className="flex items-center justify-between text-sm bg-white/5 p-3 rounded border border-white/10">
+        <div className="flex items-center space-x-4">
+          <span className="text-white font-semibold">{stats?.pass1 || 0}</span>
+          <span className="text-purple-300">→</span>
+          <span className="text-white font-semibold">{stats?.pass2 || 0}</span>
+          <span className="text-purple-300">→</span>
+          <span className="text-white font-semibold">{stats?.pass3 || 0}</span>
+          <span className="text-purple-300">→</span>
+          <span className="text-green-300 font-semibold">{stats?.final || 0}</span>
+        </div>
+        {stats?.tokens && (
+          <span className="text-purple-200 text-xs">
+            {stats.tokens} tokens
+          </span>
+        )}
+      </div>
+
+      {/* Stages */}
+      {stages.map((stage, index) => {
+        const previousCount = index > 0 ? stages[index - 1].chunk_count : null;
+        const isExpanded = expandedStage === index;
+        const hasChunks = stage.chunks && stage.chunks.length > 0;
+
+        return (
+          <div key={index} className="relative">
+            {index < stages.length - 1 && (
+              <div className="absolute left-6 top-full h-3 w-0.5 bg-purple-400/30" />
+            )}
+            
+            <div className="bg-white/5 rounded-lg border border-white/10 overflow-hidden">
+              <div 
+                className={`bg-gradient-to-r ${getStageColor(index)} p-3 flex items-center justify-between cursor-pointer`}
+                onClick={() => setExpandedStage(isExpanded ? null : index)}
+              >
+                <div className="flex items-center space-x-3">
+                  <div className="bg-white/20 rounded-full p-1.5">
+                    <Filter className="w-3 h-3 text-white" />
+                  </div>
+                  <div>
+                    <div className="text-white font-semibold text-sm">
+                      {stage.stage_name}
+                    </div>
+                    <div className="text-white/80 text-xs">
+                      {stage.chunk_count} chunks total
+                      {getChangeIndicator(stage.chunk_count, previousCount)}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  {hasChunks && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowingChunks(prev => ({ ...prev, [index]: !prev[index] }));
+                      }}
+                      className="px-2 py-1 bg-white/20 hover:bg-white/30 rounded text-xs text-white"
+                    >
+                      {showingChunks[index] ? 'Hide' : 'View'}
+                    </button>
+                  )}
+                  {isExpanded ? <ChevronUp className="w-4 h-4 text-white" /> : <ChevronDown className="w-4 h-4 text-white" />}
+                </div>
+              </div>
+
+              {isExpanded && (
+                <div className="p-3 bg-black/20 text-xs text-purple-200">
+                  {index === 0 && "Broad semantic search using vector similarity across all chunks."}
+                  {index === 1 && "Precision ranking with cross-encoder to select most relevant."}
+                  {index === 2 && "Intelligent expansion following related concepts."}
+                  {index === 3 && "Final optimization with deduplication."}
+                </div>
+              )}
+
+              {showingChunks[index] && hasChunks && (
+                <div className="p-3 bg-black/30 max-h-64 overflow-y-auto space-y-2">
+                  {stage.chunks.slice(0, 5).map((chunk, i) => (
+                    <div key={i} className="bg-white/5 rounded p-2 text-xs">
+                      <div className="font-semibold text-white mb-1 flex items-center justify-between">
+                        <span>{chunk.book_title}</span>
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                          chunk.type === 'code' ? 'bg-green-500/30 text-green-200' : 'bg-blue-500/30 text-blue-200'
+                        }`}>
+                          {chunk.type}
+                        </span>
+                      </div>
+                      <div className="text-purple-300 text-[11px] mb-1">
+                        {chunk.chapter} • {chunk.relevance?.toFixed(0)}% relevant
+                      </div>
+                      <div className="text-gray-300 text-[10px] bg-black/30 p-1 rounded">
+                        {chunk.content_preview?.substring(0, 100)}...
+                      </div>
+                    </div>
+                  ))}
+                  {stage.chunks.length > 5 && (
+                    <div className="text-center text-purple-300 text-xs">
+                      + {stage.chunks.length - 5} more chunks
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

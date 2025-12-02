@@ -314,7 +314,7 @@ async def list_books():
 
 @app.post("/query", response_model=QueryResponse)
 async def process_query(request: QueryRequest):
-    """Process query with FIXED book metadata in response"""
+    """Process query with ACCURATE cumulative chunk counts"""
     try:
         pipeline_stages = []
         
@@ -335,58 +335,75 @@ async def process_query(request: QueryRequest):
         
         state.retrieved_chunks = convert_matches_to_chunks(matches)
         
+        # PASS 1 STAGE - Show all retrieved chunks
         pass1_chunks = [format_chunk_detail(chunk, "pass1") for chunk in state.retrieved_chunks]
         pipeline_stages.append(PipelineStage(
             stage_name="Pass 1: Vector Search",
-            chunk_count=len(pass1_chunks),
-            chunks=pass1_chunks
+            chunk_count=len(state.retrieved_chunks),  # Total retrieved
+            chunks=pass1_chunks[:10]  # Show first 10 for preview
         ))
+        
+        pass1_count = len(state.retrieved_chunks)
         
         # Pass 2: Reranking
         state = reranking_node(state, top_k=request.pass2_k)
+        
+        # PASS 2 STAGE - Show reranked chunks (subset of Pass 1)
         pass2_chunks = [format_chunk_detail(chunk, "pass2_reranked") for chunk in state.reranked_chunks]
         pipeline_stages.append(PipelineStage(
             stage_name="Pass 2: Cross-Encoder Reranking",
-            chunk_count=len(pass2_chunks),
-            chunks=pass2_chunks
+            chunk_count=len(state.reranked_chunks),  # Total after reranking
+            chunks=pass2_chunks[:10]
         ))
         
         pass2_count = len(state.reranked_chunks)
         
         # Pass 3: Multi-Hop (optional)
         if request.pass3_enabled:
+            before_expansion = len(state.reranked_chunks)
             state = multi_hop_expansion_node(state, max_hops=2)
-            pass3_new_chunks = [
-                format_chunk_detail(chunk, "pass3_multihop") 
-                for chunk in state.reranked_chunks[pass2_count:]
-            ]
-            pipeline_stages.append(PipelineStage(
-                stage_name="Pass 3: Multi-Hop Expansion",
-                chunk_count=len(pass3_new_chunks),
-                chunks=pass3_new_chunks
-            ))
+            after_expansion = len(state.reranked_chunks)
+            
+            # PASS 3 STAGE - Show ONLY the newly added chunks
+            new_chunks_added = after_expansion - before_expansion
+            if new_chunks_added > 0:
+                pass3_new_chunks = [
+                    format_chunk_detail(chunk, "pass3_multihop") 
+                    for chunk in state.reranked_chunks[before_expansion:after_expansion]
+                ]
+                pipeline_stages.append(PipelineStage(
+                    stage_name=f"Pass 3: Multi-Hop Expansion (+{new_chunks_added} new)",
+                    chunk_count=after_expansion,  # TOTAL chunks now
+                    chunks=pass3_new_chunks[:10]
+                ))
+        
+        pass3_count = len(state.reranked_chunks)
         
         # Pass 4: Cluster Expansion
         state = cluster_expansion_node(state)
         
-        # Pass 5: Context Assembly
+        # Pass 5: Context Assembly (includes compression and deduplication)
+        before_compression = len(state.reranked_chunks)
         state = context_assembly_node(state, max_tokens=request.max_tokens)
         
         # LLM Reasoning
         state = llm_reasoning_node(state)
         
-        # Track Final Chunks
-        final_chunks = [format_chunk_detail(chunk, "final") for chunk in state.reranked_chunks[:10]]
+        # FINAL STAGE - After compression & deduplication
+        after_compression = len(state.reranked_chunks)
+        final_chunks = [format_chunk_detail(chunk, "final") for chunk in state.reranked_chunks]
+        
+        removed_count = before_compression - after_compression
         pipeline_stages.append(PipelineStage(
-            stage_name="Final: After Compression & Deduplication",
-            chunk_count=len(final_chunks),
-            chunks=final_chunks
+            stage_name=f"Final: After Deduplication (-{removed_count} duplicates)" if removed_count > 0 else "Final: Ready for LLM",
+            chunk_count=after_compression,  # FINAL total
+            chunks=final_chunks[:10]
         ))
         
         if state.errors:
             raise HTTPException(status_code=500, detail="; ".join(state.errors))
         
-        # FIXED: Sources now include book metadata
+        # Build sources with complete metadata
         sources = [
             {
                 "chunk_id": rc.chunk.chunk_id,
@@ -394,17 +411,20 @@ async def process_query(request: QueryRequest):
                 "page": rc.chunk.page_number,
                 "relevance": rc.relevance_percentage,
                 "type": rc.chunk.chunk_type,
-                "book_title": rc.chunk.book_title or "Unknown Book",  # NEW
-                "author": rc.chunk.author or "Unknown Author"          # NEW
+                "book_title": rc.chunk.book_title or "Unknown Book",
+                "author": rc.chunk.author or "Unknown Author"
             }
             for rc in state.reranked_chunks[:5]
         ]
         
+        # Calculate accurate stats
         stats = {
-            "pass1": len(matches),
-            "pass2": request.pass2_k,
-            "final": len(state.reranked_chunks),
-            "tokens": len(state.assembled_context.split()) if state.assembled_context else 0
+            "pass1": pass1_count,
+            "pass2": pass2_count,
+            "pass3": pass3_count,
+            "final": after_compression,
+            "tokens": len(state.assembled_context.split()) if state.assembled_context else 0,
+            "removed_duplicates": removed_count if removed_count > 0 else 0
         }
         
         return QueryResponse(

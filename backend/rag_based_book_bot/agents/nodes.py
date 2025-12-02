@@ -457,7 +457,9 @@ def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState
                 'text': rc.chunk.content,
                 'score': rc.rerank_score,
                 'book_title': rc.chunk.book_title,
-                'author': rc.chunk.author
+                'author': rc.chunk.author,
+                'chapter': rc.chunk.chapter,      # ADD THIS LINE
+                'page': rc.chunk.page_number      # ADD THIS LINE
             })
         
         def retrieval_fn(query_text: str, top_k: int = 5):
