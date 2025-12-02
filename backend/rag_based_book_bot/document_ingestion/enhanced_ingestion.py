@@ -1,6 +1,6 @@
 """
 SIMPLIFIED Enhanced Ingestor with Semantic Chunking
-No hierarchy detection - pure semantic approach
+Enhanced to properly store book title and author in all chunks
 """
 import os
 import uuid
@@ -49,7 +49,7 @@ class IngestorConfig:
 class SemanticBookIngestor:
     """
     Simplified book ingestor using pure semantic chunking.
-    No hierarchy detection - just clean semantic boundaries.
+    Enhanced to properly track and store book metadata.
     """
     
     def __init__(self, config: Optional[IngestorConfig] = None):
@@ -121,9 +121,14 @@ class SemanticBookIngestor:
     def _embed_and_upsert(
         self,
         chunks: List[Tuple[str, Dict]],
-        book_id: str
+        book_id: str,
+        book_title: str,
+        author: str
     ):
-        """Embed chunks and upsert to Pinecone"""
+        """
+        Embed chunks and upsert to Pinecone with COMPLETE metadata
+        Enhanced to ensure book_title and author are in every chunk
+        """
         if not self.pinecone_index:
             logger.warning("Pinecone not configured - skipping upsert")
             return
@@ -132,7 +137,7 @@ class SemanticBookIngestor:
             logger.warning("No chunks to embed")
             return
         
-        logger.info(f"Embedding and upserting {len(chunks)} chunks...")
+        logger.info(f"Embedding and upserting {len(chunks)} chunks for '{book_title}' by {author}...")
         
         # Extract texts for embedding
         texts = [chunk[0] for chunk in chunks]
@@ -145,20 +150,24 @@ class SemanticBookIngestor:
             batch_size=32
         )
         
-        # Prepare vectors for upsert
+        # Prepare vectors for upsert with COMPLETE metadata
         vectors = []
         for i, ((chunk_text, metadata), embedding) in enumerate(zip(chunks, embeddings)):
-            # Create metadata for Pinecone (flat structure)
+            # Create ENHANCED metadata for Pinecone with book info GUARANTEED
             pinecone_metadata = {
                 "text": chunk_text[:1000],  # Store preview only
                 "book_id": book_id,
-                "book_title": metadata.get("book_title", "Unknown"),
-                "author": metadata.get("author", "Unknown"),
+                "book_title": book_title,  # CRITICAL: Always present
+                "author": author,  # CRITICAL: Always present
                 "page_start": int(metadata.get("page_start", 1)),
                 "page_end": int(metadata.get("page_end", 1)),
                 "chunk_index": int(metadata.get("chunk_index", i)),
                 "contains_code": bool(metadata.get("contains_code", False)),
-                "token_count": int(metadata.get("token_count", 0))
+                "token_count": int(metadata.get("token_count", 0)),
+                # Also store these as lists for compatibility
+                "chapter_titles": [],
+                "chapter_numbers": [],
+                "section_titles": [],
             }
             
             vectors.append({
@@ -182,7 +191,7 @@ class SemanticBookIngestor:
             except Exception as e:
                 logger.error(f"Failed to upsert batch: {e}")
         
-        logger.info(f"✅ Successfully upserted {len(vectors)} vectors to Pinecone")
+        logger.info(f"✅ Successfully upserted {len(vectors)} vectors for '{book_title}' to Pinecone")
     
     def ingest_book(
         self,
@@ -192,11 +201,12 @@ class SemanticBookIngestor:
     ) -> Dict:
         """
         Main ingestion function - semantic chunking approach.
+        Enhanced to ensure book metadata is tracked throughout.
         
         Args:
             pdf_path: Path to PDF file
-            book_title: Title of the book
-            author: Author name
+            book_title: Title of the book (REQUIRED)
+            author: Author name (defaults to "Unknown")
             
         Returns:
             Dictionary with ingestion statistics
@@ -204,11 +214,16 @@ class SemanticBookIngestor:
         if not os.path.exists(pdf_path):
             raise FileNotFoundError(f"PDF not found: {pdf_path}")
         
+        # Generate unique book ID
         book_id = str(uuid.uuid4())
-        book_title = book_title or os.path.basename(pdf_path)
         
-        logger.info(f"🚀 Starting semantic ingestion: {book_title}")
-        logger.info(f"Settings: threshold={self.config.similarity_threshold}, "
+        # Ensure we have a book title
+        if not book_title:
+            book_title = os.path.basename(pdf_path).replace('.pdf', '')
+        
+        logger.info(f"🚀 Starting semantic ingestion")
+        logger.info(f"   Book: '{book_title}' by {author}")
+        logger.info(f"   Settings: threshold={self.config.similarity_threshold}, "
                    f"chunk_size={self.config.min_chunk_size}-{self.config.max_chunk_size}")
         
         # Step 1: Extract text from PDF (simple)
@@ -218,12 +233,12 @@ class SemanticBookIngestor:
         if not pages_text:
             raise ValueError("No text extracted from PDF")
         
-        # Step 2: Semantic chunking
+        # Step 2: Semantic chunking with book metadata
         logger.info("📊 Starting semantic chunking...")
         chunks = self.chunker.chunk_pages_batched(
             pages_text, 
-            book_title, 
-            author,
+            book_title,  # Pass book title
+            author,  # Pass author
             batch_size=20  # Process 20 pages at a time
         )
         
@@ -234,13 +249,14 @@ class SemanticBookIngestor:
         avg_tokens = total_tokens / len(chunks) if chunks else 0
         code_chunks = sum(1 for _, meta in chunks if meta.get("contains_code"))
         
-        # Step 3: Embed and upsert to Pinecone
-        self._embed_and_upsert(chunks, book_id)
+        # Step 3: Embed and upsert to Pinecone with book metadata
+        self._embed_and_upsert(chunks, book_id, book_title, author)
         
         # Return statistics
         result = {
             "title": book_title,
             "author": author,
+            "book_id": book_id,
             "total_pages": total_pages,
             "total_chunks": len(chunks),
             "code_chunks": code_chunks,
@@ -250,7 +266,7 @@ class SemanticBookIngestor:
             "max_tokens": max((meta.get("token_count", 0) for _, meta in chunks), default=0)
         }
         
-        logger.info(f"✅ Ingestion complete!")
+        logger.info(f"✅ Ingestion complete for '{book_title}'!")
         logger.info(f"📈 Stats: {result}")
         
         return result

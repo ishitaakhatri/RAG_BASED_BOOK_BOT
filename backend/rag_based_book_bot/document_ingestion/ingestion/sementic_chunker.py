@@ -1,6 +1,6 @@
 """
 Semantic Chunker - Embedding-based text chunking
-Groups semantically similar sentences together
+Enhanced to properly track book title and author metadata
 """
 import re
 import tiktoken
@@ -23,12 +23,15 @@ class SemanticChunk:
     token_count: int
     chunk_index: int
     contains_code: bool
+    book_title: str = "Unknown Book"  # NEW: Track book title
+    author: str = "Unknown Author"  # NEW: Track author
 
 
 class SemanticChunker:
     """
     Chunks text based on semantic similarity between sentences.
     Groups related content together, splits at topic boundaries.
+    Enhanced to preserve book and author metadata.
     """
     
     def __init__(
@@ -61,17 +64,27 @@ class SemanticChunker:
         pages_text: List[Dict],
         book_title: str,
         author: str,
-        batch_size: int = 20  # Process 20 pages at once
+        batch_size: int = 20
     ) -> List[Tuple[str, Dict]]:
         """
-        Chunk pages in batches for much better performance.
-        Combines multiple pages before embedding.
+        Chunk pages in batches for better performance.
+        Enhanced to include book title and author in metadata.
+        
+        Args:
+            pages_text: List of dicts with 'page' and 'text' keys
+            book_title: Title of the book
+            author: Author name
+            batch_size: Number of pages to process at once
+            
+        Returns:
+            List of (chunk_text, metadata) tuples
         """
         all_chunks = []
         global_chunk_idx = 0
         total_pages = len(pages_text)
         
-        logger.info(f"Starting batched processing of {total_pages} pages (batch_size={batch_size})...")
+        logger.info(f"Starting batched processing of {total_pages} pages for '{book_title}' by {author}")
+        logger.info(f"Batch size: {batch_size}")
         
         # Process in batches
         for batch_start in range(0, total_pages, batch_size):
@@ -96,14 +109,16 @@ class SemanticChunker:
             batch_chunks = self._chunk_text_semantic_fast(
                 combined_text,
                 batch_start + 1,  # First page in batch
-                batch_end         # Last page in batch
+                batch_end,         # Last page in batch
+                book_title,  # NEW: Pass book title
+                author  # NEW: Pass author
             )
             
-            # Add to results
+            # Add to results with metadata
             for chunk in batch_chunks:
                 metadata = {
-                    "book_title": book_title,
-                    "author": author,
+                    "book_title": book_title,  # IMPORTANT: Include book title
+                    "author": author,  # IMPORTANT: Include author
                     "page_start": chunk.page_start,
                     "page_end": chunk.page_end,
                     "chunk_index": global_chunk_idx,
@@ -115,11 +130,19 @@ class SemanticChunker:
                 global_chunk_idx += 1
         
         logger.info(f"✅ Created {len(all_chunks)} semantic chunks from {total_pages} pages")
+        logger.info(f"   Book: '{book_title}' by {author}")
         return all_chunks
 
-    def _chunk_text_semantic_fast(self, text: str, page_start: int, page_end: int) -> List[SemanticChunk]:
+    def _chunk_text_semantic_fast(
+        self, 
+        text: str, 
+        page_start: int, 
+        page_end: int,
+        book_title: str,
+        author: str
+    ) -> List[SemanticChunk]:
         """
-        Faster semantic chunking - processes larger text blocks at once
+        Faster semantic chunking with book metadata
         """
         sentences = self._split_sentences(text)
         
@@ -161,7 +184,9 @@ class SemanticChunker:
                     page_end=page_end,
                     token_count=current_tokens,
                     chunk_index=len(chunks),
-                    contains_code=self._detect_code(current_text)
+                    contains_code=self._detect_code(current_text),
+                    book_title=book_title,  # NEW: Include book title
+                    author=author  # NEW: Include author
                 )
                 chunks.append(chunk)
                 
@@ -181,16 +206,25 @@ class SemanticChunker:
                     page_end=page_end,
                     token_count=self._count_tokens(final_text),
                     chunk_index=len(chunks),
-                    contains_code=self._detect_code(final_text)
+                    contains_code=self._detect_code(final_text),
+                    book_title=book_title,
+                    author=author
                 )
                 chunks.append(chunk)
             elif chunks:
+                # Merge with last chunk if too small
                 chunks[-1].text += ' ' + final_text
                 chunks[-1].token_count = self._count_tokens(chunks[-1].text)
         
         return chunks
     
-    def _chunk_text_semantic(self, text: str, page_num: int) -> List[SemanticChunk]:
+    def _chunk_text_semantic(
+        self, 
+        text: str, 
+        page_num: int,
+        book_title: str,
+        author: str
+    ) -> List[SemanticChunk]:
         """
         Core semantic chunking logic for a single page/section.
         """
@@ -234,7 +268,9 @@ class SemanticChunker:
                 chunk = self._create_chunk(
                     current_sentences,
                     page_num,
-                    len(chunks)
+                    len(chunks),
+                    book_title,
+                    author
                 )
                 chunks.append(chunk)
                 
@@ -254,7 +290,9 @@ class SemanticChunker:
                 chunk = self._create_chunk(
                     current_sentences,
                     page_num,
-                    len(chunks)
+                    len(chunks),
+                    book_title,
+                    author
                 )
                 chunks.append(chunk)
             elif chunks:
@@ -268,9 +306,11 @@ class SemanticChunker:
         self,
         sentences: List[str],
         page_num: int,
-        chunk_idx: int
+        chunk_idx: int,
+        book_title: str,
+        author: str
     ) -> SemanticChunk:
-        """Create a SemanticChunk from sentences"""
+        """Create a SemanticChunk from sentences with metadata"""
         text = ' '.join(sentences)
         
         return SemanticChunk(
@@ -279,13 +319,13 @@ class SemanticChunker:
             page_end=page_num,
             token_count=self._count_tokens(text),
             chunk_index=chunk_idx,
-            contains_code=self._detect_code(text)
+            contains_code=self._detect_code(text),
+            book_title=book_title,  # NEW: Include book title
+            author=author  # NEW: Include author
         )
     
     def _split_sentences(self, text: str) -> List[str]:
-        """
-        Smart sentence splitting that preserves code blocks.
-        """
+        """Smart sentence splitting that preserves code blocks"""
         # First, protect code blocks
         code_pattern = r'```[\s\S]*?```|`[^`]+`'
         code_blocks = []
@@ -296,8 +336,7 @@ class SemanticChunker:
         
         text_protected = re.sub(code_pattern, replace_code, text)
         
-        # Split into sentences (improved pattern)
-        # Split on: period/question/exclamation followed by space and capital letter
+        # Split into sentences
         sentence_pattern = r'(?<=[.!?])\s+(?=[A-Z])'
         sentences = re.split(sentence_pattern, text_protected)
         

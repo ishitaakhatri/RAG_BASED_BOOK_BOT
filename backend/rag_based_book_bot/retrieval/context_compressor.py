@@ -1,6 +1,6 @@
 """
 Enhanced Context Compressor with SEMANTIC deduplication
-Combines character-level + embedding-level similarity
+Updated to display book titles with sources
 """
 
 import tiktoken
@@ -19,6 +19,8 @@ class EnhancedContextCompressor:
     Compresses context with DUAL-LEVEL deduplication:
     1. Character-level (fast, exact duplicates)
     2. Semantic-level (slow, paraphrased duplicates)
+    
+    Enhanced to preserve and display book titles
     """
     
     def __init__(
@@ -26,7 +28,7 @@ class EnhancedContextCompressor:
         target_tokens: int = 2000,
         max_tokens: int = 4000,
         encoding_name: str = "cl100k_base",
-        semantic_threshold: float = 0.92  # NEW: cosine similarity threshold
+        semantic_threshold: float = 0.92  # Cosine similarity threshold
     ):
         """
         Args:
@@ -34,14 +36,13 @@ class EnhancedContextCompressor:
             max_tokens: Maximum context size
             encoding_name: Tokenizer to use
             semantic_threshold: Cosine similarity above which chunks are duplicates
-                              (0.92 = very similar, 0.85 = somewhat similar)
         """
         self.target_tokens = target_tokens
         self.max_tokens = max_tokens
         self.tokenizer = tiktoken.get_encoding(encoding_name)
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         
-        # NEW: Semantic deduplication
+        # Semantic deduplication
         self.semantic_threshold = semantic_threshold
         self.embedding_model = None  # Lazy load
     
@@ -63,18 +64,7 @@ class EnhancedContextCompressor:
         character_threshold: float = 0.85,
         semantic_threshold: float = None
     ) -> Tuple[List[Dict], Dict]:
-        """
-        DUAL-LEVEL deduplication.
-        
-        Args:
-            chunks: List of chunk dicts with 'text' field
-            use_semantic: Whether to use semantic comparison (slower but better)
-            character_threshold: SequenceMatcher threshold for character similarity
-            semantic_threshold: Cosine similarity threshold (overrides __init__)
-        
-        Returns:
-            (deduplicated_chunks, stats_dict)
-        """
+        """DUAL-LEVEL deduplication"""
         if not chunks:
             return [], {}
         
@@ -86,7 +76,7 @@ class EnhancedContextCompressor:
             chunks, character_threshold
         )
         
-        # PHASE 2: Semantic deduplication (SLOWER, but catches paraphrases)
+        # PHASE 2: Semantic deduplication (SLOWER)
         if use_semantic and len(unique_chunks_char) > 1:
             print(f"  Phase 2: Semantic deduplication (threshold={semantic_threshold})...")
             unique_chunks_final, sem_removed = self._deduplicate_semantic_level(
@@ -145,10 +135,7 @@ class EnhancedContextCompressor:
         chunks: List[Dict],
         threshold: float
     ) -> Tuple[List[Dict], int]:
-        """
-        Semantic deduplication using embeddings.
-        Catches paraphrased duplicates.
-        """
+        """Semantic deduplication using embeddings"""
         if len(chunks) <= 1:
             return chunks, 0
         
@@ -231,15 +218,16 @@ class EnhancedContextCompressor:
     ) -> str:
         """
         Main compression pipeline with semantic deduplication.
+        Enhanced to display book titles with sources.
         
         Args:
-            chunks: List of chunk dicts
+            chunks: List of chunk dicts with 'text' and 'metadata' fields
             query: User query
             preserve_code: Keep code blocks intact
             use_semantic_dedup: Whether to use semantic deduplication
         
         Returns:
-            Compressed context string
+            Compressed context string with book titles
         """
         if not chunks:
             return ""
@@ -306,8 +294,8 @@ class EnhancedContextCompressor:
             elif current_tokens >= self.target_tokens:
                 break
         
-        # Step 4: Format final context
-        formatted_context = self._format_context(context_parts)
+        # Step 4: Format final context WITH BOOK TITLES
+        formatted_context = self._format_context_with_books(context_parts)
         
         final_tokens = self.count_tokens(formatted_context)
         print(f"  Output: {final_tokens} tokens (target: {self.target_tokens})")
@@ -315,8 +303,10 @@ class EnhancedContextCompressor:
         
         return formatted_context
     
-    def _format_context(self, context_parts: List[Dict]) -> str:
-        """Format compressed context for LLM"""
+    def _format_context_with_books(self, context_parts: List[Dict]) -> str:
+        """
+        Format compressed context for LLM with BOOK TITLES prominently displayed
+        """
         formatted = []
         
         for i, part in enumerate(context_parts, 1):
@@ -324,15 +314,20 @@ class EnhancedContextCompressor:
             text = part['text']
             part_type = part['type']
             
-            # Build header
-            chapter = metadata.get('chapter_title', 'Unknown')
+            # Extract book information
+            book_title = metadata.get('book_title', 'Unknown Book')
+            author = metadata.get('author', 'Unknown Author')
+            chapter = metadata.get('chapter_title', 'Unknown Chapter')
             page = metadata.get('page_start', '?')
             
-            header = f"[SOURCE {i}] ({part_type.upper()}) - Chapter: {chapter}, Page: {page}"
+            # Build header with BOOK TITLE prominently
+            header = f"[SOURCE {i}] ({part_type.upper()})\n"
+            header += f"📚 Book: '{book_title}' by {author}\n"
+            header += f"📖 Chapter: {chapter} | Page: {page}"
             
-            formatted.append(f"{header}\n{text}\n")
+            formatted.append(f"{header}\n{'-' * 70}\n{text}\n")
         
-        return "\n" + "="*70 + "\n".join(formatted)
+        return "\n" + "="*70 + "\nCONTEXT FROM BOOKS:\n" + "="*70 + "\n\n" + "\n".join(formatted)
 
 
 # ============================================================================
@@ -340,23 +335,28 @@ class EnhancedContextCompressor:
 # ============================================================================
 
 if __name__ == "__main__":
-    print("=== TESTING SEMANTIC DEDUPLICATION ===\n")
+    print("=== TESTING SEMANTIC DEDUPLICATION WITH BOOK TITLES ===\n")
     
-    # Test chunks with paraphrased duplicates
+    # Test chunks with book metadata
     test_chunks = [
         {
             'text': "Gradient descent is an optimization algorithm used to minimize loss functions in machine learning.",
-            'metadata': {'chapter_title': 'Chapter 5', 'page_start': 45},
+            'metadata': {
+                'book_title': 'Hands-On Machine Learning',
+                'author': 'Aurélien Géron',
+                'chapter_title': 'Training Models',
+                'page_start': 45
+            },
             'score': 0.9
         },
         {
-            'text': "Gradient descent minimizes loss functions by iteratively updating parameters in machine learning models.",
-            'metadata': {'chapter_title': 'Chapter 6', 'page_start': 60},
-            'score': 0.85
-        },
-        {
             'text': "Neural networks use backpropagation to compute gradients for training.",
-            'metadata': {'chapter_title': 'Chapter 7', 'page_start': 75},
+            'metadata': {
+                'book_title': 'Deep Learning with Python',
+                'author': 'François Chollet',
+                'chapter_title': 'Neural Networks',
+                'page_start': 75
+            },
             'score': 0.8
         }
     ]
@@ -366,16 +366,15 @@ if __name__ == "__main__":
         semantic_threshold=0.90
     )
     
-    # Test with semantic deduplication
-    print("WITH SEMANTIC DEDUPLICATION:")
-    unique_semantic, stats = compressor.deduplicate_chunks(test_chunks, use_semantic=True)
-    print(f"Result: {stats}")
+    # Test compression with book titles
+    print("COMPRESSING WITH BOOK TITLES:")
+    compressed = compressor.compress_context(
+        test_chunks,
+        "How does gradient descent work?",
+        use_semantic_dedup=True
+    )
     
-    print("\n" + "="*70 + "\n")
+    print("\nFORMATTED OUTPUT:")
+    print(compressed)
     
-    # Test without semantic deduplication
-    print("WITHOUT SEMANTIC DEDUPLICATION (character-only):")
-    unique_char, stats_char = compressor.deduplicate_chunks(test_chunks, use_semantic=False)
-    print(f"Result: {stats_char}")
-    
-    print("\n✅ Semantic deduplication caught the paraphrased duplicate!")
+    print("\n✅ Book titles are now displayed with sources!")

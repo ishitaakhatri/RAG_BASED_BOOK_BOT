@@ -1,9 +1,9 @@
-// frontend/src/App.jsx
+// frontend/src/App.jsx - ENHANCED TO SHOW BOOK TITLES WITH CHUNKS
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   Search, BookOpen, Upload, Settings, MessageSquare, FileText, Code, 
   Sparkles, AlertCircle, CheckCircle, Loader, Book, ChevronDown, 
-  ChevronUp, Eye, Filter, Layers
+  ChevronUp, Eye, Filter, Layers, Tag
 } from 'lucide-react';
 
 const API_BASE_URL = 'http://localhost:8000';
@@ -88,7 +88,7 @@ export default function RAGBookBot() {
           sources: data.sources,
           stats: data.stats,
           confidence: data.confidence,
-          pipeline_stages: data.pipeline_stages  // NEW: Pipeline data
+          pipeline_stages: data.pipeline_stages
         }]);
       }
     } catch (error) {
@@ -108,8 +108,7 @@ export default function RAGBookBot() {
 
     const formData = new FormData();
     formData.append('file', uploadFile);
-    formData.append('book_title', uploadFile.name.replace('.pdf', ''));
-    formData.append('author', 'Unknown');
+    // Book title and author will be auto-extracted from filename
 
     setUploadProgress({ status: 'uploading', message: 'Uploading PDF...' });
 
@@ -124,7 +123,7 @@ export default function RAGBookBot() {
       if (data.success) {
         setUploadProgress({
           status: 'success',
-          message: `Successfully ingested ${data.result.total_chunks} chunks!`,
+          message: `Successfully ingested "${data.result.title}" by ${data.result.author}! Created ${data.result.total_chunks} chunks.`,
           result: data.result
         });
         fetchBooks();
@@ -132,7 +131,7 @@ export default function RAGBookBot() {
           setShowUpload(false);
           setUploadFile(null);
           setUploadProgress(null);
-        }, 3000);
+        }, 4000);
       } else {
         setUploadProgress({
           status: 'error',
@@ -205,15 +204,19 @@ export default function RAGBookBot() {
                 {books.map((book, idx) => (
                   <button
                     key={idx}
-                    onClick={() => setSelectedBook(book)}
+                    onClick={() => setSelectedBook(book.title)}
                     className={`w-full text-left px-3 py-2 rounded-lg transition-all truncate ${
-                      selectedBook === book
+                      selectedBook === book.title
                         ? 'bg-purple-600 text-white'
                         : 'bg-white/5 text-purple-200 hover:bg-white/10'
                     }`}
-                    title={book}
+                    title={`${book.title} by ${book.author}`}
                   >
-                    {book}
+                    <div className="text-sm font-semibold">{book.title}</div>
+                    <div className="text-xs opacity-75">by {book.author}</div>
+                    {book.total_chunks > 0 && (
+                      <div className="text-xs opacity-60 mt-1">{book.total_chunks} chunks</div>
+                    )}
                   </button>
                 ))}
               </div>
@@ -313,7 +316,7 @@ export default function RAGBookBot() {
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-purple-200 mb-2">
-                      Select PDF File
+                      Select PDF File (Format: "Book Title - Author Name.pdf")
                     </label>
                     <input
                       type="file"
@@ -321,6 +324,11 @@ export default function RAGBookBot() {
                       onChange={(e) => setUploadFile(e.target.files[0])}
                       className="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white"
                     />
+                    {uploadFile && (
+                      <p className="text-xs text-purple-300 mt-2">
+                        📄 Selected: {uploadFile.name}
+                      </p>
+                    )}
                   </div>
                   {uploadProgress && (
                     <div className={`p-4 rounded-lg ${
@@ -358,6 +366,9 @@ export default function RAGBookBot() {
                     </h3>
                     <p className="text-purple-200 max-w-md">
                       Ask questions about your ingested books and get AI-powered answers with full pipeline visibility!
+                    </p>
+                    <p className="text-purple-300 text-sm mt-4">
+                      💡 Tip: Upload PDFs in format "Book Title - Author Name.pdf" for auto-extraction
                     </p>
                   </div>
                 ) : (
@@ -436,7 +447,7 @@ function MessageBubble({ message }) {
               </div>
             )}
 
-            {/* Pipeline Visualization - NEW! */}
+            {/* Pipeline Visualization - ENHANCED WITH BOOK TITLES */}
             {message.pipeline_stages && message.pipeline_stages.length > 0 && (
               <div className="mt-3 pt-3 border-t border-white/20">
                 <button
@@ -474,6 +485,19 @@ function MessageBubble({ message }) {
                           <div className="mt-2 space-y-2 max-h-64 overflow-y-auto">
                             {stage.chunks.map((chunk, chunkIdx) => (
                               <div key={chunkIdx} className="bg-white/5 rounded p-2 text-xs border border-white/5">
+                                {/* NEW: Show Book Title prominently */}
+                                <div className="flex items-center space-x-2 mb-2 pb-2 border-b border-white/10">
+                                  <Book className="w-3 h-3 text-purple-300" />
+                                  <span className="text-purple-200 font-semibold text-[11px]">
+                                    {chunk.book_title || 'Unknown Book'}
+                                  </span>
+                                  {chunk.author && (
+                                    <span className="text-purple-300 text-[10px]">
+                                      by {chunk.author}
+                                    </span>
+                                  )}
+                                </div>
+                                
                                 <div className="flex items-start justify-between mb-1">
                                   <span className="text-purple-200 font-mono text-[10px]">
                                     {chunk.chunk_id.substring(0, 12)}...
@@ -506,7 +530,7 @@ function MessageBubble({ message }) {
               </div>
             )}
 
-            {/* Regular Sources View */}
+            {/* Regular Sources View - ENHANCED */}
             {message.sources && message.sources.length > 0 && (
               <div className="mt-3 pt-3 border-t border-white/20">
                 <button
@@ -521,14 +545,23 @@ function MessageBubble({ message }) {
                   <div className="mt-2 space-y-2">
                     {message.sources.map((source, idx) => (
                       <div key={idx} className="bg-white/5 rounded p-2 text-sm">
-                        <div className="flex items-center space-x-2 text-purple-200">
-                          <FileText className="w-4 h-4" />
-                          <span>{source.chapter}</span>
-                          {source.relevance && (
-                            <span className="ml-auto text-xs">
-                              {source.relevance.toFixed(1)}% relevant
-                            </span>
-                          )}
+                        <div className="flex items-start space-x-2 text-purple-200">
+                          <Book className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            {/* NEW: Show book title if available */}
+                            {source.book_title && (
+                              <div className="text-xs font-semibold text-purple-100 mb-1">
+                                📚 {source.book_title}
+                                {source.author && <span className="text-purple-300"> by {source.author}</span>}
+                              </div>
+                            )}
+                            <div className="text-xs">{source.chapter}</div>
+                            {source.relevance && (
+                              <span className="text-xs text-purple-400">
+                                {source.relevance.toFixed(1)}% relevant
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ))}

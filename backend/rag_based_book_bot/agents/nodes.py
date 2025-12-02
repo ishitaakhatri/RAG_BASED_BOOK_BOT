@@ -1,11 +1,9 @@
 """
-Updated Node implementations with LLM-based query parsing
+Updated Node implementations with LLM-based query parsing and enhanced book metadata handling
 
 CHANGES:
-- Replaced hardcoded user_query_node with LLM-based parsing
-- More accurate intent detection
-- Better topic and keyword extraction
-- Automatic programming language detection
+- Enhanced metadata handling to preserve book_title throughout pipeline
+- Better chunk formatting with book information
 """
 
 import re
@@ -102,15 +100,7 @@ def get_llm_client():
 
 def user_query_node(state: AgentState) -> AgentState:
     """
-    ✨ NEW: LLM-based query parsing for intelligent intent detection
-    
-    Uses GPT-4 to understand:
-    - User's learning intent (conceptual, coding, debugging, etc.)
-    - Key technical topics to search for
-    - Programming language context
-    - Appropriate complexity level
-    
-    Falls back to heuristics if LLM fails.
+    ✨ LLM-based query parsing for intelligent intent detection
     """
     state.current_node = "user_query"
     
@@ -121,7 +111,7 @@ def user_query_node(state: AgentState) -> AgentState:
     try:
         print(f"\n[Query Parsing] Analyzing: '{state.user_query[:60]}...'")
         
-        # 🔥 NEW: Use LLM for intelligent parsing
+        # Use LLM for intelligent parsing
         parsed_data = _parse_query_with_llm(state.user_query)
         
         state.parsed_query = ParsedQuery(
@@ -148,11 +138,7 @@ def user_query_node(state: AgentState) -> AgentState:
 
 
 def _parse_query_with_llm(query: str) -> dict:
-    """
-    🔥 NEW: Intelligent query parsing using GPT-4
-    
-    This replaces all hardcoded heuristics with LLM understanding.
-    """
+    """Intelligent query parsing using GPT-4"""
     client = get_llm_client()
     
     system_prompt = """You are an expert query analyzer for a coding book learning assistant.
@@ -217,10 +203,7 @@ Respond with ONLY valid JSON:
 
 
 def _fallback_parse_query(query: str) -> ParsedQuery:
-    """
-    Fallback parser using simple heuristics.
-    Used when LLM parsing fails.
-    """
+    """Fallback parser using simple heuristics"""
     query_lower = query.lower()
     
     # Intent detection
@@ -283,11 +266,11 @@ def chunking_embedding_node(state: AgentState) -> AgentState:
 
 
 # ============================================================================
-# RETRIEVAL NODES (unchanged from original)
+# UPDATED: RETRIEVAL NODES WITH ENHANCED METADATA
 # ============================================================================
 
 def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
-    """PASS 1: Coarse Semantic Search"""
+    """PASS 1: Coarse Semantic Search with enhanced metadata extraction"""
     state.current_node = "vector_search"
     
     if not state.parsed_query:
@@ -321,9 +304,12 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
         for match in results.get("matches", []):
             metadata = match.get("metadata", {})
             
+            # Extract ALL metadata fields including book information
             chapter_titles = metadata.get("chapter_titles", [])
             chapter_numbers = metadata.get("chapter_numbers", [])
             section_titles = metadata.get("section_titles", [])
+            book_title = metadata.get("book_title", "Unknown Book")
+            author = metadata.get("author", "Unknown Author")
             
             chapter_title = chapter_titles[0] if chapter_titles else ""
             chapter_number = chapter_numbers[0] if chapter_numbers else ""
@@ -334,7 +320,11 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
                 chapter=f"{chapter_number}: {chapter_title}" if chapter_number else chapter_title,
                 section=", ".join(section_titles) if section_titles else "",
                 page_number=metadata.get("page_start"),
-                chunk_type="code" if metadata.get("contains_code") else "text"
+                chunk_type="code" if metadata.get("contains_code") else "text",
+                book_title=book_title,  # IMPORTANT: Preserve book title
+                author=author,
+                chapter_title=chapter_title,
+                chapter_number=chapter_number
             )
             
             retrieved_chunks.append(RetrievedChunk(
@@ -352,7 +342,7 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
 
 
 def reranking_node(state: AgentState, top_k: int = 15) -> AgentState:
-    """PASS 2: Cross-Encoder Reranking"""
+    """PASS 2: Cross-Encoder Reranking (preserves metadata)"""
     state.current_node = "reranking"
     
     if not state.retrieved_chunks or not state.parsed_query:
@@ -372,7 +362,9 @@ def reranking_node(state: AgentState, top_k: int = 15) -> AgentState:
                     'chunk_id': rc.chunk.chunk_id,
                     'chapter': rc.chunk.chapter,
                     'page': rc.chunk.page_number,
-                    'type': rc.chunk.chunk_type
+                    'type': rc.chunk.chunk_type,
+                    'book_title': rc.chunk.book_title,  # Preserve book title
+                    'author': rc.chunk.author
                 },
                 'similarity_score': rc.similarity_score
             })
@@ -391,7 +383,9 @@ def reranking_node(state: AgentState, top_k: int = 15) -> AgentState:
                 chapter=chunk_data['metadata']['chapter'],
                 section="",
                 page_number=chunk_data['metadata']['page'],
-                chunk_type=chunk_data['metadata']['type']
+                chunk_type=chunk_data['metadata']['type'],
+                book_title=chunk_data['metadata'].get('book_title', 'Unknown Book'),
+                author=chunk_data['metadata'].get('author', 'Unknown Author')
             )
             
             reranked_chunks.append(RetrievedChunk(
@@ -412,7 +406,7 @@ def reranking_node(state: AgentState, top_k: int = 15) -> AgentState:
 
 
 def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState:
-    """PASS 3: Multi-Hop Retrieval"""
+    """PASS 3: Multi-Hop Retrieval (preserves metadata)"""
     state.current_node = "multi_hop_expansion"
     
     if not state.reranked_chunks or not state.parsed_query:
@@ -429,7 +423,9 @@ def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState
             initial_results.append({
                 'id': rc.chunk.chunk_id,
                 'text': rc.chunk.content,
-                'score': rc.rerank_score
+                'score': rc.rerank_score,
+                'book_title': rc.chunk.book_title,
+                'author': rc.chunk.author
             })
         
         def retrieval_fn(query_text: str, top_k: int = 5):
@@ -448,7 +444,9 @@ def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState
                 {
                     'id': m['id'],
                     'text': m.get('metadata', {}).get('text', ''),
-                    'score': m.get('score', 0)
+                    'score': m.get('score', 0),
+                    'book_title': m.get('metadata', {}).get('book_title', 'Unknown Book'),
+                    'author': m.get('metadata', {}).get('author', 'Unknown Author')
                 }
                 for m in results.get('matches', [])
             ]
@@ -467,7 +465,9 @@ def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState
                 content=exp_result['text'],
                 chapter="Multi-hop Result",
                 section="",
-                chunk_type="text"
+                chunk_type="text",
+                book_title=exp_result.get('book_title', 'Unknown Book'),
+                author=exp_result.get('author', 'Unknown Author')
             )
             
             state.reranked_chunks.append(RetrievedChunk(
@@ -535,7 +535,9 @@ def context_assembly_node(state: AgentState, max_tokens) -> AgentState:
                 'metadata': {
                     'chapter_title': rc.chunk.chapter,
                     'page_start': rc.chunk.page_number,
-                    'contains_code': rc.chunk.chunk_type == 'code'
+                    'contains_code': rc.chunk.chunk_type == 'code',
+                    'book_title': rc.chunk.book_title,
+                    'author': rc.chunk.author
                 },
                 'score': rc.rerank_score,
                 'chunk_type': rc.chunk.chunk_type
@@ -563,20 +565,21 @@ def _build_system_prompt(query: ParsedQuery) -> str:
 Your role:
 - Guide learners through programming concepts
 - Provide clear explanations with relevant examples from the books
-- Generate new and accurate accurate code based on book examples and best practices
-- Make sure to explain important keywords present in the answer with sufficient length.
-- Give verbose answers explaining everything and give brief explanations of the code.
-- The users will be someone having no knowledge about the topics. so explain everything that can be confusing for a new user.
+- Generate new and accurate code based on book examples and best practices
+- Make sure to explain important keywords present in the answer with sufficient length
+- Give verbose answers explaining everything and give brief explanations of the code
+- The users will be someone having no knowledge about the topics, so explain everything that can be confusing for a new user
+- ALWAYS mention the book title when referencing examples or concepts from specific books
 
 
-Always reference sources and ensure code is correct and follows best practices."""
+Always reference sources WITH BOOK TITLES and ensure code is correct and follows best practices."""
     
     intent_prompts = {
-        QueryIntent.CODE_REQUEST: "\n\n**Focus**: Provide working, well-commented code with explanations.",
-        QueryIntent.CONCEPTUAL: "\n\n**Focus**: Explain concepts clearly with examples.",
-        QueryIntent.COMPARISON: "\n\n**Focus**: Compare systematically with pros/cons.",
-        QueryIntent.DEBUGGING: "\n\n**Focus**: Identify issues and provide fixes.",
-        QueryIntent.TUTORIAL: "\n\n**Focus**: Provide step-by-step guidance."
+        QueryIntent.CODE_REQUEST: "\n\n**Focus**: Provide working, well-commented code with explanations and cite the source book.",
+        QueryIntent.CONCEPTUAL: "\n\n**Focus**: Explain concepts clearly with examples and mention which books they come from.",
+        QueryIntent.COMPARISON: "\n\n**Focus**: Compare systematically with pros/cons, citing specific books.",
+        QueryIntent.DEBUGGING: "\n\n**Focus**: Identify issues and provide fixes with book references.",
+        QueryIntent.TUTORIAL: "\n\n**Focus**: Provide step-by-step guidance with book citations."
     }
     
     complexity = {
@@ -633,7 +636,7 @@ def llm_reasoning_node(state: AgentState) -> AgentState:
         if state.reranked_chunks:
             chunks = state.reranked_chunks
             fallback_answer = f"Error calling LLM. Here's the retrieved content:\n\n"
-            fallback_answer += f"From {chunks[0].chunk.chapter}:\n"
+            fallback_answer += f"From {chunks[0].chunk.book_title} - {chunks[0].chunk.chapter}:\n"
             fallback_answer += chunks[0].chunk.content[:500] + "..."
             
             state.response = LLMResponse(
