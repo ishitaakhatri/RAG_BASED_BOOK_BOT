@@ -1,5 +1,5 @@
 """
-FastAPI Backend for RAG Book Bot
+FastAPI Backend for RAG Book Bot with Pipeline Details
 Run with: uvicorn main:app --reload
 """
 from fastapi import FastAPI, File, UploadFile, HTTPException
@@ -35,7 +35,7 @@ app = FastAPI(title="RAG Book Bot API", version="1.0.0")
 # CORS middleware to allow React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],  # React dev servers
+    allow_origins=["http://localhost:3000", "http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -52,11 +52,26 @@ class QueryRequest(BaseModel):
     pass3_enabled: bool = True
     max_tokens: int = 2500
 
+class ChunkDetail(BaseModel):
+    chunk_id: str
+    chapter: str
+    page: Optional[int]
+    relevance: float
+    type: str
+    content_preview: str
+    source: str  # "pass1", "pass2_reranked", "pass3_multihop", "final"
+
+class PipelineStage(BaseModel):
+    stage_name: str
+    chunk_count: int
+    chunks: List[ChunkDetail]
+
 class QueryResponse(BaseModel):
     answer: str
     sources: List[dict]
     confidence: float
     stats: dict
+    pipeline_stages: List[PipelineStage]  # NEW: Detailed pipeline data
 
 class IngestResponse(BaseModel):
     success: bool
@@ -156,6 +171,19 @@ def convert_matches_to_chunks(matches):
     return chunks
 
 
+def format_chunk_detail(chunk, source: str) -> ChunkDetail:
+    """Format a RetrievedChunk into ChunkDetail for frontend"""
+    return ChunkDetail(
+        chunk_id=chunk.chunk.chunk_id,
+        chapter=chunk.chunk.chapter,
+        page=chunk.chunk.page_number,
+        relevance=chunk.relevance_percentage,
+        type=chunk.chunk.chunk_type,
+        content_preview=chunk.chunk.content[:200] + "..." if len(chunk.chunk.content) > 200 else chunk.chunk.content,
+        source=source
+    )
+
+
 # API Endpoints
 @app.get("/")
 async def root():
@@ -173,9 +201,12 @@ async def list_books():
 @app.post("/query", response_model=QueryResponse)
 async def process_query(request: QueryRequest):
     """
-    Process user query through 5-pass retrieval pipeline
+    Process user query through 5-pass retrieval pipeline WITH DETAILED STAGES
     """
     try:
+        # Initialize tracking for pipeline stages
+        pipeline_stages = []
+        
         # Step 1: Parse query
         state = AgentState(user_query=request.query)
         state = user_query_node(state)
@@ -193,12 +224,42 @@ async def process_query(request: QueryRequest):
         
         state.retrieved_chunks = convert_matches_to_chunks(matches)
         
+        # TRACK PASS 1
+        pass1_chunks = [format_chunk_detail(chunk, "pass1") for chunk in state.retrieved_chunks]
+        pipeline_stages.append(PipelineStage(
+            stage_name="Pass 1: Vector Search",
+            chunk_count=len(pass1_chunks),
+            chunks=pass1_chunks
+        ))
+        
         # Step 3: Pass 2 - Reranking
         state = reranking_node(state, top_k=request.pass2_k)
+        
+        # TRACK PASS 2
+        pass2_chunks = [format_chunk_detail(chunk, "pass2_reranked") for chunk in state.reranked_chunks]
+        pipeline_stages.append(PipelineStage(
+            stage_name="Pass 2: Cross-Encoder Reranking",
+            chunk_count=len(pass2_chunks),
+            chunks=pass2_chunks
+        ))
+        
+        # Remember Pass 2 count for comparison
+        pass2_count = len(state.reranked_chunks)
         
         # Step 4: Pass 3 - Multi-Hop (optional)
         if request.pass3_enabled:
             state = multi_hop_expansion_node(state, max_hops=2)
+            
+            # TRACK PASS 3 (only new chunks added)
+            pass3_new_chunks = [
+                format_chunk_detail(chunk, "pass3_multihop") 
+                for chunk in state.reranked_chunks[pass2_count:]
+            ]
+            pipeline_stages.append(PipelineStage(
+                stage_name="Pass 3: Multi-Hop Expansion",
+                chunk_count=len(pass3_new_chunks),
+                chunks=pass3_new_chunks
+            ))
         
         # Step 5: Pass 4 - Cluster Expansion
         state = cluster_expansion_node(state)
@@ -208,6 +269,14 @@ async def process_query(request: QueryRequest):
         
         # Step 7: LLM Reasoning
         state = llm_reasoning_node(state)
+        
+        # TRACK FINAL CHUNKS (after compression/deduplication)
+        final_chunks = [format_chunk_detail(chunk, "final") for chunk in state.reranked_chunks[:10]]
+        pipeline_stages.append(PipelineStage(
+            stage_name="Final: After Compression & Deduplication",
+            chunk_count=len(final_chunks),
+            chunks=final_chunks
+        ))
         
         if state.errors:
             raise HTTPException(status_code=500, detail="; ".join(state.errors))
@@ -235,7 +304,8 @@ async def process_query(request: QueryRequest):
             answer=state.response.answer,
             sources=sources,
             confidence=state.response.confidence,
-            stats=stats
+            stats=stats,
+            pipeline_stages=pipeline_stages  # NEW: Include pipeline details
         )
         
     except HTTPException:
