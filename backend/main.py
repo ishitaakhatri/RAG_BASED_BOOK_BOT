@@ -1,6 +1,6 @@
 """
 FastAPI Backend for RAG Book Bot with Pipeline Details
-Run with: uvicorn main:app --reload
+FIXED: Books list now loads properly using metadata namespace
 """
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,9 +8,10 @@ from pydantic import BaseModel
 from typing import Optional, List
 import os
 import tempfile
+import time
+import hashlib
 from dotenv import load_dotenv
 
-# Import your existing RAG components
 from rag_based_book_bot.document_ingestion.enhanced_ingestion import (
     EnhancedBookIngestorPaddle,
     IngestorConfig
@@ -32,7 +33,7 @@ load_dotenv()
 
 app = FastAPI(title="RAG Book Bot API", version="1.0.0")
 
-# CORS middleware to allow React frontend
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:5173"],
@@ -59,7 +60,7 @@ class ChunkDetail(BaseModel):
     relevance: float
     type: str
     content_preview: str
-    source: str  # "pass1", "pass2_reranked", "pass3_multihop", "final"
+    source: str
 
 class PipelineStage(BaseModel):
     stage_name: str
@@ -71,7 +72,7 @@ class QueryResponse(BaseModel):
     sources: List[dict]
     confidence: float
     stats: dict
-    pipeline_stages: List[PipelineStage]  # NEW: Detailed pipeline data
+    pipeline_stages: List[PipelineStage]
 
 class IngestResponse(BaseModel):
     success: bool
@@ -82,30 +83,111 @@ class BooksResponse(BaseModel):
     books: List[str]
 
 
-# Helper Functions
-def get_available_books() -> List[str]:
-    """Get list of books from Pinecone"""
+# ============================================================================
+# FIXED: Book Metadata Management
+# ============================================================================
+
+def store_book_metadata(book_title: str, author: str, total_chunks: int):
+    """Store book metadata in separate namespace for instant retrieval"""
     try:
         index = get_pinecone_index()
-        model = get_embedding_model()
-        namespace = os.getenv("PINECONE_NAMESPACE", "books_rag")
+        metadata_namespace = "books_metadata"
         
+        # Create deterministic ID
+        book_id = hashlib.md5(book_title.encode()).hexdigest()
+        
+        # Store with dummy vector
+        index.upsert(
+            vectors=[{
+                "id": book_id,
+                "values": [1.0] * 384,
+                "metadata": {
+                    "book_title": book_title,
+                    "author": author,
+                    "total_chunks": total_chunks,
+                    "indexed_at": time.time()
+                }
+            }],
+            namespace=metadata_namespace
+        )
+        
+        print(f"✅ Stored metadata for: {book_title}")
+        
+    except Exception as e:
+        print(f"⚠️ Failed to store metadata: {e}")
+
+
+def get_available_books() -> List[str]:
+    """
+    FIXED: Retrieve ALL books from metadata namespace
+    Falls back to querying main namespace if needed
+    """
+    try:
+        index = get_pinecone_index()
+        metadata_namespace = "books_metadata"
+        
+        # Try to get from metadata namespace (fast)
+        try:
+            results = index.query(
+                vector=[1.0] * 384,
+                top_k=10000,
+                namespace=metadata_namespace,
+                include_metadata=True
+            )
+            
+            books = []
+            for match in results.get("matches", []):
+                book_title = match.get("metadata", {}).get("book_title")
+                if book_title:
+                    books.append(book_title)
+            
+            if books:
+                print(f"✅ Found {len(books)} books from metadata namespace")
+                return sorted(books)
+        except Exception as e:
+            print(f"Metadata namespace not found: {e}")
+        
+        # Fallback: Query main namespace with multiple random vectors
+        print("Using fallback: querying main namespace...")
+        namespace = os.getenv("PINECONE_NAMESPACE", "books_rag")
+        books_set = set()
+        
+        # Multiple queries for better coverage
+        import random
+        for _ in range(10):  # 10 queries with different vectors
+            random_vector = [random.uniform(-1, 1) for _ in range(384)]
+            
+            results = index.query(
+                vector=random_vector,
+                top_k=1000,
+                namespace=namespace,
+                include_metadata=True
+            )
+            
+            for match in results.get("matches", []):
+                book_title = match.get("metadata", {}).get("book_title")
+                if book_title:
+                    books_set.add(book_title)
+        
+        # Also try zero vector
         results = index.query(
             vector=[0.0] * 384,
-            top_k=100,
+            top_k=1000,
             namespace=namespace,
             include_metadata=True
         )
         
-        books = set()
         for match in results.get("matches", []):
             book_title = match.get("metadata", {}).get("book_title")
             if book_title:
-                books.add(book_title)
+                books_set.add(book_title)
         
-        return sorted(list(books))
+        books_list = sorted(list(books_set))
+        print(f"✅ Found {len(books_list)} books from main namespace")
+        return books_list
+        
     except Exception as e:
-        print(f"Error fetching books: {e}")
+        print(f"❌ Error fetching books: {e}")
         return []
 
 
@@ -184,7 +266,10 @@ def format_chunk_detail(chunk, source: str) -> ChunkDetail:
     )
 
 
+# ============================================================================
 # API Endpoints
+# ============================================================================
+
 @app.get("/")
 async def root():
     """Health check"""
@@ -193,18 +278,15 @@ async def root():
 
 @app.get("/books", response_model=BooksResponse)
 async def list_books():
-    """Get list of available books"""
+    """Get list of available books - FIXED!"""
     books = get_available_books()
     return BooksResponse(books=books)
 
 
 @app.post("/query", response_model=QueryResponse)
 async def process_query(request: QueryRequest):
-    """
-    Process user query through 5-pass retrieval pipeline WITH DETAILED STAGES
-    """
+    """Process user query through 5-pass retrieval pipeline"""
     try:
-        # Initialize tracking for pipeline stages
         pipeline_stages = []
         
         # Step 1: Parse query
@@ -224,7 +306,7 @@ async def process_query(request: QueryRequest):
         
         state.retrieved_chunks = convert_matches_to_chunks(matches)
         
-        # TRACK PASS 1
+        # Track Pass 1
         pass1_chunks = [format_chunk_detail(chunk, "pass1") for chunk in state.retrieved_chunks]
         pipeline_stages.append(PipelineStage(
             stage_name="Pass 1: Vector Search",
@@ -235,7 +317,6 @@ async def process_query(request: QueryRequest):
         # Step 3: Pass 2 - Reranking
         state = reranking_node(state, top_k=request.pass2_k)
         
-        # TRACK PASS 2
         pass2_chunks = [format_chunk_detail(chunk, "pass2_reranked") for chunk in state.reranked_chunks]
         pipeline_stages.append(PipelineStage(
             stage_name="Pass 2: Cross-Encoder Reranking",
@@ -243,14 +324,12 @@ async def process_query(request: QueryRequest):
             chunks=pass2_chunks
         ))
         
-        # Remember Pass 2 count for comparison
         pass2_count = len(state.reranked_chunks)
         
         # Step 4: Pass 3 - Multi-Hop (optional)
         if request.pass3_enabled:
             state = multi_hop_expansion_node(state, max_hops=2)
             
-            # TRACK PASS 3 (only new chunks added)
             pass3_new_chunks = [
                 format_chunk_detail(chunk, "pass3_multihop") 
                 for chunk in state.reranked_chunks[pass2_count:]
@@ -270,7 +349,7 @@ async def process_query(request: QueryRequest):
         # Step 7: LLM Reasoning
         state = llm_reasoning_node(state)
         
-        # TRACK FINAL CHUNKS (after compression/deduplication)
+        # Track Final Chunks
         final_chunks = [format_chunk_detail(chunk, "final") for chunk in state.reranked_chunks[:10]]
         pipeline_stages.append(PipelineStage(
             stage_name="Final: After Compression & Deduplication",
@@ -305,7 +384,7 @@ async def process_query(request: QueryRequest):
             sources=sources,
             confidence=state.response.confidence,
             stats=stats,
-            pipeline_stages=pipeline_stages  # NEW: Include pipeline details
+            pipeline_stages=pipeline_stages
         )
         
     except HTTPException:
@@ -320,9 +399,7 @@ async def ingest_book(
     book_title: Optional[str] = None,
     author: str = "Unknown"
 ):
-    """
-    Ingest a new PDF book into the vector database
-    """
+    """Ingest a new PDF book - FIXED: Now stores metadata"""
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
     
@@ -333,7 +410,7 @@ async def ingest_book(
             tmp_file.write(content)
             tmp_path = tmp_file.name
         
-        # Ingest using enhanced ingestor
+        # Ingest
         config = IngestorConfig(
             similarity_threshold=0.75,
             min_chunk_size=200,
@@ -342,10 +419,19 @@ async def ingest_book(
         )
         ingestor = EnhancedBookIngestorPaddle(config=config)
         
+        final_book_title = book_title or file.filename.replace('.pdf', '')
+        
         result = ingestor.ingest_book(
             pdf_path=tmp_path,
-            book_title=book_title or file.filename.replace('.pdf', ''),
+            book_title=final_book_title,
             author=author
+        )
+        
+        # FIXED: Store book metadata for instant retrieval
+        store_book_metadata(
+            book_title=final_book_title,
+            author=author,
+            total_chunks=result.get('total_chunks', 0)
         )
         
         # Cleanup
@@ -354,7 +440,6 @@ async def ingest_book(
         return IngestResponse(success=True, result=result)
         
     except Exception as e:
-        # Cleanup on error
         if 'tmp_path' in locals():
             try:
                 os.unlink(tmp_path)
@@ -368,7 +453,6 @@ async def ingest_book(
 async def health_check():
     """Detailed health check"""
     try:
-        # Test Pinecone connection
         index = get_pinecone_index()
         stats = index.describe_index_stats()
         
