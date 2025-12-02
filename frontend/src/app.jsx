@@ -1,4 +1,3 @@
-// frontend/src/App.jsx - ENHANCED TO SHOW BOOK TITLES WITH CHUNKS
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   Search, BookOpen, Upload, Settings, MessageSquare, FileText, Code, 
@@ -32,8 +31,27 @@ export default function RAGBookBot() {
     fetchBooks();
   }, []);
 
+  // UPDATED: Smart scrolling logic
   useEffect(() => {
-    scrollToBottom();
+    if (messages.length === 0) return;
+
+    const lastMessage = messages[messages.length - 1];
+    
+    // If it's a user message, scroll to bottom to show the input
+    if (lastMessage.role === 'user') {
+      scrollToBottom();
+    } else {
+      // If it's an assistant answer, scroll to the TOP of that specific message
+      // This prevents scrolling all the way back up to the first query
+      const lastMsgId = `msg-${messages.length - 1}`;
+      const element = document.getElementById(lastMsgId);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        // Fallback if element not found
+        scrollToBottom();
+      }
+    }
   }, [messages]);
 
   const scrollToBottom = () => {
@@ -109,7 +127,6 @@ export default function RAGBookBot() {
 
     const formData = new FormData();
     formData.append('file', uploadFile);
-    // Book title and author will be auto-extracted from filename
 
     setUploadProgress({ status: 'uploading', message: 'Uploading and processing PDF...' });
 
@@ -122,29 +139,24 @@ export default function RAGBookBot() {
       const data = await response.json();
 
       if (data.success) {
-        // Show success message
         setUploadProgress({
           status: 'success',
           message: `Successfully ingested "${data.result.title}" by ${data.result.author}! Created ${data.result.total_chunks} chunks.`,
           result: data.result
         });
         
-        // FIXED: Show refreshing state
         setUploadProgress(prev => ({
           ...prev,
           message: prev.message + ' Refreshing book list...'
         }));
         
-        // Refresh book list and wait for completion
         await fetchBooks();
         
-        // Update message to show completion
         setUploadProgress(prev => ({
           ...prev,
           message: `✅ ${data.result.title} added successfully!`
         }));
         
-        // Then close the upload panel after a brief delay
         setTimeout(() => {
           setShowUpload(false);
           setUploadFile(null);
@@ -392,7 +404,8 @@ export default function RAGBookBot() {
                   </div>
                 ) : (
                   messages.map((msg, idx) => (
-                    <MessageBubble key={idx} message={msg} />
+                    // UPDATED: Pass ID for scrolling targeting
+                    <MessageBubble key={idx} message={msg} id={`msg-${idx}`} />
                   ))
                 )}
                 {loading && (
@@ -433,13 +446,14 @@ export default function RAGBookBot() {
   );
 }
 
-function MessageBubble({ message }) {
+// UPDATED: MessageBubble accepts `id` prop
+function MessageBubble({ message, id }) {
   const [showSources, setShowSources] = useState(false);
   const [showPipeline, setShowPipeline] = useState(false);
 
   if (message.role === 'user') {
     return (
-      <div className="flex justify-end">
+      <div id={id} className="flex justify-end">
         <div className="max-w-2xl bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg px-4 py-3">
           <p className="whitespace-pre-wrap">{message.content}</p>
         </div>
@@ -448,7 +462,7 @@ function MessageBubble({ message }) {
   }
 
   return (
-    <div className="flex justify-start">
+    <div id={id} className="flex justify-start">
       <div className="max-w-3xl bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg px-4 py-3 text-white w-full">
         {message.error ? (
           <div className="flex items-start space-x-2 text-red-300">
@@ -484,7 +498,7 @@ function MessageBubble({ message }) {
               </div>
             </div>
 
-            {/* NEW: Enhanced Pipeline Visualization */}
+            {/* Pipeline Visualization */}
             {message.pipeline_stages && message.pipeline_stages.length > 0 && (
               <div className="mb-3">
                 <button
@@ -584,7 +598,6 @@ function MessageBubble({ message }) {
   );
 }
 
-// ADD this new component for the enhanced pipeline display
 function EnhancedPipelineDisplay({ stages, stats }) {
   const [expandedStage, setExpandedStage] = useState(null);
   const [showingChunks, setShowingChunks] = useState({});
