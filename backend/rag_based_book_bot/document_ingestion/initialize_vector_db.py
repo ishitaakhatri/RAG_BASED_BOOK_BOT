@@ -1,20 +1,27 @@
 """
 Initialize Pinecone Vector Database for RAG Book Bot
 Run this once to set up your Pinecone index with proper configuration
+Compatible with Pinecone Python Client v3+
 """
 import os
 import sys
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables
-env_path = Path(__file__).parent / ".env"
+# Try to find .env in backend/ directory or current directory
+current_dir = Path(__file__).resolve().parent
+backend_dir = current_dir.parent.parent
+env_path = backend_dir / ".env"
+
 if env_path.exists():
     load_dotenv(env_path)
     print(f"✅ Loaded .env from: {env_path}")
 else:
-    print(f"⚠️  Warning: .env file not found at {env_path}")
-    print("   Using environment variables or defaults")
+    # Fallback to current directory or system envs
+    load_dotenv()
+    print("⚠️  Warning: Specific .env file not found, using system environment variables")
 
 try:
     from pinecone import Pinecone, ServerlessSpec
@@ -23,11 +30,14 @@ except ImportError:
     print("   Run: pip install pinecone-client")
     sys.exit(1)
 
-# Configuration - hardcoded values
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")  # Only this from env
-INDEX_NAME = "coding-books"
-NAMESPACE = "books_rag"
-DIMENSION = 384  # sentence-transformers/all-MiniLM-L6-v2
+# Configuration - Uses env vars with defaults to match main.py
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "coding-books")
+NAMESPACE = os.getenv("PINECONE_NAMESPACE", "books_rag")
+METADATA_NAMESPACE = "books_metadata"
+
+# Dimensions must match sentence-transformers/all-MiniLM-L6-v2
+DIMENSION = 384  
 METRIC = "cosine"
 CLOUD = "aws"
 REGION = "us-east-1"
@@ -44,7 +54,6 @@ def validate_config():
         print("\n💡 To fix this:")
         print("   1. Create a .env file in backend/ directory")
         print("   2. Add: PINECONE_API_KEY=your-api-key-here")
-        print("   3. Get your API key from: https://app.pinecone.io/")
         return False
     
     print(f"✅ API Key: {'*' * 20}{PINECONE_API_KEY[-4:]}")
@@ -52,8 +61,7 @@ def validate_config():
     print(f"✅ Namespace: {NAMESPACE}")
     print(f"✅ Dimension: {DIMENSION}")
     print(f"✅ Metric: {METRIC}")
-    print(f"✅ Cloud: {CLOUD}")
-    print(f"✅ Region: {REGION}")
+    print(f"✅ Cloud: {CLOUD} ({REGION})")
     
     return True
 
@@ -70,7 +78,7 @@ def init_pinecone():
     print("=" * 70)
     
     try:
-        # Initialize Pinecone client
+        # Initialize Pinecone client (v3+ syntax)
         pc = Pinecone(api_key=PINECONE_API_KEY)
         print("✅ Connected to Pinecone")
         
@@ -88,7 +96,6 @@ def init_pinecone():
                 print("✅ Deleted")
                 
                 # Wait for deletion to complete
-                import time
                 print("⏳ Waiting for deletion to complete...")
                 time.sleep(5)
             else:
@@ -103,32 +110,38 @@ def init_pinecone():
         print(f"   Metric: {METRIC}")
         print(f"   Cloud: {CLOUD} ({REGION})")
         
-        pc.create_index(
-            name=INDEX_NAME,
-            dimension=DIMENSION,
-            metric=METRIC,
-            spec=ServerlessSpec(
-                cloud=CLOUD,
-                region=REGION
+        try:
+            pc.create_index(
+                name=INDEX_NAME,
+                dimension=DIMENSION,
+                metric=METRIC,
+                spec=ServerlessSpec(
+                    cloud=CLOUD,
+                    region=REGION
+                )
             )
-        )
-        
-        print("✅ Index created successfully!")
+            print("✅ Index created successfully!")
+        except Exception as e:
+            # Handle potential race conditions or other API errors
+            if "already exists" in str(e):
+                print("   Index created (or already exists).")
+            else:
+                raise e
         
         # Wait for index to be ready
-        import time
         print("⏳ Waiting for index to be ready...")
-        time.sleep(10)
+        while not pc.describe_index(INDEX_NAME).status['ready']:
+            time.sleep(1)
         
         # Get index
         index = pc.Index(INDEX_NAME)
         
-        # Display statistics
-        print_index_stats(index)
-        
         # Initialize namespaces by upserting dummy vectors
         print("\n📦 Initializing namespaces...")
         initialize_namespaces(index)
+        
+        # Display statistics
+        print_index_stats(index)
         
         return index
         
@@ -136,9 +149,7 @@ def init_pinecone():
         print(f"\n❌ Error: {str(e)}")
         print("\n💡 Troubleshooting:")
         print("   1. Check your PINECONE_API_KEY is correct")
-        print("   2. Ensure you have an active Pinecone account")
-        print("   3. Verify your account has available indexes")
-        print("   4. Check: https://app.pinecone.io/")
+        print("   2. Verify your account limits (free tier allows 1 index)")
         sys.exit(1)
 
 
@@ -163,11 +174,10 @@ def initialize_namespaces(index):
         print(f"   ✅ Namespace '{NAMESPACE}' initialized")
         
         # Initialize metadata namespace (books_metadata)
-        metadata_namespace = "books_metadata"
-        print(f"   Creating namespace: {metadata_namespace}")
+        print(f"   Creating namespace: {METADATA_NAMESPACE}")
         dummy_metadata = {
             "id": f"init_{uuid.uuid4().hex[:8]}",
-            "values": [1.0] * DIMENSION,
+            "values": [0.0] * DIMENSION, # Dummy vector required even for metadata-only use
             "metadata": {
                 "book_title": "__init__",
                 "author": "System",
@@ -175,14 +185,14 @@ def initialize_namespaces(index):
                 "indexed_at": 0
             }
         }
-        index.upsert(vectors=[dummy_metadata], namespace=metadata_namespace)
-        print(f"   ✅ Namespace '{metadata_namespace}' initialized")
+        index.upsert(vectors=[dummy_metadata], namespace=METADATA_NAMESPACE)
+        print(f"   ✅ Namespace '{METADATA_NAMESPACE}' initialized")
         
         print("✅ All namespaces initialized")
         
     except Exception as e:
         print(f"⚠️  Warning: Could not initialize namespaces: {e}")
-        print("   This is OK - namespaces will be created on first upsert")
+        print("   This is usually OK - namespaces are created automatically on first upsert")
 
 
 def print_index_stats(index):
@@ -213,35 +223,6 @@ def print_index_stats(index):
         print(f"⚠️  Could not retrieve stats: {e}")
 
 
-def verify_connection():
-    """Verify connection works"""
-    print("\n" + "=" * 70)
-    print("🔍 Verifying Connection")
-    print("=" * 70)
-    
-    try:
-        pc = Pinecone(api_key=PINECONE_API_KEY)
-        index = pc.Index(INDEX_NAME)
-        
-        # Try a simple query
-        test_vector = [0.1] * DIMENSION
-        results = index.query(
-            vector=test_vector,
-            top_k=1,
-            namespace=NAMESPACE,
-            include_metadata=True
-        )
-        
-        print("✅ Connection verified - query successful")
-        print(f"   Returned {len(results.get('matches', []))} matches")
-        
-        return True
-        
-    except Exception as e:
-        print(f"❌ Connection verification failed: {e}")
-        return False
-
-
 def main():
     """Main execution"""
     print("\n" + "=" * 70)
@@ -249,26 +230,18 @@ def main():
     print("=" * 70)
     
     # Initialize index
-    index = init_pinecone()
+    init_pinecone()
     
-    # Verify connection
-    if verify_connection():
-        print("\n" + "=" * 70)
-        print("✅ Setup Complete!")
-        print("=" * 70)
-        print("\n🎉 Your Pinecone index is ready!")
-        print("\n📝 Next steps:")
-        print("   1. Run the backend: cd backend && python main.py")
-        print("   2. Upload a book using the /ingest endpoint")
-        print("   3. Start querying!")
-        print("\n💡 Useful commands:")
-        print(f"   • Check index: https://app.pinecone.io/indexes/{INDEX_NAME}")
-        print("   • API docs: http://localhost:8000/docs")
-        print("=" * 70 + "\n")
-    else:
-        print("\n⚠️  Setup completed but verification failed")
-        print("   The index was created but there might be connection issues")
-        print("   Try running your application anyway - it might work!\n")
+    print("\n" + "=" * 70)
+    print("✅ Setup Complete!")
+    print("=" * 70)
+    print("\n🎉 Your Pinecone index is ready!")
+    print("\n📝 Next steps:")
+    print("   1. Start the backend: cd backend && python main.py")
+    print("   2. Ingest a book via the API or Frontend")
+    print("\n💡 Useful commands:")
+    print(f"   • Check index: https://app.pinecone.io/indexes/{INDEX_NAME}")
+    print("=" * 70 + "\n")
 
 
 if __name__ == "__main__":

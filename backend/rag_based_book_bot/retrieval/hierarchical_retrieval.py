@@ -3,12 +3,11 @@ Hierarchical Retrieval Logic
 Located at: backend/rag_based_book_bot/retrieval/hierarchical_retrieval.py
 
 Implements smart retrieval based on hierarchy:
-- If asking about section → retrieve all subsections
-- If asking about subsection → retrieve only that subsection
+- If asking about section -> retrieve all subsections
+- If asking about subsection -> retrieve only that subsection
 """
-from typing import List, Dict, Set
-from pinecone import Index
-
+from typing import List, Dict, Set, Any
+# REMOVED: from pinecone import Index (Not available in v3/v4)
 
 class HierarchicalRetriever:
     """
@@ -17,7 +16,8 @@ class HierarchicalRetriever:
     Given initial chunks, expands based on hierarchy relationships
     """
     
-    def __init__(self, index: Index, namespace: str = "books_rag"):
+    # UPDATED: Changed type hint 'Index' to 'Any'
+    def __init__(self, index: Any, namespace: str = "books_rag"):
         self.index = index
         self.namespace = namespace
     
@@ -154,8 +154,8 @@ class HierarchicalRetriever:
         Smart expansion based on query analysis
         
         Rules:
-        - If query is about a high-level topic → expand children
-        - If query is specific → don't expand
+        - If query is about a high-level topic -> expand children
+        - If query is specific -> don't expand
         """
         # Simple heuristic: check query for hierarchy keywords
         query_lower = query.lower()
@@ -175,12 +175,12 @@ class HierarchicalRetriever:
         
         # Decision
         if is_high_level and not is_specific:
-            print("  → High-level query detected: expanding children")
+            print("  -> High-level query detected: expanding children")
             return self.expand_with_hierarchy(
                 initial_chunks,
                 expand_children=True,
                 expand_siblings=False
             )
         else:
-            print("  → Specific query detected: no expansion")
+            print("  -> Specific query detected: no expansion")
             return initial_chunks

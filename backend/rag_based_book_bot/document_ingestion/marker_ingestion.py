@@ -8,9 +8,10 @@ import logging
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 
-# Marker for PDF to Markdown
-from marker.convert import convert_single_pdf
-from marker.models import load_all_models
+# UPDATED: New Marker API imports
+from marker.converters.pdf import PdfConverter
+from marker.models import create_model_dict
+from marker.output import text_from_rendered
 
 # Pinecone for vector storage
 from pinecone import Pinecone, ServerlessSpec
@@ -55,9 +56,9 @@ class MarkerBookIngestor:
         """
         self.marker_config = marker_config or get_default_config(use_gpu=use_gpu)
         
-        # Load Marker models (this will use GPU if configured)
+        # UPDATED: Load Marker models using new API
         logger.info("Loading Marker models...")
-        self.marker_models = load_all_models()
+        self.artifact_dict = create_model_dict()
         logger.info("✅ Marker models loaded")
         
         # Initialize chunker
@@ -101,44 +102,63 @@ class MarkerBookIngestor:
                 logger.warning(f"Pinecone init error: {e}")
     
     def convert_pdf_to_markdown(self, pdf_path: str, output_dir: Optional[str] = None) -> str:
-        """
-        Convert PDF to Markdown using Marker
-        
-        Args:
-            pdf_path: Path to PDF file
-            output_dir: Directory to save markdown (optional)
-        
-        Returns:
-            Markdown text
-        """
-        logger.info(f"📄 Converting PDF to Markdown: {pdf_path}")
-        logger.info(f"   Using device: {self.marker_config.device}")
-        
-        # Convert
-        markdown_text, images, metadata = convert_single_pdf(
-            pdf_path,
-            self.marker_models,
-            **self.marker_config.to_marker_kwargs()
-        )
-        
-        logger.info(f"✅ Conversion complete!")
-        logger.info(f"   Pages processed: {metadata.get('pages', 'unknown')}")
-        logger.info(f"   Markdown length: {len(markdown_text)} chars")
-        
-        # Optionally save markdown
-        if output_dir:
-            output_dir = Path(output_dir)
-            output_dir.mkdir(exist_ok=True, parents=True)
+            """
+            Convert PDF to Markdown using Marker
             
-            pdf_name = Path(pdf_path).stem
-            md_path = output_dir / f"{pdf_name}.md"
+            Args:
+                pdf_path: Path to PDF file
+                output_dir: Directory to save markdown (optional)
             
-            with open(md_path, 'w', encoding='utf-8') as f:
-                f.write(markdown_text)
+            Returns:
+                Markdown text
+            """
+            logger.info(f"📄 Converting PDF to Markdown: {pdf_path}")
+            logger.info(f"   Using device: {self.marker_config.device}")
             
-            logger.info(f"   Saved markdown to: {md_path}")
-        
-        return markdown_text
+            # 1. Prepare configuration dictionary
+            #    Note: 'languages' is the key in config, but MarkerConfig uses 'langs'
+            marker_kwargs = self.marker_config.to_marker_kwargs()
+            converter_config = {
+                "max_pages": marker_kwargs.get("max_pages"),
+                "batch_multiplier": marker_kwargs.get("batch_multiplier"),
+                "languages": marker_kwargs.get("langs"), # Remap 'langs' -> 'languages'
+                "disable_image_extraction": not marker_kwargs.get("extract_images", False) # Inverted logic
+            }
+            
+            # Remove None values so defaults take over
+            converter_config = {k: v for k, v in converter_config.items() if v is not None}
+
+            # 2. Initialize converter with config
+            converter = PdfConverter(
+                artifact_dict=self.artifact_dict,
+                config=converter_config  # Pass config here!
+            )
+            
+            # 3. Call converter with ONLY filepath
+            rendered = converter(pdf_path)
+            
+            # Extract text and metadata
+            markdown_text, _, images = text_from_rendered(rendered)
+            metadata = rendered.metadata if hasattr(rendered, 'metadata') else {}
+            
+            logger.info(f"✅ Conversion complete!")
+            logger.info(f"   Pages processed: {metadata.get('pages', 'unknown')}")
+            logger.info(f"   Markdown length: {len(markdown_text)} chars")
+            
+            # Optionally save markdown
+            if output_dir:
+                output_dir = Path(output_dir)
+                output_dir.mkdir(exist_ok=True, parents=True)
+                
+                pdf_name = Path(pdf_path).stem
+                md_path = output_dir / f"{pdf_name}.md"
+                
+                with open(md_path, 'w', encoding='utf-8') as f:
+                    f.write(markdown_text)
+                
+                logger.info(f"   Saved markdown to: {md_path}")
+            
+            return markdown_text
     
     def ingest_book(
         self,
