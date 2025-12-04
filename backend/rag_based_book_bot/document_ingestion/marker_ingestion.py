@@ -9,7 +9,7 @@ from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 
 # Marker for PDF to Markdown
-from marker import convert_single_pdf
+from marker.convert import convert_single_pdf
 from marker.models import load_all_models
 
 # Pinecone for vector storage
