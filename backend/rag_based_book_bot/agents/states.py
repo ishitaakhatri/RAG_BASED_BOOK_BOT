@@ -6,6 +6,8 @@ These dataclasses define the structure of data flowing between nodes.
 from dataclasses import dataclass, field
 from typing import Optional, List
 from enum import Enum
+from typing import Dict
+
 
 
 class QueryIntent(Enum):
@@ -116,3 +118,50 @@ class AgentState:
     # Pipeline metadata
     current_node: str = ""
     errors: list[str] = field(default_factory=list)
+
+# Memmory
+
+@dataclass
+class FeedbackRecord:
+    """Store user feedback on specific chunks"""
+    chunk_id: str
+    query_embedding: List[float]  # The actual embedding vector
+    feedback_type: str  # "helpful" or "wrong"
+    timestamp: str
+    book_title: str
+    chapter: str
+
+
+@dataclass
+class QueryMemoryRecord:
+    """Store exact chunks retrieved for a specific query"""
+    query_text: str
+    query_embedding: List[float]  # Store the embedding vector itself
+    retrieved_chunk_ids: List[str]  # Exact chunk IDs returned
+    book_chapter_combo: str  # Format: "BookName - Chapter3"
+    timestamp: str
+    user_feedback: Optional[FeedbackRecord] = None
+
+
+@dataclass
+class ConversationMemory:
+    """Main memory container for a conversation"""
+    conversation_id: str
+    query_history: List[QueryMemoryRecord] = field(default_factory=list)
+    seen_chunk_ids: set = field(default_factory=set)  # All chunks ever retrieved
+    explored_book_chapters: Dict[str, int] = field(default_factory=dict)  # book_chapter -> count
+    feedback_records: List[FeedbackRecord] = field(default_factory=list)
+    
+    def add_query_record(self, record: QueryMemoryRecord):
+        """Add a query record and update seen chunks"""
+        self.query_history.append(record)
+        self.seen_chunk_ids.update(record.retrieved_chunk_ids)
+    
+    def add_feedback(self, feedback: FeedbackRecord):
+        """Add user feedback"""
+        self.feedback_records.append(feedback)
+    
+    def get_last_n_queries(self, n: int = 5) -> List[QueryMemoryRecord]:
+        """Get last N queries from history"""
+        return self.query_history[-n:]
+
