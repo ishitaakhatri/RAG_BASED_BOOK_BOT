@@ -1,11 +1,11 @@
 """
 Semantic Chunker - Embedding-based text chunking
-Enhanced to properly track book title and author metadata
+Enhanced with GROBID structure-aware chunking
 """
 import re
 import tiktoken
 import numpy as np
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from dataclasses import dataclass
@@ -23,15 +23,19 @@ class SemanticChunk:
     token_count: int
     chunk_index: int
     contains_code: bool
-    book_title: str = "Unknown Book"  # NEW: Track book title
-    author: str = "Unknown Author"  # NEW: Track author
+    book_title: str = "Unknown Book"
+    author: str = "Unknown Author"
+    # NEW: Structure fields from GROBID
+    section_title: Optional[str] = None
+    section_type: Optional[str] = None
+    section_number: Optional[str] = None
+    formulas: Optional[List[str]] = None
 
 
 class SemanticChunker:
     """
     Chunks text based on semantic similarity between sentences.
-    Groups related content together, splits at topic boundaries.
-    Enhanced to preserve book and author metadata.
+    Enhanced to respect structural boundaries from GROBID.
     """
     
     def __init__(
@@ -67,11 +71,10 @@ class SemanticChunker:
         batch_size: int = 20
     ) -> List[Tuple[str, Dict]]:
         """
-        Chunk pages in batches for better performance.
-        Enhanced to include book title and author in metadata.
+        Chunk pages in batches with structure awareness
         
         Args:
-            pages_text: List of dicts with 'page' and 'text' keys
+            pages_text: List of dicts with 'page', 'text', and optional 'structure' keys
             book_title: Title of the book
             author: Author name
             batch_size: Number of pages to process at once
@@ -83,8 +86,162 @@ class SemanticChunker:
         global_chunk_idx = 0
         total_pages = len(pages_text)
         
+        # Check if we have structure info
+        has_structure = any(p.get("structure") for p in pages_text)
+        
         logger.info(f"Starting batched processing of {total_pages} pages for '{book_title}' by {author}")
         logger.info(f"Batch size: {batch_size}")
+        logger.info(f"Structure info: {'Available (GROBID)' if has_structure else 'Not available'}")
+        
+        if has_structure:
+            # Structure-aware chunking (GROBID data)
+            all_chunks = self._chunk_with_structure(
+                pages_text,
+                book_title,
+                author
+            )
+        else:
+            # Original semantic chunking (no structure)
+            all_chunks = self._chunk_without_structure(
+                pages_text,
+                book_title,
+                author,
+                batch_size
+            )
+        
+        logger.info(f"✅ Created {len(all_chunks)} semantic chunks from {total_pages} pages")
+        logger.info(f"   Book: '{book_title}' by {author}")
+        return all_chunks
+    
+    def _chunk_with_structure(
+        self,
+        pages_text: List[Dict],
+        book_title: str,
+        author: str
+    ) -> List[Tuple[str, Dict]]:
+        """
+        Structure-aware chunking using GROBID section boundaries
+        Respects section boundaries as hard splits
+        """
+        all_chunks = []
+        global_chunk_idx = 0
+        
+        logger.info("🏗️ Using structure-aware chunking (GROBID mode)")
+        
+        for page_data in pages_text:
+            text = page_data["text"]
+            page_num = page_data["page"]
+            structure = page_data.get("structure", {})
+            
+            if not text.strip():
+                continue
+            
+            # Extract structure info
+            section_title = structure.get("title", "") if structure else ""
+            section_type = structure.get("type", "") if structure else ""
+            section_number = structure.get("section_number", "") if structure else ""
+            formulas = structure.get("formulas", []) if structure else []
+            contains_code = structure.get("contains_code", False) if structure else False
+            
+            # Check if this section is small enough to be one chunk
+            token_count = self._count_tokens(text)
+            
+            if token_count <= self.max_chunk_size and token_count >= self.min_chunk_size:
+                # Single chunk for this section
+                metadata = {
+                    "book_title": book_title,
+                    "author": author,
+                    "page_start": page_num,
+                    "page_end": page_num,
+                    "chunk_index": global_chunk_idx,
+                    "contains_code": contains_code or self._detect_code(text),
+                    "token_count": token_count,
+                    "section_title": section_title,
+                    "section_type": section_type,
+                    "section_number": section_number,
+                    "formulas": formulas
+                }
+                
+                all_chunks.append((text, metadata))
+                global_chunk_idx += 1
+                
+            elif token_count > self.max_chunk_size:
+                # Section too large, apply semantic chunking within section
+                logger.info(f"  Section '{section_title}' too large ({token_count} tokens), applying semantic split")
+                
+                section_chunks = self._chunk_text_semantic_fast(
+                    text,
+                    page_num,
+                    page_num,
+                    book_title,
+                    author,
+                    section_info={
+                        "title": section_title,
+                        "type": section_type,
+                        "number": section_number,
+                        "formulas": formulas
+                    }
+                )
+                
+                # Convert to tuples with metadata
+                for chunk in section_chunks:
+                    metadata = {
+                        "book_title": book_title,
+                        "author": author,
+                        "page_start": chunk.page_start,
+                        "page_end": chunk.page_end,
+                        "chunk_index": global_chunk_idx,
+                        "contains_code": chunk.contains_code,
+                        "token_count": chunk.token_count,
+                        "section_title": chunk.section_title,
+                        "section_type": chunk.section_type,
+                        "section_number": chunk.section_number,
+                        "formulas": chunk.formulas or []
+                    }
+                    
+                    all_chunks.append((chunk.text, metadata))
+                    global_chunk_idx += 1
+            
+            else:
+                # Section too small, might merge with next in future enhancement
+                # For now, skip or merge with previous
+                if token_count > 0:
+                    logger.info(f"  Section '{section_title}' below minimum ({token_count} tokens), keeping as-is")
+                    metadata = {
+                        "book_title": book_title,
+                        "author": author,
+                        "page_start": page_num,
+                        "page_end": page_num,
+                        "chunk_index": global_chunk_idx,
+                        "contains_code": contains_code or self._detect_code(text),
+                        "token_count": token_count,
+                        "section_title": section_title,
+                        "section_type": section_type,
+                        "section_number": section_number,
+                        "formulas": formulas
+                    }
+                    
+                    all_chunks.append((text, metadata))
+                    global_chunk_idx += 1
+        
+        return all_chunks
+    
+    def _chunk_without_structure(
+        self,
+        pages_text: List[Dict],
+        book_title: str,
+        author: str,
+        batch_size: int
+    ) -> List[Tuple[str, Dict]]:
+        """
+        Original semantic chunking without structure hints
+        Fallback when GROBID data not available
+        """
+        all_chunks = []
+        global_chunk_idx = 0
+        total_pages = len(pages_text)
+        
+        logger.info("📄 Using pure semantic chunking (no structure info)")
         
         # Process in batches
         for batch_start in range(0, total_pages, batch_size):
@@ -96,7 +253,7 @@ class SemanticChunker:
             
             # Combine batch pages into one text block
             combined_text = ""
-            page_boundaries = []  # Track where each page starts
+            page_boundaries = []
             
             for page_data in batch_pages:
                 page_boundaries.append(len(combined_text))
@@ -108,17 +265,17 @@ class SemanticChunker:
             # Chunk the combined text
             batch_chunks = self._chunk_text_semantic_fast(
                 combined_text,
-                batch_start + 1,  # First page in batch
-                batch_end,         # Last page in batch
-                book_title,  # NEW: Pass book title
-                author  # NEW: Pass author
+                batch_start + 1,
+                batch_end,
+                book_title,
+                author
             )
             
             # Add to results with metadata
             for chunk in batch_chunks:
                 metadata = {
-                    "book_title": book_title,  # IMPORTANT: Include book title
-                    "author": author,  # IMPORTANT: Include author
+                    "book_title": book_title,
+                    "author": author,
                     "page_start": chunk.page_start,
                     "page_end": chunk.page_end,
                     "chunk_index": global_chunk_idx,
@@ -129,8 +286,6 @@ class SemanticChunker:
                 all_chunks.append((chunk.text, metadata))
                 global_chunk_idx += 1
         
-        logger.info(f"✅ Created {len(all_chunks)} semantic chunks from {total_pages} pages")
-        logger.info(f"   Book: '{book_title}' by {author}")
         return all_chunks
 
     def _chunk_text_semantic_fast(
@@ -139,23 +294,27 @@ class SemanticChunker:
         page_start: int, 
         page_end: int,
         book_title: str,
-        author: str
+        author: str,
+        section_info: Optional[Dict] = None
     ) -> List[SemanticChunk]:
         """
-        Faster semantic chunking with book metadata
+        Faster semantic chunking with optional section metadata
+        
+        Args:
+            section_info: Optional dict with 'title', 'type', 'number', 'formulas'
         """
         sentences = self._split_sentences(text)
         
         if not sentences:
             return []
         
-        # Embed in one batch (MUCH faster than one-by-one)
-        logger.info(f"   Embedding {len(sentences)} sentences...")
+        # Embed in one batch
+        logger.debug(f"   Embedding {len(sentences)} sentences...")
         embeddings = self.model.encode(
             sentences,
             show_progress_bar=False,
             convert_to_numpy=True,
-            batch_size=64  # Larger batch size
+            batch_size=64
         )
         
         # Group sentences by similarity
@@ -178,15 +337,14 @@ class SemanticChunker:
             )
             
             if should_split and current_tokens >= self.min_chunk_size:
-                chunk = SemanticChunk(
-                    text=current_text,
-                    page_start=page_start,
-                    page_end=page_end,
-                    token_count=current_tokens,
-                    chunk_index=len(chunks),
-                    contains_code=self._detect_code(current_text),
-                    book_title=book_title,  # NEW: Include book title
-                    author=author  # NEW: Include author
+                chunk = self._create_chunk(
+                    current_sentences,
+                    page_start,
+                    page_end,
+                    len(chunks),
+                    book_title,
+                    author,
+                    section_info
                 )
                 chunks.append(chunk)
                 
@@ -200,15 +358,14 @@ class SemanticChunker:
         if current_sentences:
             final_text = ' '.join(current_sentences)
             if self._count_tokens(final_text) >= self.min_chunk_size:
-                chunk = SemanticChunk(
-                    text=final_text,
-                    page_start=page_start,
-                    page_end=page_end,
-                    token_count=self._count_tokens(final_text),
-                    chunk_index=len(chunks),
-                    contains_code=self._detect_code(final_text),
-                    book_title=book_title,
-                    author=author
+                chunk = self._create_chunk(
+                    current_sentences,
+                    page_start,
+                    page_end,
+                    len(chunks),
+                    book_title,
+                    author,
+                    section_info
                 )
                 chunks.append(chunk)
             elif chunks:
@@ -218,116 +375,44 @@ class SemanticChunker:
         
         return chunks
     
-    def _chunk_text_semantic(
-        self, 
-        text: str, 
-        page_num: int,
-        book_title: str,
-        author: str
-    ) -> List[SemanticChunk]:
-        """
-        Core semantic chunking logic for a single page/section.
-        """
-        # Split into sentences
-        sentences = self._split_sentences(text)
-        
-        if not sentences:
-            return []
-        
-        # Embed all sentences
-        embeddings = self.model.encode(
-            sentences, 
-            show_progress_bar=False,
-            convert_to_numpy=True
-        )
-        
-        # Group sentences by similarity
-        chunks = []
-        current_sentences = [sentences[0]]
-        current_embedding = embeddings[0]
-        
-        for i in range(1, len(sentences)):
-            # Calculate similarity with current chunk
-            similarity = cosine_similarity(
-                [current_embedding], 
-                [embeddings[i]]
-            )[0][0]
-            
-            # Get token count of current chunk
-            current_text = ' '.join(current_sentences)
-            current_tokens = self._count_tokens(current_text)
-            
-            # Decision: add to current chunk or start new?
-            should_split = (
-                similarity < self.similarity_threshold or  # Topic changed
-                current_tokens >= self.max_chunk_size      # Chunk too large
-            )
-            
-            if should_split and current_tokens >= self.min_chunk_size:
-                # Finalize current chunk
-                chunk = self._create_chunk(
-                    current_sentences,
-                    page_num,
-                    len(chunks),
-                    book_title,
-                    author
-                )
-                chunks.append(chunk)
-                
-                # Start new chunk
-                current_sentences = [sentences[i]]
-                current_embedding = embeddings[i]
-            else:
-                # Add to current chunk
-                current_sentences.append(sentences[i])
-                # Update embedding (running average for efficiency)
-                current_embedding = (current_embedding + embeddings[i]) / 2
-        
-        # Add final chunk
-        if current_sentences:
-            final_text = ' '.join(current_sentences)
-            if self._count_tokens(final_text) >= self.min_chunk_size:
-                chunk = self._create_chunk(
-                    current_sentences,
-                    page_num,
-                    len(chunks),
-                    book_title,
-                    author
-                )
-                chunks.append(chunk)
-            elif chunks:
-                # Too small, merge with last chunk
-                chunks[-1].text += ' ' + final_text
-                chunks[-1].token_count = self._count_tokens(chunks[-1].text)
-        
-        return chunks
-    
     def _create_chunk(
         self,
         sentences: List[str],
-        page_num: int,
+        page_start: int,
+        page_end: int,
         chunk_idx: int,
         book_title: str,
-        author: str
+        author: str,
+        section_info: Optional[Dict] = None
     ) -> SemanticChunk:
-        """Create a SemanticChunk from sentences with metadata"""
+        """Create a SemanticChunk with optional structure metadata"""
         text = ' '.join(sentences)
+        
+        # Extract section info if provided
+        section_title = section_info.get("title") if section_info else None
+        section_type = section_info.get("type") if section_info else None
+        section_number = section_info.get("number") if section_info else None
+        formulas = section_info.get("formulas") if section_info else None
         
         return SemanticChunk(
             text=text,
-            page_start=page_num,
-            page_end=page_num,
+            page_start=page_start,
+            page_end=page_end,
             token_count=self._count_tokens(text),
             chunk_index=chunk_idx,
             contains_code=self._detect_code(text),
-            book_title=book_title,  # NEW: Include book title
-            author=author  # NEW: Include author
+            book_title=book_title,
+            author=author,
+            section_title=section_title,
+            section_type=section_type,
+            section_number=section_number,
+            formulas=formulas
         )
     
     def _split_sentences(self, text: str) -> List[str]:
         """Smart sentence splitting that preserves code blocks"""
         # First, protect code blocks
-        code_pattern = r'```[\s\S]*?```|`[^`]+`'
+        code_pattern = r'``````|`[^`]+`'
         code_blocks = []
         
         def replace_code(match):
@@ -363,22 +448,22 @@ class SemanticChunker:
     def _detect_code(self, text: str) -> bool:
         """Detect if text contains code snippets"""
         code_indicators = [
-            r'```',                          # Markdown code blocks
-            r'^\s{4,}\w+',                   # Indented code
-            r'\bdef\s+\w+\s*\(',            # Python functions
-            r'\bclass\s+\w+',                # Class definitions
-            r'\bimport\s+\w+',               # Import statements
-            r'\bfrom\s+\w+\s+import\b',     # From imports
-            r'public\s+(class|static|void)', # Java/C#
-            r'function\s+\w+\s*\(',          # JavaScript functions
-            r'=>',                           # Arrow functions
+            r'```',
+            r'^\s{4,}\w+',
+            r'\bdef\s+\w+\s*\(',
+            r'\bclass\s+\w+',
+            r'\bimport\s+\w+',
+            r'\bfrom\s+\w+\s+import\b',
+            r'public\s+(class|static|void)',
+            r'function\s+\w+\s*\(',
+            r'=>',
         ]
         
         for pattern in code_indicators:
             if re.search(pattern, text, flags=re.MULTILINE):
                 return True
         
-        # Check symbol density (high = likely code)
+        # Check symbol density
         symbols = sum(text.count(s) for s in '{}[]();=<>+-*/')
         if len(text) > 50 and (symbols / len(text)) > 0.03:
             return True
@@ -398,13 +483,6 @@ def create_semantic_chunker(
 ) -> SemanticChunker:
     """
     Factory function to create a semantic chunker with custom settings.
-    
-    Args:
-        similarity_threshold: Lower = more splits (more specific chunks)
-                            Higher = fewer splits (larger chunks)
-                            Recommended: 0.70-0.80
-        min_chunk_size: Minimum tokens per chunk
-        max_chunk_size: Maximum tokens per chunk
     """
     return SemanticChunker(
         similarity_threshold=similarity_threshold,
