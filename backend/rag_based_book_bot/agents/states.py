@@ -96,6 +96,9 @@ class AgentState:
     # After Query Parsing
     parsed_query: Optional[ParsedQuery] = None
     
+    # NEW: After Query Rewriting
+    rewritten_queries: list[str] = field(default_factory=list)
+    
     # After Vector Search
     retrieved_chunks: list[RetrievedChunk] = field(default_factory=list)
     

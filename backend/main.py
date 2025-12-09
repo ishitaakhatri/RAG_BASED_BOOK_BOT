@@ -1,11 +1,10 @@
 """
-FastAPI Backend - FIXED: Book titles now show in chunks and sources
-Key changes:
-1. Added book_title and author to ChunkDetail model
-2. Included book metadata in format_chunk_detail()
-3. Added book metadata to sources response
+FastAPI Backend - WITH QUERY REWRITING SUPPORT
+Key additions:
+1. Query rewriting node integration
+2. Parallel search with original + rewritten queries
+3. Rewritten queries included in API response
 """
-# ... (keep all imports the same) ...
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +22,7 @@ from rag_based_book_bot.document_ingestion.enhanced_ingestion import (
 )
 from rag_based_book_bot.agents.nodes import (
     user_query_node,
+    query_rewriter_node,  # NEW IMPORT
     vector_search_node,
     reranking_node,
     multi_hop_expansion_node,
@@ -49,7 +49,7 @@ app.add_middleware(
 
 
 # ============================================================================
-# FIXED MODELS - Added book_title and author
+# MODELS
 # ============================================================================
 
 class ChunkDetail(BaseModel):
@@ -60,8 +60,8 @@ class ChunkDetail(BaseModel):
     type: str
     content_preview: str
     source: str
-    book_title: str = "Unknown Book"  # NEW
-    author: str = "Unknown Author"    # NEW
+    book_title: str = "Unknown Book"
+    author: str = "Unknown Author"
 
 
 class QueryRequest(BaseModel):
@@ -87,6 +87,7 @@ class QueryResponse(BaseModel):
     confidence: float
     stats: dict
     pipeline_stages: List[PipelineStage]
+    rewritten_queries: List[str] = []  # NEW FIELD
 
 
 class IngestResponse(BaseModel):
@@ -214,30 +215,54 @@ def get_available_books() -> List[BookInfo]:
         return []
 
 
-def query_pinecone(query_text, top_k=50, book_filter=None, chapter_filter=None):
-    """Query Pinecone for relevant chunks"""
+def query_pinecone_with_expansion(query_text, rewritten_queries, top_k=50, book_filter=None, chapter_filter=None):
+    """
+    NEW: Query Pinecone with original + rewritten queries
+    Performs parallel searches and deduplicates results
+    """
     try:
         index = get_pinecone_index()
         model = get_embedding_model()
         namespace = os.getenv("PINECONE_NAMESPACE", "books_rag")
         
-        query_embedding = model.encode(query_text).tolist()
+        # Collect all queries
+        all_queries = [query_text] + rewritten_queries
         
+        # Build filter
         filter_dict = {}
         if book_filter:
             filter_dict["book_title"] = book_filter
         if chapter_filter:
             filter_dict["chapter_numbers"] = {"$in": [chapter_filter]}
         
-        results = index.query(
-            vector=query_embedding,
-            top_k=top_k,
-            namespace=namespace,
-            filter=filter_dict if filter_dict else None,
-            include_metadata=True
-        )
+        # Store results in dict to deduplicate by chunk_id
+        all_results = {}
         
-        return results.get("matches", [])
+        for query in all_queries:
+            query_embedding = model.encode(query).tolist()
+            
+            results = index.query(
+                vector=query_embedding,
+                top_k=top_k,
+                namespace=namespace,
+                filter=filter_dict if filter_dict else None,
+                include_metadata=True
+            )
+            
+            # Merge results, keeping highest score for each chunk
+            for match in results.get("matches", []):
+                chunk_id = match["id"]
+                current_score = match.get("score", 0.0)
+                
+                if chunk_id not in all_results or current_score > all_results[chunk_id].get("score", 0):
+                    all_results[chunk_id] = match
+        
+        # Convert to list and sort by score
+        matches = list(all_results.values())
+        matches.sort(key=lambda x: x.get("score", 0), reverse=True)
+        
+        return matches
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
@@ -281,7 +306,7 @@ def convert_matches_to_chunks(matches):
 
 
 def format_chunk_detail(chunk, source: str) -> ChunkDetail:
-    """FIXED: Now includes book metadata"""
+    """Format chunk for API response"""
     return ChunkDetail(
         chunk_id=chunk.chunk.chunk_id,
         chapter=chunk.chunk.chapter,
@@ -290,8 +315,8 @@ def format_chunk_detail(chunk, source: str) -> ChunkDetail:
         type=chunk.chunk.chunk_type,
         content_preview=chunk.chunk.content[:200] + "..." if len(chunk.chunk.content) > 200 else chunk.chunk.content,
         source=source,
-        book_title=chunk.chunk.book_title or "Unknown Book",  # NEW
-        author=chunk.chunk.author or "Unknown Author"          # NEW
+        book_title=chunk.chunk.book_title or "Unknown Book",
+        author=chunk.chunk.author or "Unknown Author"
     )
 
 
@@ -302,7 +327,7 @@ def format_chunk_detail(chunk, source: str) -> ChunkDetail:
 @app.get("/")
 async def root():
     """Health check"""
-    return {"status": "online", "message": "RAG Book Bot API"}
+    return {"status": "online", "message": "RAG Book Bot API with Query Rewriting"}
 
 
 @app.get("/books", response_model=BooksResponse)
@@ -314,7 +339,11 @@ async def list_books():
 
 @app.post("/query", response_model=QueryResponse)
 async def process_query(request: QueryRequest):
-    """Process query with ACCURATE cumulative chunk counts"""
+    """
+    Process query with QUERY REWRITING and 5-pass retrieval pipeline
+    
+    NEW: Generates alternative query formulations before retrieval
+    """
     try:
         pipeline_stages = []
         
@@ -322,9 +351,18 @@ async def process_query(request: QueryRequest):
         state = AgentState(user_query=request.query)
         state = user_query_node(state)
         
-        # Pass 1: Vector Search
-        matches = query_pinecone(
+        # NEW: Query Rewriting - Generate alternative formulations
+        print("\n[Query Rewriting] Generating alternative queries...")
+        state = query_rewriter_node(state, num_variations=3)
+        print(f"  → Generated {len(state.rewritten_queries)} variations")
+        for i, q in enumerate(state.rewritten_queries, 1):
+            print(f"     {i}. {q}")
+        
+        # Pass 1: Vector Search with query expansion
+        print(f"\n[Pass 1] Searching with {len(state.rewritten_queries) + 1} queries...")
+        matches = query_pinecone_with_expansion(
             request.query,
+            state.rewritten_queries,  # NEW: Pass rewritten queries
             top_k=request.pass1_k,
             book_filter=request.book_filter,
             chapter_filter=request.chapter_filter
@@ -335,12 +373,12 @@ async def process_query(request: QueryRequest):
         
         state.retrieved_chunks = convert_matches_to_chunks(matches)
         
-        # PASS 1 STAGE - Show all retrieved chunks
+        # PASS 1 STAGE
         pass1_chunks = [format_chunk_detail(chunk, "pass1") for chunk in state.retrieved_chunks]
         pipeline_stages.append(PipelineStage(
-            stage_name="Pass 1: Vector Search",
-            chunk_count=len(state.retrieved_chunks),  # Total retrieved
-            chunks=pass1_chunks[:10]  # Show first 10 for preview
+            stage_name=f"Pass 1: Vector Search (with {len(state.rewritten_queries)} rewritten queries)",
+            chunk_count=len(state.retrieved_chunks),
+            chunks=pass1_chunks[:10]
         ))
         
         pass1_count = len(state.retrieved_chunks)
@@ -348,11 +386,10 @@ async def process_query(request: QueryRequest):
         # Pass 2: Reranking
         state = reranking_node(state, top_k=request.pass2_k)
         
-        # PASS 2 STAGE - Show reranked chunks (subset of Pass 1)
         pass2_chunks = [format_chunk_detail(chunk, "pass2_reranked") for chunk in state.reranked_chunks]
         pipeline_stages.append(PipelineStage(
             stage_name="Pass 2: Cross-Encoder Reranking",
-            chunk_count=len(state.reranked_chunks),  # Total after reranking
+            chunk_count=len(state.reranked_chunks),
             chunks=pass2_chunks[:10]
         ))
         
@@ -364,7 +401,6 @@ async def process_query(request: QueryRequest):
             state = multi_hop_expansion_node(state, max_hops=2)
             after_expansion = len(state.reranked_chunks)
             
-            # PASS 3 STAGE - Show ONLY the newly added chunks
             new_chunks_added = after_expansion - before_expansion
             if new_chunks_added > 0:
                 pass3_new_chunks = [
@@ -373,7 +409,7 @@ async def process_query(request: QueryRequest):
                 ]
                 pipeline_stages.append(PipelineStage(
                     stage_name=f"Pass 3: Multi-Hop Expansion (+{new_chunks_added} new)",
-                    chunk_count=after_expansion,  # TOTAL chunks now
+                    chunk_count=after_expansion,
                     chunks=pass3_new_chunks[:10]
                 ))
         
@@ -382,28 +418,28 @@ async def process_query(request: QueryRequest):
         # Pass 4: Cluster Expansion
         state = cluster_expansion_node(state)
         
-        # Pass 5: Context Assembly (includes compression and deduplication)
+        # Pass 5: Context Assembly
         before_compression = len(state.reranked_chunks)
         state = context_assembly_node(state, max_tokens=request.max_tokens)
         
         # LLM Reasoning
         state = llm_reasoning_node(state)
         
-        # FINAL STAGE - After compression & deduplication
+        # FINAL STAGE
         after_compression = len(state.reranked_chunks)
         final_chunks = [format_chunk_detail(chunk, "final") for chunk in state.reranked_chunks]
         
         removed_count = before_compression - after_compression
         pipeline_stages.append(PipelineStage(
             stage_name=f"Final: After Deduplication (-{removed_count} duplicates)" if removed_count > 0 else "Final: Ready for LLM",
-            chunk_count=after_compression,  # FINAL total
+            chunk_count=after_compression,
             chunks=final_chunks[:10]
         ))
         
         if state.errors:
             raise HTTPException(status_code=500, detail="; ".join(state.errors))
         
-        # Build sources with complete metadata
+        # Build sources
         sources = [
             {
                 "chunk_id": rc.chunk.chunk_id,
@@ -417,14 +453,15 @@ async def process_query(request: QueryRequest):
             for rc in state.reranked_chunks[:5]
         ]
         
-        # Calculate accurate stats
+        # Calculate stats
         stats = {
             "pass1": pass1_count,
             "pass2": pass2_count,
             "pass3": pass3_count,
             "final": after_compression,
             "tokens": len(state.assembled_context.split()) if state.assembled_context else 0,
-            "removed_duplicates": removed_count if removed_count > 0 else 0
+            "removed_duplicates": removed_count if removed_count > 0 else 0,
+            "rewritten_queries_count": len(state.rewritten_queries)  # NEW
         }
         
         return QueryResponse(
@@ -432,12 +469,15 @@ async def process_query(request: QueryRequest):
             sources=sources,
             confidence=state.response.confidence,
             stats=stats,
-            pipeline_stages=pipeline_stages
+            pipeline_stages=pipeline_stages,
+            rewritten_queries=state.rewritten_queries  # NEW: Include in response
         )
         
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        print(f"ERROR: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
 

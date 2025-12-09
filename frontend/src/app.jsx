@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   Search, BookOpen, Upload, Settings, MessageSquare, FileText, Code, 
   Sparkles, AlertCircle, CheckCircle, Loader, Book, ChevronDown, 
-  ChevronUp, Eye, Filter, Layers, Tag
+  ChevronUp, Eye, Filter, Layers, Tag, Repeat  // NEW: Added Repeat icon
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
@@ -31,24 +31,19 @@ export default function RAGBookBot() {
     fetchBooks();
   }, []);
 
-  // UPDATED: Smart scrolling logic
   useEffect(() => {
     if (messages.length === 0) return;
 
     const lastMessage = messages[messages.length - 1];
     
-    // If it's a user message, scroll to bottom to show the input
     if (lastMessage.role === 'user') {
       scrollToBottom();
     } else {
-      // If it's an assistant answer, scroll to the TOP of that specific message
-      // This prevents scrolling all the way back up to the first query
       const lastMsgId = `msg-${messages.length - 1}`;
       const element = document.getElementById(lastMsgId);
       if (element) {
         element.scrollIntoView({ behavior: 'smooth', block: 'start' });
       } else {
-        // Fallback if element not found
         scrollToBottom();
       }
     }
@@ -107,7 +102,8 @@ export default function RAGBookBot() {
           sources: data.sources,
           stats: data.stats,
           confidence: data.confidence,
-          pipeline_stages: data.pipeline_stages
+          pipeline_stages: data.pipeline_stages,
+          rewritten_queries: data.rewritten_queries || []  // NEW: Capture rewritten queries
         }]);
       }
     } catch (error) {
@@ -189,7 +185,7 @@ export default function RAGBookBot() {
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-white">RAG Book Bot</h1>
-                <p className="text-sm text-purple-200">AI-Powered Book Assistant with 5-Pass Retrieval</p>
+                <p className="text-sm text-purple-200">AI-Powered Book Assistant with Query Rewriting</p>
               </div>
             </div>
             <div className="flex items-center space-x-3">
@@ -396,7 +392,7 @@ export default function RAGBookBot() {
                       Welcome to RAG Book Bot
                     </h3>
                     <p className="text-purple-200 max-w-md">
-                      Ask questions about your ingested books and get AI-powered answers with full pipeline visibility!
+                      Ask questions about your ingested books and get AI-powered answers with query rewriting!
                     </p>
                     <p className="text-purple-300 text-sm mt-4">
                       💡 Tip: Upload PDFs in format "Book Title - Author Name.pdf" for auto-extraction
@@ -404,14 +400,13 @@ export default function RAGBookBot() {
                   </div>
                 ) : (
                   messages.map((msg, idx) => (
-                    // UPDATED: Pass ID for scrolling targeting
                     <MessageBubble key={idx} message={msg} id={`msg-${idx}`} />
                   ))
                 )}
                 {loading && (
                   <div className="flex items-center space-x-2 text-purple-200">
                     <Loader className="w-5 h-5 animate-spin" />
-                    <span>Thinking...</span>
+                    <span>Generating alternative queries and searching...</span>
                   </div>
                 )}
                 <div ref={messagesEndRef} />
@@ -446,10 +441,10 @@ export default function RAGBookBot() {
   );
 }
 
-// UPDATED: MessageBubble accepts `id` prop
 function MessageBubble({ message, id }) {
   const [showSources, setShowSources] = useState(false);
   const [showPipeline, setShowPipeline] = useState(false);
+  const [showRewrittenQueries, setShowRewrittenQueries] = useState(false);  // NEW
 
   if (message.role === 'user') {
     return (
@@ -471,6 +466,44 @@ function MessageBubble({ message, id }) {
           </div>
         ) : (
           <>
+            {/* NEW: Rewritten Queries Section - Shows BEFORE answer */}
+            {message.rewritten_queries && message.rewritten_queries.length > 0 && (
+              <div className="mb-3">
+                <button
+                  onClick={() => setShowRewrittenQueries(!showRewrittenQueries)}
+                  className="flex items-center space-x-2 text-sm text-purple-300 hover:text-purple-100 transition-colors mb-2 w-full justify-between bg-white/5 p-3 rounded-lg border border-white/10 hover:border-purple-400/50"
+                >
+                  <div className="flex items-center space-x-2">
+                    <Repeat className="w-4 h-4" />
+                    <span className="font-semibold">
+                      Query Expansion ({message.rewritten_queries.length} variations)
+                    </span>
+                  </div>
+                  {showRewrittenQueries ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+                
+                {showRewrittenQueries && (
+                  <div className="bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-lg p-4 border border-blue-400/30">
+                    <div className="space-y-2">
+                      {message.rewritten_queries.map((query, idx) => (
+                        <div key={idx} className="flex items-start space-x-2 bg-white/5 rounded p-2 border border-white/10">
+                          <div className="flex-shrink-0 w-6 h-6 rounded-full bg-gradient-to-br from-blue-400 to-purple-400 flex items-center justify-center text-xs font-bold text-white">
+                            {idx + 1}
+                          </div>
+                          <p className="flex-1 text-sm text-gray-200 leading-relaxed">
+                            {query}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-3 text-xs text-purple-300 bg-purple-500/10 rounded p-2 border border-purple-400/30">
+                      💡 These alternative phrasings help retrieve diverse relevant chunks from different perspectives
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Answer Section */}
             <div className="bg-white/5 rounded-lg p-4 mb-3 border border-white/10">
               <div className="flex items-center space-x-2 mb-2">
@@ -480,7 +513,6 @@ function MessageBubble({ message, id }) {
               <div className="prose prose-invert prose-p:leading-relaxed prose-pre:bg-black/50 max-w-none text-gray-100">
                 <ReactMarkdown
                   components={{
-                    // Optional: Override specific elements if needed
                     code: ({node, inline, className, children, ...props}) => {
                       return (
                         <code
@@ -701,7 +733,7 @@ function EnhancedPipelineDisplay({ stages, stats }) {
 
               {isExpanded && (
                 <div className="p-3 bg-black/20 text-xs text-purple-200">
-                  {index === 0 && "Broad semantic search using vector similarity across all chunks."}
+                  {index === 0 && "Broad semantic search using vector similarity with query expansion."}
                   {index === 1 && "Precision ranking with cross-encoder to select most relevant."}
                   {index === 2 && "Intelligent expansion following related concepts."}
                   {index === 3 && "Final optimization with deduplication."}

@@ -45,7 +45,7 @@ EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 # Initialize Gemini LLM at module level
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash",
-    google_api_key=os.getenv("GOOGLE_API_KEY"),
+    google_api_key=os.getenv("GEMINI_API_KEY"),
     temperature=0.7,
     convert_system_message_to_human=True  # Gemini doesn't support system messages natively
 )
@@ -144,6 +144,173 @@ def user_query_node(state: AgentState) -> AgentState:
         state.parsed_query = _fallback_parse_query(state.user_query)
     
     return state
+
+
+
+def query_rewriter_node(state: AgentState, num_variations: int = 3) -> AgentState:
+    """
+    Query Rewriting Node - Generates alternative query formulations
+    
+    Uses Gemini LLM to create semantically similar but differently phrased queries
+    to improve retrieval recall by covering different ways of expressing the same intent.
+    
+    Args:
+        state: Current agent state with parsed_query
+        num_variations: Number of alternative queries to generate (default: 3)
+    
+    Returns:
+        Updated state with rewritten_queries populated
+    """
+    state.current_node = "query_rewriter"
+    
+    if not state.parsed_query:
+        state.errors.append("Missing parsed query for rewriting")
+        return state
+    
+    try:
+        print(f"\n[Query Rewriting] Generating {num_variations} alternative queries...")
+        
+        # Use LLM to generate query variations
+        rewritten = _generate_query_variations(
+            state.parsed_query.raw_query,
+            state.parsed_query.intent,
+            num_variations
+        )
+        
+        state.rewritten_queries = rewritten
+        
+        print(f"  ✅ Generated {len(rewritten)} variations:")
+        for i, query in enumerate(rewritten, 1):
+            print(f"     {i}. {query}")
+        
+    except Exception as e:
+        print(f"  ⚠️ Query rewriting failed: {e}")
+        print(f"  → Continuing with original query only")
+        state.rewritten_queries = []
+    
+    return state
+
+def _generate_query_variations(query: str, intent: QueryIntent, num_variations: int = 3) -> list[str]:
+    """Generate alternative query formulations using Gemini"""
+    
+    system_prompt = """You are an expert at reformulating search queries to improve information retrieval.
+
+Your task: Generate alternative phrasings of the user's query that:
+1. Preserve the original intent and meaning
+2. Use different vocabulary and sentence structures  
+3. Cover different angles or aspects of the same question
+4. Are optimized for semantic search in technical documentation
+
+Guidelines:
+- Keep queries concise (1-2 sentences max)
+- Use synonyms and related technical terms
+- Rephrase from different perspectives (e.g., "how to X" → "implementing X", "X tutorial")
+- For code requests, vary between implementation-focused and explanation-focused
+- Don't add new requirements or constraints not in the original query
+
+Return ONLY a JSON array of strings, nothing else:
+["variation 1", "variation 2", "variation 3"]"""
+
+    intent_hints = {
+        QueryIntent.CONCEPTUAL: "Focus on understanding, explanation, and theoretical aspects.",
+        QueryIntent.CODE_REQUEST: "Vary between implementation details, code examples, and practical usage.",
+        QueryIntent.DEBUGGING: "Include variations about troubleshooting, error fixing, and problem solving.",
+        QueryIntent.COMPARISON: "Rephrase as differences, pros/cons, or when to use each option.",
+        QueryIntent.TUTORIAL: "Vary between step-by-step guides, walkthroughs, and practical examples."
+    }
+    
+    user_prompt = f"""Original query: "{query}"
+
+Intent: {intent.value}
+Hint: {intent_hints.get(intent, "")}
+
+Generate {num_variations} alternative phrasings."""
+
+    try:
+        # Use LangChain to invoke Gemini
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ]
+        
+        response = llm.invoke(messages)
+        response_text = response.content.strip()
+        
+        # --- FIXED BROKEN STRINGS BELOW ---
+        if response_text.startswith("```"):
+            response_text = response_text.replace("```json", "").replace("```", "")
+        elif response_text.startswith("```"):
+            response_text = response_text.replace("```", "")
+        # --- END FIX ---
+
+        # Parse JSON array
+        variations = json.loads(response_text)
+        
+        # Validate
+        if isinstance(variations, list) and len(variations) > 0:
+            return variations[:num_variations]  # Limit to requested number
+        else:
+            print(f"  ⚠️ Invalid response format: {variations}")
+            return _fallback_query_variations(query, num_variations)
+            
+    except Exception as e:
+        print(f"  ⚠️ LLM query rewriting failed: {e}")
+        return _fallback_query_variations(query, num_variations)
+
+
+
+def _fallback_query_variations(query: str, num_variations: int = 3) -> list[str]:
+    """Fallback query variations using simple heuristics"""
+    variations = []
+    query_lower = query.lower()
+    
+    # Variation 1: Rephrase question words
+    var1 = query
+    replacements = {
+        "how do i": "implementing",
+        "what is": "explanation of",
+        "how to": "guide for",
+        "why does": "reason for",
+        "can i": "method to"
+    }
+    for old, new in replacements.items():
+        if old in query_lower:
+            var1 = query_lower.replace(old, new)
+            break
+    if var1 != query_lower:
+        variations.append(var1)
+    
+    # Variation 2: Add context words
+    context_words = {
+        "conceptual": ["understand", "explain", "concept"],
+        "code": ["implement", "code", "example"],
+        "debugging": ["fix", "troubleshoot", "debug"],
+        "comparison": ["difference", "compare", "versus"],
+        "tutorial": ["tutorial", "guide", "walkthrough"]
+    }
+    
+    # Pick context based on keywords
+    for category, words in context_words.items():
+        if any(w in query_lower for w in words):
+            var2 = f"{words} {query}"
+            variations.append(var2)
+            break
+    
+    # Variation 3: Extract key terms
+    import re
+    words = re.findall(r'\b\w{4,}\b', query_lower)
+    if len(words) >= 2:
+        var3 = " ".join(words[:min(5, len(words))])
+        variations.append(var3)
+    
+    # Ensure we have enough variations
+    while len(variations) < num_variations:
+        variations.append(query)  # Use original as fallback
+    
+    return variations[:num_variations]
+
+
+
 
 
 def _parse_query_with_llm(query: str) -> dict:
@@ -284,7 +451,7 @@ def chunking_embedding_node(state: AgentState) -> AgentState:
 # ============================================================================
 
 def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
-    """PASS 1: Coarse Semantic Search - FIXED for semantic chunking"""
+    """PASS 1: Coarse Semantic Search with Query Expansion"""
     state.current_node = "vector_search"
     
     if not state.parsed_query:
@@ -292,12 +459,14 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
         return state
     
     try:
+        # Collect all queries (original + rewritten)
+        all_queries = [state.parsed_query.raw_query] + state.rewritten_queries
+        
         print(f"\n[PASS 1] Vector Search (top_k={top_k})")
+        print(f"  → Searching with {len(all_queries)} queries (1 original + {len(state.rewritten_queries)} rewritten)")
         
         index = get_pinecone_index()
         model = get_embedding_model()
-        
-        query_embedding = model.encode(state.parsed_query.raw_query).tolist()
         
         filter_dict = {}
         if hasattr(state, 'book_filter') and state.book_filter:
@@ -305,17 +474,32 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
         if hasattr(state, 'chapter_filter') and state.chapter_filter:
             filter_dict["chapter_numbers"] = {"$in": [state.chapter_filter]}
         
-        results = index.query(
-            vector=query_embedding,
-            top_k=top_k,
-            namespace=NAMESPACE,
-            filter=filter_dict if filter_dict else None,
-            include_metadata=True
-        )
+        # Perform parallel searches for all queries
+        all_results = {}  # Use dict to deduplicate by chunk_id
         
+        for i, query_text in enumerate(all_queries):
+            query_embedding = model.encode(query_text).tolist()
+            
+            results = index.query(
+                vector=query_embedding,
+                top_k=top_k,
+                namespace=NAMESPACE,
+                filter=filter_dict if filter_dict else None,
+                include_metadata=True
+            )
+            
+            # Merge results, keeping highest score for each chunk_id
+            for match in results.get("matches", []):
+                chunk_id = match["id"]
+                current_score = match.get("score", 0.0)
+                
+                if chunk_id not in all_results or current_score > all_results[chunk_id].get("score", 0):
+                    all_results[chunk_id] = match
+        
+        # Convert deduplicated results to RetrievedChunk objects
         retrieved_chunks = []
         
-        for match in results.get("matches", []):
+        for match in all_results.values():
             metadata = match.get("metadata", {})
             
             # Get book metadata
@@ -327,36 +511,32 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
             page_end = metadata.get("page_end")
             chunk_index = metadata.get("chunk_index", 0)
             
-            # Try to get chapter info (will be empty for semantic chunking)
+            # Try to get chapter info
             chapter_titles = metadata.get("chapter_titles", [])
             chapter_numbers = metadata.get("chapter_numbers", [])
             section_titles = metadata.get("section_titles", [])
             
-            # FIXED: Build meaningful chapter string
+            # Build chapter string
             if chapter_titles and chapter_numbers:
-                # Traditional chunking with chapter detection
-                chapter_str = f"Chapter {chapter_numbers[0]}: {chapter_titles[0]}"
+                chapter_str = f"Chapter {chapter_numbers}: {chapter_titles}"
             elif page_start and page_end and page_start != page_end:
-                # Semantic chunking: show page range
                 chapter_str = f"Pages {page_start}-{page_end}"
             elif page_start:
-                # Single page
                 chapter_str = f"Page {page_start}"
             else:
-                # Fallback
                 chapter_str = f"Semantic Chunk #{chunk_index + 1}"
             
             chunk = DocumentChunk(
                 chunk_id=match["id"],
                 content=metadata.get("text", ""),
-                chapter=chapter_str,  # ← FIXED: Now shows meaningful info
+                chapter=chapter_str,
                 section=", ".join(section_titles) if section_titles else "",
                 page_number=page_start,
                 chunk_type="code" if metadata.get("contains_code") else "text",
                 book_title=book_title,
                 author=author,
-                chapter_title="",  # Not used for semantic chunking
-                chapter_number=""  # Not used for semantic chunking
+                chapter_title="",
+                chapter_number=""
             )
             
             retrieved_chunks.append(RetrievedChunk(
@@ -364,13 +544,17 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
                 similarity_score=match.get("score", 0.0)
             ))
         
+        # Sort by score descending
+        retrieved_chunks.sort(key=lambda x: x.similarity_score, reverse=True)
+        
         state.retrieved_chunks = retrieved_chunks
-        print(f"  → Retrieved {len(retrieved_chunks)} candidates")
+        print(f"  → Retrieved {len(retrieved_chunks)} unique candidates (deduplicated)")
         
     except Exception as e:
         state.errors.append(f"Vector search failed: {str(e)}")
     
     return state
+
 
 
 def reranking_node(state: AgentState, top_k: int = 15) -> AgentState:

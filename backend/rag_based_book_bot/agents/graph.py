@@ -188,11 +188,12 @@ def build_indexing_graph() -> Graph:
 
 def build_query_graph() -> Graph:
     """
-    Builds the FULL 5-PASS query graph.
+    Builds the FULL 5-PASS query graph with Query Rewriting.
     
     Pipeline:
     1. Query Parser
-    2. Vector Search (Pass 1: Coarse)
+    1.5. Query Rewriter (NEW) - Generates alternative query formulations
+    2. Vector Search (Pass 1: Coarse) - Now searches with multiple queries
     3. Cross-Encoder Reranking (Pass 2: Precision)
     4. Multi-Hop Expansion (Pass 3: Cross-chapter)
     5. Cluster Expansion (Pass 4: Concept linking)
@@ -200,18 +201,20 @@ def build_query_graph() -> Graph:
     7. LLM Reasoning (Final answer)
     """
     from nodes import (
-        user_query_node, vector_search_node, reranking_node,
+        user_query_node, query_rewriter_node, vector_search_node, reranking_node,
         multi_hop_expansion_node, cluster_expansion_node,
         context_assembly_node, llm_reasoning_node
     )
     
-    graph = Graph(name="5_pass_query_pipeline")
+    graph = Graph(name="5_pass_query_pipeline_with_rewriter")
     
     # Add all nodes
     graph.add_node("query_parser", user_query_node, 
                    "Parse user query")
+    graph.add_node("query_rewriter", query_rewriter_node,
+                   "Generate alternative query formulations")  # NEW
     graph.add_node("vector_search", vector_search_node, 
-                   "PASS 1: Coarse vector search (top 50)")
+                   "PASS 1: Coarse vector search with query expansion")
     graph.add_node("cross_encoder_reranking", reranking_node, 
                    "PASS 2: Cross-encoder reranking (top 15)")
     graph.add_node("multi_hop_expansion", multi_hop_expansion_node, 
@@ -224,7 +227,8 @@ def build_query_graph() -> Graph:
                    "Generate final answer")
     
     # Connect nodes in sequence
-    graph.add_edge("query_parser", "vector_search")
+    graph.add_edge("query_parser", "query_rewriter")  # NEW EDGE
+    graph.add_edge("query_rewriter", "vector_search")  # MODIFIED EDGE
     graph.add_edge("vector_search", "cross_encoder_reranking")
     graph.add_edge("cross_encoder_reranking", "multi_hop_expansion")
     graph.add_edge("multi_hop_expansion", "cluster_expansion")
@@ -235,6 +239,7 @@ def build_query_graph() -> Graph:
     graph.set_end_point("llm_reasoning")
     
     return graph
+
 
 
 def build_full_graph() -> Graph:

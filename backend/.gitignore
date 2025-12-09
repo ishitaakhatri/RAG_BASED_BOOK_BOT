@@ -26,3 +26,5 @@ Thumbs.db
 # Ignore virtual environment directories
 .venv/  
 *.pdf
+.venv/
+venv/   
