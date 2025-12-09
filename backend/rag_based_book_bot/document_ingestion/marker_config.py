@@ -16,7 +16,7 @@ class MarkerConfig:
     device: Literal["cuda", "cpu", "auto"] = "auto"
     
     # Marker-specific settings
-    batch_multiplier: int = 2  # For GPU processing
+    batch_multiplier: int = 1  # For GPU processing
     max_pages: int = None  # None = process all pages
     langs: list = None  # None = auto-detect language
     
@@ -60,7 +60,7 @@ def get_default_config(use_gpu: bool = True) -> MarkerConfig:
     """
     return MarkerConfig(
         device="auto" if use_gpu else "cpu",
-        batch_multiplier=2,
+        batch_multiplier=1,
         max_pages=None,
         langs=None,
         extract_images=False,
@@ -87,7 +87,7 @@ def get_gpu_config() -> MarkerConfig:
     
     return MarkerConfig(
         device="cuda",
-        batch_multiplier=2,
+        batch_multiplier=1,
         max_pages=None,
         langs=None,
         extract_images=False,

@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
     print("\n🚀 [Startup] Initializing Marker Ingestor...")
     
     # Force single worker for marker to save VRAM on 6GB GPU
-    os.environ["NUM_WORKERS"] = "2" 
+    os.environ["NUM_WORKERS"] = "1" 
     
     try:
         # Initialize ingestor inside lifespan
