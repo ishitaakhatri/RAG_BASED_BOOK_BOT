@@ -1,11 +1,12 @@
 """
-ENHANCED Ingestor with GROBID + Semantic Chunking
-Now supports structure-aware document parsing via GROBID
+ENHANCED Ingestor with GROBID + Semantic Chunking + Summary Generation
+Now supports structure-aware document parsing via GROBID and summary creation
 """
 import os
 import uuid
 import logging
 import requests
+import asyncio
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 
@@ -32,6 +33,11 @@ from rag_based_book_bot.document_ingestion.ingestion.grobid_parser import (
     GrobidTEIParser
 )
 
+# Import Summarizer
+from rag_based_book_bot.document_ingestion.summarizer import (
+    Summarizer, SummaryConfig
+)
+
 # Config
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX = os.getenv("PINECONE_INDEX_NAME", "coding-books")
@@ -44,6 +50,11 @@ GROBID_URL = os.getenv("GROBID_URL", "http://localhost:8070/api")
 GROBID_ENABLED = os.getenv("GROBID_ENABLED", "true").lower() == "true"
 GROBID_TIMEOUT = int(os.getenv("GROBID_TIMEOUT", "300"))
 
+# Summary Config
+ENABLE_SUMMARIES = os.getenv("ENABLE_SUMMARIES", "true").lower() == "true"
+SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "gemini-2.5-flash")
+SUMMARY_MIN_TOKENS = int(os.getenv("SUMMARY_MIN_TOKENS", "400"))
+
 logging.basicConfig(level=os.getenv("INGESTOR_LOG_LEVEL", "INFO"))
 logger = logging.getLogger("semantic_ingestor")
 
@@ -55,12 +66,13 @@ class IngestorConfig:
     min_chunk_size: int = 200
     max_chunk_size: int = 1500
     debug: bool = False
-    use_grobid: bool = True  # NEW: Enable/disable GROBID
+    use_grobid: bool = True
+    enable_summaries: bool = True  # NEW: Enable summary generation
 
 
 class SemanticBookIngestor:
     """
-    Enhanced book ingestor with GROBID structure extraction + semantic chunking
+    Enhanced book ingestor with GROBID structure extraction + semantic chunking + summaries
     """
     
     def __init__(self, config: Optional[IngestorConfig] = None):
@@ -79,6 +91,23 @@ class SemanticBookIngestor:
         
         # Initialize GROBID parser
         self.grobid_parser = GrobidTEIParser()
+        
+        # Initialize Summarizer if enabled
+        self.summarizer = None
+        if ENABLE_SUMMARIES and self.config.enable_summaries:
+            try:
+                summary_config = SummaryConfig(
+                    model=SUMMARY_MODEL,
+                    min_section_tokens=SUMMARY_MIN_TOKENS,
+                    temperature=0.3,
+                    max_tokens=200,
+                    batch_size=10
+                )
+                self.summarizer = Summarizer(summary_config)
+                logger.info(f"✅ Summarizer enabled: {SUMMARY_MODEL}")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not initialize summarizer: {e}")
+                self.summarizer = None
         
         # Check GROBID availability
         self.grobid_available = False
@@ -299,16 +328,78 @@ class SemanticBookIngestor:
         logger.info(f"Extracted text from {len(pages_text)} pages")
         return pages_text
     
+    async def _generate_summaries(
+        self,
+        pages_text: List[Dict],
+        chunks: List[Tuple[str, Dict]],
+        book_title: str
+    ) -> List[Dict]:
+        """
+        Generate summaries for GROBID sections (NEW)
+        
+        Args:
+            pages_text: Original pages with structure info
+            chunks: Semantic chunks with metadata
+            book_title: Book title for context
+            
+        Returns:
+            List of summary dicts
+        """
+        if not self.summarizer:
+            logger.info("⏭️  Summarizer not enabled, skipping summary generation")
+            return []
+        
+        logger.info("📝 Generating section summaries...")
+        
+        # Group chunks by section
+        sections_for_summary = []
+        
+        for page in pages_text:
+            structure = page.get("structure")
+            if not structure:
+                continue
+            
+            # Find chunks belonging to this section
+            section_chunks = []
+            for chunk_text, chunk_meta in chunks:
+                # Check if chunk belongs to this page/section
+                if chunk_meta.get("page_start") == page.get("page"):
+                    section_chunks.append((chunk_text, chunk_meta))
+            
+            if section_chunks:
+                # Combine chunk texts for this section
+                section_text = " ".join([c[0] for c in section_chunks])
+                chunk_ids = [chunk_meta.get("chunk_index", i) for i, (_, chunk_meta) in enumerate(section_chunks)]
+                
+                sections_for_summary.append({
+                    'id': f"section_{page.get('page')}",
+                    'title': structure.get('section_title', 'Untitled Section'),
+                    'chapter': structure.get('chapter', None),
+                    'text': section_text,
+                    'chunk_ids': chunk_ids
+                })
+        
+        if not sections_for_summary:
+            logger.info("⏭️  No structured sections found for summarization")
+            return []
+        
+        # Generate summaries using async batch processing
+        summaries = await self.summarizer.batch_summarize(sections_for_summary, book_title)
+        
+        logger.info(f"✅ Generated {len(summaries)} section summaries")
+        return summaries
+    
     def _embed_and_upsert(
         self,
         chunks: List[Tuple[str, Dict]],
         book_id: str,
         book_title: str,
-        author: str
+        author: str,
+        summaries: Optional[List[Dict]] = None
     ):
         """
-        Embed chunks and upsert to Pinecone with COMPLETE metadata
-        Enhanced to include GROBID structure info
+        Embed chunks AND summaries, then upsert to Pinecone
+        Enhanced to include summary vectors
         """
         if not self.pinecone_index:
             logger.warning("Pinecone not configured - skipping upsert")
@@ -318,21 +409,28 @@ class SemanticBookIngestor:
             logger.warning("No chunks to embed")
             return
         
-        logger.info(f"Embedding and upserting {len(chunks)} chunks for '{book_title}' by {author}...")
+        logger.info(f"Embedding and upserting {len(chunks)} chunks + {len(summaries) if summaries else 0} summaries...")
         
-        # Extract texts for embedding
-        texts = [chunk[0] for chunk in chunks]
+        # Prepare all texts for embedding (chunks + summaries)
+        all_texts = []
+        all_metadata = []
         
-        # Validate chunks exist
-        if not texts:
-            logger.warning("No chunk texts to embed")
-            return
+        # Add chunk texts
+        for chunk_text, chunk_meta in chunks:
+            all_texts.append(chunk_text)
+            all_metadata.append(("chunk", chunk_text, chunk_meta))
         
-        logger.info(f"Generating embeddings for {len(texts)} chunks...")
+        # Add summary texts
+        if summaries:
+            for summary in summaries:
+                all_texts.append(summary['summary'])
+                all_metadata.append(("summary", summary['summary'], summary))
+        
+        logger.info(f"Generating embeddings for {len(all_texts)} items...")
         
         try:
             embeddings = self.embedding_model.encode(
-                texts,
+                all_texts,
                 show_progress_bar=True,
                 batch_size=32
             )
@@ -340,58 +438,73 @@ class SemanticBookIngestor:
             logger.error(f"Embedding generation failed: {e}")
             raise
         
-        # Validate embeddings match chunks
-        if len(embeddings) != len(chunks):
-            logger.error(f"Embedding count mismatch: {len(embeddings)} vs {len(chunks)}")
-            return
-        
         logger.info(f"Generated {len(embeddings)} embeddings, preparing vectors...")
         
-        # Prepare vectors for upsert with COMPLETE metadata
+        # Prepare vectors for upsert
         vectors = []
-        for i, ((chunk_text, metadata), embedding) in enumerate(zip(chunks, embeddings)):
-            # Create ENHANCED metadata for Pinecone
-            pinecone_metadata = {
-                "text": chunk_text,  # Store FULL text, not just preview
-                "book_id": book_id,
-                "book_title": book_title,
-                "author": author,
-                "page_start": int(metadata.get("page_start", 1)),
-                "page_end": int(metadata.get("page_end", 1)),
-                "chunk_index": int(metadata.get("chunk_index", i)),
-                "contains_code": bool(metadata.get("contains_code", False)),
-                "token_count": int(metadata.get("token_count", 0)),
-                # Legacy fields for compatibility
-                "chapter_titles": [],
-                "chapter_numbers": [],
-                "section_titles": [],
-            }
+        
+        for i, (item_type, text, metadata) in enumerate(all_metadata):
+            embedding = embeddings[i]
             
-            # Add GROBID structure info if available
-            if metadata.get("section_title"):
-                pinecone_metadata["section_title"] = metadata["section_title"]
-            if metadata.get("section_type"):
-                pinecone_metadata["section_type"] = metadata["section_type"]
-            if metadata.get("section_number"):
-                pinecone_metadata["section_number"] = metadata["section_number"]
-            if metadata.get("formulas"):
-                pinecone_metadata["has_formulas"] = True
-                pinecone_metadata["formula_count"] = len(metadata["formulas"])
+            if item_type == "chunk":
+                # Regular chunk vector
+                pinecone_metadata = {
+                    "type": "full",  # NEW: mark as full chunk
+                    "text": text,
+                    "book_id": book_id,
+                    "book_title": book_title,
+                    "author": author,
+                    "page_start": int(metadata.get("page_start", 1)),
+                    "page_end": int(metadata.get("page_end", 1)),
+                    "chunk_index": int(metadata.get("chunk_index", i)),
+                    "contains_code": bool(metadata.get("contains_code", False)),
+                    "token_count": int(metadata.get("token_count", 0)),
+                }
+                
+                # Add GROBID structure info if available
+                if metadata.get("section_title"):
+                    pinecone_metadata["section_title"] = metadata["section_title"]
+                if metadata.get("section_type"):
+                    pinecone_metadata["section_type"] = metadata["section_type"]
+                if metadata.get("formulas"):
+                    pinecone_metadata["has_formulas"] = True
+                    pinecone_metadata["formula_count"] = len(metadata["formulas"])
+                
+                vectors.append({
+                    "id": f"chunk_{str(uuid.uuid4())}",
+                    "values": embedding.tolist(),
+                    "metadata": pinecone_metadata
+                })
             
-            vectors.append({
-                "id": str(uuid.uuid4()),
-                "values": embedding.tolist(),
-                "metadata": pinecone_metadata
-            })
+            elif item_type == "summary":
+                # Summary vector (NEW)
+                pinecone_metadata = {
+                    "type": "summary",  # NEW: mark as summary
+                    "summary_text": text,
+                    "section_title": metadata.get('section_title', 'Untitled'),
+                    "chapter": metadata.get('chapter', ''),
+                    "book_id": book_id,
+                    "book_title": book_title,
+                    "author": author,
+                    "token_count": int(metadata.get('token_count', 0)),
+                    "original_token_count": int(metadata.get('original_token_count', 0)),
+                    # Store linked chunk IDs as JSON string (Pinecone doesn't support arrays in metadata)
+                    "linked_chunk_ids": str(metadata.get('linked_chunk_ids', [])),
+                }
+                
+                vectors.append({
+                    "id": f"summary_{metadata.get('section_id', str(uuid.uuid4()))}",
+                    "values": embedding.tolist(),
+                    "metadata": pinecone_metadata
+                })
         
         # Upsert in batches
-        logger.info(f"Upserting {len(vectors)} vectors to Pinecone in batches of {BATCH_SIZE}...")
+        logger.info(f"Upserting {len(vectors)} vectors to Pinecone...")
         successful_upserts = 0
         
         for i in range(0, len(vectors), BATCH_SIZE):
             batch = vectors[i:i + BATCH_SIZE]
             try:
-                logger.info(f"  → Upserting batch {len(batch)} vectors...")
                 response = self.pinecone_index.upsert(
                     vectors=batch,
                     namespace=PINECONE_NAMESPACE
@@ -399,12 +512,14 @@ class SemanticBookIngestor:
                 successful_upserts += len(batch)
                 batch_num = (i // BATCH_SIZE) + 1
                 total_batches = (len(vectors) + BATCH_SIZE - 1) // BATCH_SIZE
-                logger.info(f"     ✓ Upserted batch {batch_num}/{total_batches} ({len(batch)} vectors)")
+                logger.info(f"  ✓ Upserted batch {batch_num}/{total_batches} ({len(batch)} vectors)")
             except Exception as e:
                 logger.error(f"Failed to upsert batch at index {i}: {e}")
                 raise
         
-        logger.info(f"✅ Successfully upserted {successful_upserts}/{len(vectors)} vectors to Pinecone namespace '{PINECONE_NAMESPACE}'")
+        logger.info(f"✅ Successfully upserted {successful_upserts}/{len(vectors)} vectors")
+        logger.info(f"   - {len(chunks)} full chunks")
+        logger.info(f"   - {len(summaries) if summaries else 0} summaries")
     
     def ingest_book(
         self,
@@ -413,7 +528,7 @@ class SemanticBookIngestor:
         author: str = "Unknown"
     ) -> Dict:
         """
-        Main ingestion function - GROBID + semantic chunking
+        Main ingestion function - GROBID + semantic chunking + summary generation
         
         Args:
             pdf_path: Path to PDF file
@@ -435,23 +550,23 @@ class SemanticBookIngestor:
         
         logger.info(f"🚀 Starting enhanced ingestion")
         logger.info(f"   Book: '{book_title}' by {author}")
-        logger.info(f"   GROBID: {'Enabled' if self.grobid_available else 'Disabled (using pdfplumber)'}")
+        logger.info(f"   GROBID: {'Enabled' if self.grobid_available else 'Disabled'}")
+        logger.info(f"   Summaries: {'Enabled' if self.summarizer else 'Disabled'}")
         logger.info(f"   Settings: threshold={self.config.similarity_threshold}, "
                    f"chunk_size={self.config.min_chunk_size}-{self.config.max_chunk_size}")
         
-        # Step 1: Extract text from PDF (GROBID or pdfplumber)
+        # Step 1: Extract text from PDF
         pages_text = self.extract_text_from_pdf(pdf_path)
         total_pages = len(pages_text)
         
         if not pages_text:
             raise ValueError("No text extracted from PDF")
         
-        # Check if we have structure info from GROBID
         has_structure = any(p.get("structure") for p in pages_text)
         if has_structure:
             logger.info("✅ Using structure-aware chunking (GROBID data available)")
         
-        # Step 2: Semantic chunking with structure hints
+        # Step 2: Semantic chunking
         logger.info("📊 Starting semantic chunking...")
         chunks = self.chunker.chunk_pages_batched(
             pages_text, 
@@ -462,14 +577,27 @@ class SemanticBookIngestor:
         
         logger.info(f"✅ Created {len(chunks)} semantic chunks")
         
+        # Step 3: Generate summaries (NEW - async)
+        summaries = []
+        if self.summarizer and has_structure:
+            try:
+                # Run async summarization
+                loop = asyncio.get_event_loop()
+                summaries = loop.run_until_complete(
+                    self._generate_summaries(pages_text, chunks, book_title)
+                )
+            except Exception as e:
+                logger.error(f"❌ Summary generation failed: {e}")
+                summaries = []
+        
         # Calculate stats
         total_tokens = sum(meta.get("token_count", 0) for _, meta in chunks)
         avg_tokens = total_tokens / len(chunks) if chunks else 0
         code_chunks = sum(1 for _, meta in chunks if meta.get("contains_code"))
         structured_chunks = sum(1 for _, meta in chunks if meta.get("section_title"))
         
-        # Step 3: Embed and upsert to Pinecone
-        self._embed_and_upsert(chunks, book_id, book_title, author)
+        # Step 4: Embed and upsert (chunks + summaries)
+        self._embed_and_upsert(chunks, book_id, book_title, author, summaries)
         
         # Return statistics
         result = {
@@ -481,16 +609,18 @@ class SemanticBookIngestor:
             "code_chunks": code_chunks,
             "text_chunks": len(chunks) - code_chunks,
             "structured_chunks": structured_chunks,
+            "summaries_generated": len(summaries),
             "avg_tokens_per_chunk": round(avg_tokens, 1),
             "min_tokens": min((meta.get("token_count", 0) for _, meta in chunks), default=0),
             "max_tokens": max((meta.get("token_count", 0) for _, meta in chunks), default=0),
-            "grobid_used": has_structure
+            "grobid_used": has_structure,
+            "summaries_enabled": bool(self.summarizer)
         }
         
         logger.info(f"✅ Ingestion complete for '{book_title}'!")
         logger.info(f"📈 Stats: {result}")
         
-        # VERIFICATION: Check if vectors were actually stored
+        # Verification
         if self.pinecone_index:
             try:
                 stats = self.pinecone_index.describe_index_stats()
@@ -506,7 +636,6 @@ class SemanticBookIngestor:
 # Factory function for backward compatibility
 def EnhancedBookIngestorPaddle(config: Optional[IngestorConfig] = None):
     """
-    Factory function - returns semantic ingestor with GROBID support.
-    Kept for backward compatibility with main.py
+    Factory function - returns semantic ingestor with GROBID + summaries support.
     """
     return SemanticBookIngestor(config)
