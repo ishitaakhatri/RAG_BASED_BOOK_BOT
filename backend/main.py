@@ -15,6 +15,9 @@ import tempfile
 import time
 import hashlib
 from dotenv import load_dotenv
+load_dotenv()
+
+
 
 from rag_based_book_bot.document_ingestion.enhanced_ingestion import (
     EnhancedBookIngestorPaddle,
@@ -34,7 +37,7 @@ from rag_based_book_bot.agents.nodes import (
 )
 from rag_based_book_bot.agents.states import AgentState
 
-load_dotenv()
+
 
 app = FastAPI(title="RAG Book Bot API", version="1.0.0")
 

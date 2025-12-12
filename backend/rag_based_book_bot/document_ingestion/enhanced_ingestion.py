@@ -87,26 +87,101 @@ class SemanticBookIngestor:
         
         # Initialize Pinecone
         self.pinecone_index = None
-        if _HAS_PINECONE and PINECONE_API_KEY:
+        self.pinecone_client = None
+        
+        print("\n[INIT DEBUG] Starting Pinecone initialization...")
+        print(f"  _HAS_PINECONE: {_HAS_PINECONE}")
+        print(f"  PINECONE_API_KEY set: {bool(PINECONE_API_KEY)}")
+        
+        if not _HAS_PINECONE:
+            logger.warning("Pinecone library not installed")
+            print("[INIT DEBUG] ❌ Pinecone library not installed")
+        elif not PINECONE_API_KEY:
+            logger.warning("PINECONE_API_KEY not set in environment")
+            print("[INIT DEBUG] ❌ PINECONE_API_KEY not set")
+        else:
             try:
+                print("[INIT DEBUG] Creating Pinecone client...")
+                logger.info("Initializing Pinecone connection...")
                 self.pinecone_client = Pinecone(api_key=PINECONE_API_KEY)
+                logger.info("✅ Pinecone client created")
+                print("[INIT DEBUG] ✅ Pinecone client created")
                 
-                # Create index if it doesn't exist
-                existing_indexes = [idx.name for idx in self.pinecone_client.list_indexes()]
-                if PINECONE_INDEX not in existing_indexes:
-                    logger.info(f"Creating Pinecone index: {PINECONE_INDEX}")
-                    dim = len(self.embedding_model.encode(["test"])[0])
-                    self.pinecone_client.create_index(
-                        name=PINECONE_INDEX,
-                        dimension=dim,
-                        metric="cosine",
-                        spec=ServerlessSpec(cloud="aws", region="us-east-1")
-                    )
+                # Get index
+                logger.info(f"Connecting to index: {PINECONE_INDEX}")
+                print(f"[INIT DEBUG] Connecting to index: {PINECONE_INDEX}")
                 
-                self.pinecone_index = self.pinecone_client.Index(PINECONE_INDEX)
-                logger.info(f"Connected to Pinecone index: {PINECONE_INDEX}")
+                # Get host from environment or auto-detect
+                PINECONE_HOST = os.getenv("PINECONE_INDEX_HOST")
+                print(f"[INIT DEBUG] PINECONE_INDEX_HOST from env: {PINECONE_HOST}")
+                
+                if PINECONE_HOST:
+                    print(f"[INIT DEBUG] Using explicit host: {PINECONE_HOST}")
+                    logger.info(f"Using host: {PINECONE_HOST}")
+                    try:
+                        self.pinecone_index = self.pinecone_client.Index(PINECONE_INDEX, host=PINECONE_HOST)
+                        print(f"[INIT DEBUG] ✅ Index created with explicit host")
+                    except Exception as e:
+                        print(f"[INIT DEBUG] ❌ Failed with explicit host: {e}")
+                        raise
+                else:
+                    # Try to auto-detect host
+                    print(f"[INIT DEBUG] Auto-detecting host...")
+                    logger.info("Auto-detecting index host...")
+                    indexes = self.pinecone_client.list_indexes()
+                    print(f"[INIT DEBUG] Found {len(indexes)} indexes: {[idx.name for idx in indexes]}")
+                    
+                    target_idx = None
+                    for idx in indexes:
+                        if idx.name == PINECONE_INDEX:
+                            target_idx = idx
+                            break
+                    
+                    if target_idx:
+                        host = target_idx.host
+                        print(f"[INIT DEBUG] ✅ Found host: {host}")
+                        logger.info(f"Found host: {host}")
+                        try:
+                            self.pinecone_index = self.pinecone_client.Index(PINECONE_INDEX, host=host)
+                            print(f"[INIT DEBUG] ✅ Index created with auto-detected host")
+                        except Exception as e:
+                            print(f"[INIT DEBUG] ❌ Failed with auto-detected host: {e}")
+                            raise
+                    else:
+                        logger.error(f"Index '{PINECONE_INDEX}' not found in Pinecone")
+                        logger.error(f"Available indexes: {[idx.name for idx in indexes]}")
+                        print(f"[INIT DEBUG] ❌ Index '{PINECONE_INDEX}' not found")
+                        print(f"[INIT DEBUG] Available: {[idx.name for idx in indexes]}")
+                
+                # Final check
+                print(f"[INIT DEBUG] self.pinecone_index is None: {self.pinecone_index is None}")
+                print(f"[INIT DEBUG] self.pinecone_index type: {type(self.pinecone_index)}")
+                
+                if self.pinecone_index:
+                    logger.info(f"✅ Successfully connected to Pinecone index: {PINECONE_INDEX}")
+                    print(f"[INIT DEBUG] ✅ Successfully connected to Pinecone")
+                    # Verify connection
+                    try:
+                        stats = self.pinecone_index.describe_index_stats()
+                        total = stats.get('total_vector_count', 0)
+                        logger.info(f"   Index has {total} total vectors")
+                        print(f"[INIT DEBUG] Index stats: {total} total vectors")
+                    except Exception as e:
+                        logger.warning(f"Could not get index stats: {e}")
+                        print(f"[INIT DEBUG] Could not get stats: {e}")
+                else:
+                    logger.error("Failed to initialize Pinecone index")
+                    print(f"[INIT DEBUG] ❌ Failed to initialize Pinecone index")
+                    
             except Exception as e:
-                logger.warning(f"Pinecone init error: {e}")
+                logger.error(f"Pinecone initialization failed: {e}")
+                print(f"[INIT DEBUG] ❌ Pinecone init exception: {e}")
+                import traceback
+                traceback.print_exc()
+                self.pinecone_index = None
+        
+        print(f"[INIT DEBUG] Final state: pinecone_index = {self.pinecone_index}")
+        print("[INIT DEBUG] Pinecone initialization complete\n")
     
     def _check_grobid_health(self) -> bool:
         """Check if GROBID service is available"""
@@ -248,20 +323,36 @@ class SemanticBookIngestor:
         # Extract texts for embedding
         texts = [chunk[0] for chunk in chunks]
         
-        # Generate embeddings in batches
-        logger.info("Generating embeddings...")
-        embeddings = self.embedding_model.encode(
-            texts,
-            show_progress_bar=True,
-            batch_size=32
-        )
+        # Validate chunks exist
+        if not texts:
+            logger.warning("No chunk texts to embed")
+            return
+        
+        logger.info(f"Generating embeddings for {len(texts)} chunks...")
+        
+        try:
+            embeddings = self.embedding_model.encode(
+                texts,
+                show_progress_bar=True,
+                batch_size=32
+            )
+        except Exception as e:
+            logger.error(f"Embedding generation failed: {e}")
+            raise
+        
+        # Validate embeddings match chunks
+        if len(embeddings) != len(chunks):
+            logger.error(f"Embedding count mismatch: {len(embeddings)} vs {len(chunks)}")
+            return
+        
+        logger.info(f"Generated {len(embeddings)} embeddings, preparing vectors...")
         
         # Prepare vectors for upsert with COMPLETE metadata
         vectors = []
         for i, ((chunk_text, metadata), embedding) in enumerate(zip(chunks, embeddings)):
             # Create ENHANCED metadata for Pinecone
             pinecone_metadata = {
-                "text": chunk_text[:1000],  # Store preview only
+                "text": chunk_text,  # Store FULL text, not just preview
                 "book_id": book_id,
                 "book_title": book_title,
                 "author": author,
@@ -294,21 +385,26 @@ class SemanticBookIngestor:
             })
         
         # Upsert in batches
-        logger.info("Upserting to Pinecone...")
+        logger.info(f"Upserting {len(vectors)} vectors to Pinecone in batches of {BATCH_SIZE}...")
+        successful_upserts = 0
+        
         for i in range(0, len(vectors), BATCH_SIZE):
             batch = vectors[i:i + BATCH_SIZE]
             try:
-                self.pinecone_index.upsert(
+                logger.info(f"  → Upserting batch {len(batch)} vectors...")
+                response = self.pinecone_index.upsert(
                     vectors=batch,
                     namespace=PINECONE_NAMESPACE
                 )
-                batch_num = i // BATCH_SIZE + 1
+                successful_upserts += len(batch)
+                batch_num = (i // BATCH_SIZE) + 1
                 total_batches = (len(vectors) + BATCH_SIZE - 1) // BATCH_SIZE
-                logger.info(f"Upserted batch {batch_num}/{total_batches}")
+                logger.info(f"     ✓ Upserted batch {batch_num}/{total_batches} ({len(batch)} vectors)")
             except Exception as e:
-                logger.error(f"Failed to upsert batch: {e}")
+                logger.error(f"Failed to upsert batch at index {i}: {e}")
+                raise
         
-        logger.info(f"✅ Successfully upserted {len(vectors)} vectors for '{book_title}' to Pinecone")
+        logger.info(f"✅ Successfully upserted {successful_upserts}/{len(vectors)} vectors to Pinecone namespace '{PINECONE_NAMESPACE}'")
     
     def ingest_book(
         self,
@@ -393,6 +489,16 @@ class SemanticBookIngestor:
         
         logger.info(f"✅ Ingestion complete for '{book_title}'!")
         logger.info(f"📈 Stats: {result}")
+        
+        # VERIFICATION: Check if vectors were actually stored
+        if self.pinecone_index:
+            try:
+                stats = self.pinecone_index.describe_index_stats()
+                namespace_stats = stats.get('namespaces', {}).get(PINECONE_NAMESPACE, {})
+                vector_count = namespace_stats.get('vector_count', 0)
+                logger.info(f"✅ Verified: Namespace '{PINECONE_NAMESPACE}' now has {vector_count} vectors")
+            except Exception as e:
+                logger.warning(f"Could not verify vector count: {e}")
         
         return result
 
