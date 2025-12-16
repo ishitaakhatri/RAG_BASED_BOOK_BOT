@@ -1,9 +1,10 @@
 """
-FastAPI Backend - WITH QUERY REWRITING SUPPORT
-Key additions:
-1. Query rewriting node integration
-2. Parallel search with original + rewritten queries
-3. Rewritten queries included in API response
+FastAPI Backend - GRAPH-BASED EXECUTION
+Key changes:
+1. Removed manual node orchestration
+2. Removed query_pinecone_with_expansion(), convert_matches_to_chunks(), format_chunk_detail()
+3. Uses graph.execute(state) for pipeline execution
+4. Extracts pipeline stages from ExecutionResult
 """
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
@@ -17,29 +18,15 @@ import hashlib
 from dotenv import load_dotenv
 load_dotenv()
 
-
-
 from rag_based_book_bot.document_ingestion.enhanced_ingestion import (
     EnhancedBookIngestorPaddle,
     IngestorConfig
 )
-from rag_based_book_bot.agents.nodes import (
-    user_query_node,
-    query_rewriter_node,  # NEW IMPORT
-    vector_search_node,
-    reranking_node,
-    multi_hop_expansion_node,
-    cluster_expansion_node,
-    context_assembly_node,
-    llm_reasoning_node,
-    get_pinecone_index,
-    get_embedding_model
-)
 from rag_based_book_bot.agents.states import AgentState
+from rag_based_book_bot.agents.graph import build_query_graph # NEW IMPORT
+from rag_based_book_bot.agents.nodes import get_pinecone_index, get_embedding_model
 
-
-
-app = FastAPI(title="RAG Book Bot API", version="1.0.0")
+app = FastAPI(title="RAG Book Bot API", version="2.0.0")
 
 # CORS middleware
 app.add_middleware(
@@ -90,7 +77,7 @@ class QueryResponse(BaseModel):
     confidence: float
     stats: dict
     pipeline_stages: List[PipelineStage]
-    rewritten_queries: List[str] = []  # NEW FIELD
+    rewritten_queries: List[str] = []
 
 
 class IngestResponse(BaseModel):
@@ -111,7 +98,7 @@ class BooksResponse(BaseModel):
 
 
 # ============================================================================
-# HELPER FUNCTIONS
+# HELPER FUNCTIONS (kept for ingestion and book listing)
 # ============================================================================
 
 def parse_book_filename(filename: str) -> tuple[str, str]:
@@ -218,96 +205,6 @@ def get_available_books() -> List[BookInfo]:
         return []
 
 
-def query_pinecone_with_expansion(query_text, rewritten_queries, top_k=50, book_filter=None, chapter_filter=None):
-    """
-    NEW: Query Pinecone with original + rewritten queries
-    Performs parallel searches and deduplicates results
-    """
-    try:
-        index = get_pinecone_index()
-        model = get_embedding_model()
-        namespace = os.getenv("PINECONE_NAMESPACE", "books_rag")
-        
-        # Collect all queries
-        all_queries = [query_text] + rewritten_queries
-        
-        # Build filter
-        filter_dict = {}
-        if book_filter:
-            filter_dict["book_title"] = book_filter
-        if chapter_filter:
-            filter_dict["chapter_numbers"] = {"$in": [chapter_filter]}
-        
-        # Store results in dict to deduplicate by chunk_id
-        all_results = {}
-        
-        for query in all_queries:
-            query_embedding = model.encode(query).tolist()
-            
-            results = index.query(
-                vector=query_embedding,
-                top_k=top_k,
-                namespace=namespace,
-                filter=filter_dict if filter_dict else None,
-                include_metadata=True
-            )
-            
-            # Merge results, keeping highest score for each chunk
-            for match in results.get("matches", []):
-                chunk_id = match["id"]
-                current_score = match.get("score", 0.0)
-                
-                if chunk_id not in all_results or current_score > all_results[chunk_id].get("score", 0):
-                    all_results[chunk_id] = match
-        
-        # Convert to list and sort by score
-        matches = list(all_results.values())
-        matches.sort(key=lambda x: x.get("score", 0), reverse=True)
-        
-        return matches
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
-
-
-def convert_matches_to_chunks(matches):
-    """Convert Pinecone matches to RetrievedChunk objects"""
-    from rag_based_book_bot.agents.states import DocumentChunk, RetrievedChunk
-    
-    chunks = []
-    for match in matches:
-        metadata = match.get("metadata", {})
-        
-        chapter_numbers = metadata.get("chapter_numbers", [])
-        chapter_titles = metadata.get("chapter_titles", [])
-        section_titles = metadata.get("section_titles", [])
-        
-        chapter_num = chapter_numbers[0] if chapter_numbers else ""
-        chapter_title = chapter_titles[0] if chapter_titles else ""
-        
-        chunk = DocumentChunk(
-            chunk_id=match["id"],
-            content=metadata.get("text", ""),
-            chapter=f"{chapter_num}: {chapter_title}" if chapter_num else chapter_title,
-            section=", ".join(section_titles) if section_titles else "",
-            page_number=metadata.get("page_start"),
-            chunk_type="code" if metadata.get("contains_code") else "text",
-            book_title=metadata.get("book_title", "Unknown Book"),
-            author=metadata.get("author", "Unknown Author"),
-            chapter_title=chapter_titles,
-            chapter_number=chapter_numbers
-        )
-        
-        chunks.append(RetrievedChunk(
-            chunk=chunk,
-            similarity_score=match.get("score", 0.0),
-            rerank_score=match.get("score", 0.0),
-            relevance_percentage=round(match.get("score", 0.0) * 100, 1)
-        ))
-    
-    return chunks
-
-
 def format_chunk_detail(chunk, source: str) -> ChunkDetail:
     """Format chunk for API response"""
     return ChunkDetail(
@@ -323,6 +220,53 @@ def format_chunk_detail(chunk, source: str) -> ChunkDetail:
     )
 
 
+def extract_pipeline_stages(state: AgentState, executed_nodes: List[str]) -> List[PipelineStage]:
+    """
+    Extract pipeline stages from state snapshots
+    Maps internal node names to user-friendly stage names
+    """
+    stage_mapping = {
+        "vector_search": "Pass 1: Vector Search",
+        "reranking": "Pass 2: Cross-Encoder Reranking",
+        "multi_hop_expansion": "Pass 3: Multi-Hop Expansion",
+        "cluster_expansion": "Pass 4: Cluster Expansion",
+        "context_assembly": "Pass 5: Context Assembly & Deduplication"
+    }
+    
+    pipeline_stages = []
+    
+    for snapshot in state.pipeline_snapshots:
+        stage_name = snapshot.get("stage", "")
+        
+        # Skip if not in executed nodes
+        if stage_name not in executed_nodes:
+            continue
+        
+        # Get user-friendly name
+        display_name = stage_mapping.get(stage_name, stage_name)
+        
+        # Add context to display name
+        if snapshot.get("skipped"):
+            display_name += " (SKIPPED)"
+        elif snapshot.get("new_chunks_added"):
+            display_name += f" (+{snapshot['new_chunks_added']} new)"
+        elif snapshot.get("removed_duplicates"):
+            display_name += f" (-{snapshot['removed_duplicates']} duplicates)"
+        
+        # Format chunks
+        chunks = []
+        for chunk in snapshot.get("chunks", [])[:10]:
+            chunks.append(format_chunk_detail(chunk, stage_name))
+        
+        pipeline_stages.append(PipelineStage(
+            stage_name=display_name,
+            chunk_count=snapshot.get("chunk_count", 0),
+            chunks=chunks
+        ))
+    
+    return pipeline_stages
+
+
 # ============================================================================
 # API ENDPOINTS
 # ============================================================================
@@ -330,7 +274,7 @@ def format_chunk_detail(chunk, source: str) -> ChunkDetail:
 @app.get("/")
 async def root():
     """Health check"""
-    return {"status": "online", "message": "RAG Book Bot API with Query Rewriting"}
+    return {"status": "online", "message": "RAG Book Bot API - Graph-Based Execution v2.0"}
 
 
 @app.get("/books", response_model=BooksResponse)
@@ -343,108 +287,69 @@ async def list_books():
 @app.post("/query", response_model=QueryResponse)
 async def process_query(request: QueryRequest):
     """
-    Process query with QUERY REWRITING and 5-pass retrieval pipeline
+    Process query with GRAPH-BASED EXECUTION
     
-    NEW: Generates alternative query formulations before retrieval
+    Uses LangGraph to orchestrate the 5-pass retrieval pipeline:
+    1. Query Parser → 2. Query Rewriter → 3. Vector Search → 
+    4. Cross-Encoder Reranking → 5. Multi-Hop Expansion → 
+    6. Cluster Expansion → 7. Context Assembly → 8. LLM Reasoning
     """
     try:
-        pipeline_stages = []
+        print(f"\n{'='*80}")
+        print(f"[NEW QUERY] {request.query}")
+        print(f"{'='*80}")
         
-        # Parse query
-        state = AgentState(user_query=request.query)
-        state = user_query_node(state)
-        
-        # NEW: Query Rewriting - Generate alternative formulations
-        print("\n[Query Rewriting] Generating alternative queries...")
-        state = query_rewriter_node(state, num_variations=3)
-        print(f"  → Generated {len(state.rewritten_queries)} variations")
-        for i, q in enumerate(state.rewritten_queries, 1):
-            print(f"     {i}. {q}")
-        
-        # Pass 1: Vector Search with query expansion
-        print(f"\n[Pass 1] Searching with {len(state.rewritten_queries) + 1} queries...")
-        matches = query_pinecone_with_expansion(
-            request.query,
-            state.rewritten_queries,  # NEW: Pass rewritten queries
-            top_k=request.pass1_k,
+        # Initialize state with all parameters
+        state = AgentState(
+            user_query=request.query,
             book_filter=request.book_filter,
-            chapter_filter=request.chapter_filter
+            chapter_filter=request.chapter_filter,
+            pass1_k=request.pass1_k,
+            pass2_k=request.pass2_k,
+            pass3_enabled=request.pass3_enabled,
+            max_tokens=request.max_tokens
         )
         
-        if not matches:
-            raise HTTPException(status_code=404, detail="No content found")
+        # Build and execute graph
+        print("\n[GRAPH] Building query pipeline...")
+        query_graph = build_query_graph()
         
-        state.retrieved_chunks = convert_matches_to_chunks(matches)
+        print("[GRAPH] Executing pipeline...")
+        result = query_graph.execute(state)
         
-        # PASS 1 STAGE
-        pass1_chunks = [format_chunk_detail(chunk, "pass1") for chunk in state.retrieved_chunks]
-        pipeline_stages.append(PipelineStage(
-            stage_name=f"Pass 1: Vector Search (with {len(state.rewritten_queries)} rewritten queries)",
-            chunk_count=len(state.retrieved_chunks),
-            chunks=pass1_chunks[:10]
-        ))
+        # Check execution result
+        if not result.success:
+            error_msg = result.error_message or "Unknown pipeline error"
+            failed_at = result.failed_node or "unknown stage"
+            raise HTTPException(
+                status_code=500,
+                detail=f"Pipeline failed at {failed_at}: {error_msg}"
+            )
         
-        pass1_count = len(state.retrieved_chunks)
+        # Extract final state
+        final_state = result.final_state
         
-        # Pass 2: Reranking
-        state = reranking_node(state, top_k=request.pass2_k)
+        # Check for errors in state
+        if final_state.errors:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Pipeline errors: {'; '.join(final_state.errors)}"
+            )
         
-        pass2_chunks = [format_chunk_detail(chunk, "pass2_reranked") for chunk in state.reranked_chunks]
-        pipeline_stages.append(PipelineStage(
-            stage_name="Pass 2: Cross-Encoder Reranking",
-            chunk_count=len(state.reranked_chunks),
-            chunks=pass2_chunks[:10]
-        ))
+        # Check for response
+        if not final_state.response:
+            raise HTTPException(
+                status_code=500,
+                detail="Pipeline completed but no response generated"
+            )
         
-        pass2_count = len(state.reranked_chunks)
+        # Extract pipeline stages from snapshots
+        pipeline_stages = extract_pipeline_stages(final_state, result.executed_nodes)
         
-        # Pass 3: Multi-Hop (optional)
-        if request.pass3_enabled:
-            before_expansion = len(state.reranked_chunks)
-            state = multi_hop_expansion_node(state, max_hops=2)
-            after_expansion = len(state.reranked_chunks)
-            
-            new_chunks_added = after_expansion - before_expansion
-            if new_chunks_added > 0:
-                pass3_new_chunks = [
-                    format_chunk_detail(chunk, "pass3_multihop") 
-                    for chunk in state.reranked_chunks[before_expansion:after_expansion]
-                ]
-                pipeline_stages.append(PipelineStage(
-                    stage_name=f"Pass 3: Multi-Hop Expansion (+{new_chunks_added} new)",
-                    chunk_count=after_expansion,
-                    chunks=pass3_new_chunks[:10]
-                ))
-        
-        pass3_count = len(state.reranked_chunks)
-        
-        # Pass 4: Cluster Expansion
-        state = cluster_expansion_node(state)
-        
-        # Pass 5: Context Assembly
-        before_compression = len(state.reranked_chunks)
-        state = context_assembly_node(state, max_tokens=request.max_tokens)
-        
-        # LLM Reasoning
-        state = llm_reasoning_node(state)
-        
-        # FINAL STAGE
-        after_compression = len(state.reranked_chunks)
-        final_chunks = [format_chunk_detail(chunk, "final") for chunk in state.reranked_chunks]
-        
-        removed_count = before_compression - after_compression
-        pipeline_stages.append(PipelineStage(
-            stage_name=f"Final: After Deduplication (-{removed_count} duplicates)" if removed_count > 0 else "Final: Ready for LLM",
-            chunk_count=after_compression,
-            chunks=final_chunks[:10]
-        ))
-        
-        if state.errors:
-            raise HTTPException(status_code=500, detail="; ".join(state.errors))
-        
-        # Build sources
-        sources = [
-            {
+        # Build sources from final chunks
+        sources = []
+        for rc in final_state.reranked_chunks[:5]:
+            sources.append({
                 "chunk_id": rc.chunk.chunk_id,
                 "chapter": rc.chunk.chapter,
                 "page": rc.chunk.page_number,
@@ -452,35 +357,41 @@ async def process_query(request: QueryRequest):
                 "type": rc.chunk.chunk_type,
                 "book_title": rc.chunk.book_title or "Unknown Book",
                 "author": rc.chunk.author or "Unknown Author"
-            }
-            for rc in state.reranked_chunks[:5]
-        ]
+            })
         
         # Calculate stats
         stats = {
-            "pass1": pass1_count,
-            "pass2": pass2_count,
-            "pass3": pass3_count,
-            "final": after_compression,
-            "tokens": len(state.assembled_context.split()) if state.assembled_context else 0,
-            "removed_duplicates": removed_count if removed_count > 0 else 0,
-            "rewritten_queries_count": len(state.rewritten_queries)  # NEW
+            "total_stages": len(result.executed_nodes),
+            "executed_nodes": result.executed_nodes,
+            "pass1": next((s.get("chunk_count", 0) for s in final_state.pipeline_snapshots if s.get("stage") == "vector_search"), 0),
+            "pass2": next((s.get("chunk_count", 0) for s in final_state.pipeline_snapshots if s.get("stage") == "reranking"), 0),
+            "pass3": next((s.get("chunk_count", 0) for s in final_state.pipeline_snapshots if s.get("stage") == "multi_hop_expansion"), 0),
+            "final": len(final_state.reranked_chunks),
+            "tokens": len(final_state.assembled_context.split()) if final_state.assembled_context else 0,
+            "rewritten_queries_count": len(final_state.rewritten_queries)
         }
         
+        print(f"\n{'='*80}")
+        print(f"[SUCCESS] Pipeline completed: {len(result.executed_nodes)} stages executed")
+        print(f"[ANSWER] {len(final_state.response.answer)} characters")
+        print(f"{'='*80}\n")
+        
         return QueryResponse(
-            answer=state.response.answer,
+            answer=final_state.response.answer,
             sources=sources,
-            confidence=state.response.confidence,
+            confidence=final_state.response.confidence,
             stats=stats,
             pipeline_stages=pipeline_stages,
-            rewritten_queries=state.rewritten_queries  # NEW: Include in response
+            rewritten_queries=final_state.rewritten_queries
         )
         
     except HTTPException:
         raise
     except Exception as e:
         import traceback
-        print(f"ERROR: {traceback.format_exc()}")
+        print(f"\n{'='*80}")
+        print(f"[ERROR] {traceback.format_exc()}")
+        print(f"{'='*80}\n")
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
 
@@ -560,6 +471,8 @@ async def health_check():
         
         return {
             "status": "healthy",
+            "version": "2.0.0",
+            "execution_mode": "graph-based",
             "pinecone": "connected",
             "total_vectors": stats.get('total_vector_count', 0),
             "books": len(get_available_books())

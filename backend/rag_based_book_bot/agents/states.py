@@ -96,7 +96,7 @@ class AgentState:
     # After Query Parsing
     parsed_query: Optional[ParsedQuery] = None
     
-    # NEW: After Query Rewriting
+    # After Query Rewriting
     rewritten_queries: list[str] = field(default_factory=list)
     
     # After Vector Search
@@ -112,10 +112,15 @@ class AgentState:
     # Final Output
     response: Optional[LLMResponse] = None
     
-    # Optional filters
+    # Filters and Configuration (NEW/UPDATED)
     book_filter: Optional[str] = None
     chapter_filter: Optional[str] = None
+    pass1_k: int = 50                    # NEW: Top-k for Pass 1 (vector search)
+    pass2_k: int = 15                    # NEW: Top-k for Pass 2 (reranking)
+    pass3_enabled: bool = True           # NEW: Enable/disable multi-hop expansion
+    max_tokens: int = 2500               # NEW: Max tokens for context assembly
     
     # Pipeline metadata
     current_node: str = ""
     errors: list[str] = field(default_factory=list)
+    pipeline_snapshots: List[dict] = field(default_factory=list)  # NEW: Track chunk counts per stage

@@ -450,8 +450,17 @@ def chunking_embedding_node(state: AgentState) -> AgentState:
 # RETRIEVAL NODES (unchanged - no LLM calls here)
 # ============================================================================
 
-def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
-    """PASS 1: Coarse Semantic Search with Query Expansion"""
+def vector_search_node(state: AgentState) -> AgentState:
+    """
+    PASS 1: Coarse Semantic Search with Query Expansion
+    
+    Now fully self-contained:
+    - Reads state.rewritten_queries (from query_rewriter_node)
+    - Reads state.book_filter and state.chapter_filter
+    - Uses state.pass1_k for top_k configuration
+    - Performs parallel search with all queries
+    - Deduplicates results internally
+    """
     state.current_node = "vector_search"
     
     if not state.parsed_query:
@@ -459,6 +468,9 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
         return state
     
     try:
+        # Read configuration from state
+        top_k = state.pass1_k  # Use configured value from state
+        
         # Collect all queries (original + rewritten)
         all_queries = [state.parsed_query.raw_query] + state.rewritten_queries
         
@@ -468,13 +480,16 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
         index = get_pinecone_index()
         model = get_embedding_model()
         
+        # Build filter from state
         filter_dict = {}
-        if hasattr(state, 'book_filter') and state.book_filter:
+        if state.book_filter:
             filter_dict["book_title"] = state.book_filter
-        if hasattr(state, 'chapter_filter') and state.chapter_filter:
+            print(f"  → Filtering by book: {state.book_filter}")
+        if state.chapter_filter:
             filter_dict["chapter_numbers"] = {"$in": [state.chapter_filter]}
+            print(f"  → Filtering by chapter: {state.chapter_filter}")
         
-        # Perform parallel searches for all queries
+        # Perform parallel searches for all queries with deduplication
         all_results = {}  # Use dict to deduplicate by chunk_id
         
         for i, query_text in enumerate(all_queries):
@@ -496,10 +511,17 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
                 if chunk_id not in all_results or current_score > all_results[chunk_id].get("score", 0):
                     all_results[chunk_id] = match
         
-        # Convert deduplicated results to RetrievedChunk objects
+        # Convert deduplicated results to list and sort by score
+        matches = list(all_results.values())
+        matches.sort(key=lambda x: x.get("score", 0), reverse=True)
+        
+        # Limit to top_k after deduplication
+        matches = matches[:top_k]
+        
+        # Convert to RetrievedChunk objects
         retrieved_chunks = []
         
-        for match in all_results.values():
+        for match in matches:
             metadata = match.get("metadata", {})
             
             # Get book metadata
@@ -518,7 +540,7 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
             
             # Build chapter string
             if chapter_titles and chapter_numbers:
-                chapter_str = f"Chapter {chapter_numbers}: {chapter_titles}"
+                chapter_str = f"Chapter {chapter_numbers[0]}: {chapter_titles[0]}"
             elif page_start and page_end and page_start != page_end:
                 chapter_str = f"Pages {page_start}-{page_end}"
             elif page_start:
@@ -535,8 +557,8 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
                 chunk_type="code" if metadata.get("contains_code") else "text",
                 book_title=book_title,
                 author=author,
-                chapter_title="",
-                chapter_number=""
+                chapter_title=chapter_titles[0] if chapter_titles else "",
+                chapter_number=chapter_numbers[0] if chapter_numbers else ""
             )
             
             retrieved_chunks.append(RetrievedChunk(
@@ -544,10 +566,15 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
                 similarity_score=match.get("score", 0.0)
             ))
         
-        # Sort by score descending
-        retrieved_chunks.sort(key=lambda x: x.similarity_score, reverse=True)
-        
         state.retrieved_chunks = retrieved_chunks
+        
+        # Track pipeline snapshot
+        state.pipeline_snapshots.append({
+            "stage": "vector_search",
+            "chunk_count": len(retrieved_chunks),
+            "chunks": retrieved_chunks[:10]  # Store top 10 for visualization
+        })
+        
         print(f"  → Retrieved {len(retrieved_chunks)} unique candidates (deduplicated)")
         
     except Exception as e:
@@ -557,8 +584,9 @@ def vector_search_node(state: AgentState, top_k: int = 50) -> AgentState:
 
 
 
-def reranking_node(state: AgentState, top_k: int = 15) -> AgentState:
-    """PASS 2: Cross-Encoder Reranking - FIXED for semantic chunking"""
+
+def reranking_node(state: AgentState) -> AgentState:
+    """PASS 2: Cross-Encoder Reranking - Now reads top_k from state"""
     state.current_node = "reranking"
     
     if not state.retrieved_chunks or not state.parsed_query:
@@ -566,6 +594,9 @@ def reranking_node(state: AgentState, top_k: int = 15) -> AgentState:
         return state
     
     try:
+        # Read configuration from state
+        top_k = state.pass2_k  # Use configured value
+        
         print(f"\n[PASS 2] Cross-Encoder Reranking (top_k={top_k})")
         
         cross_encoder = get_cross_encoder()
@@ -576,7 +607,7 @@ def reranking_node(state: AgentState, top_k: int = 15) -> AgentState:
                 'text': rc.chunk.content,
                 'metadata': {
                     'chunk_id': rc.chunk.chunk_id,
-                    'chapter': rc.chunk.chapter,  # ← Already has meaningful info
+                    'chapter': rc.chunk.chapter,
                     'page': rc.chunk.page_number,
                     'type': rc.chunk.chunk_type,
                     'book_title': rc.chunk.book_title,
@@ -596,7 +627,7 @@ def reranking_node(state: AgentState, top_k: int = 15) -> AgentState:
             chunk = DocumentChunk(
                 chunk_id=chunk_data['metadata']['chunk_id'],
                 content=chunk_data['text'],
-                chapter=chunk_data['metadata']['chapter'],  # ← Preserved
+                chapter=chunk_data['metadata']['chapter'],
                 section="",
                 page_number=chunk_data['metadata']['page'],
                 chunk_type=chunk_data['metadata']['type'],
@@ -612,18 +643,37 @@ def reranking_node(state: AgentState, top_k: int = 15) -> AgentState:
             ))
         
         state.reranked_chunks = reranked_chunks
+        
+        # Track pipeline snapshot
+        state.pipeline_snapshots.append({
+            "stage": "reranking",
+            "chunk_count": len(reranked_chunks),
+            "chunks": reranked_chunks[:10]
+        })
+        
         print(f"  → Reranked to {len(reranked_chunks)} high-precision chunks")
         
     except Exception as e:
         state.errors.append(f"Reranking failed: {str(e)}")
-        state.reranked_chunks = state.retrieved_chunks[:top_k]
+        state.reranked_chunks = state.retrieved_chunks[:state.pass2_k]
     
     return state
 
 
 def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState:
-    """PASS 3: Multi-Hop Retrieval - FIXED for semantic chunking"""
+    """PASS 3: Multi-Hop Retrieval - Now checks state.pass3_enabled"""
     state.current_node = "multi_hop_expansion"
+    
+    # Check if pass3 is enabled
+    if not state.pass3_enabled:
+        print(f"\n[PASS 3] Multi-Hop Expansion - SKIPPED (disabled)")
+        state.pipeline_snapshots.append({
+            "stage": "multi_hop_expansion",
+            "chunk_count": len(state.reranked_chunks),
+            "chunks": [],
+            "skipped": True
+        })
+        return state
     
     if not state.reranked_chunks or not state.parsed_query:
         state.errors.append("Missing reranked chunks for multi-hop")
@@ -631,6 +681,8 @@ def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState
     
     try:
         print(f"\n[PASS 3] Multi-Hop Expansion (max_hops={max_hops})")
+        
+        before_expansion = len(state.reranked_chunks)
         
         expander = get_multi_hop_expander()
         
@@ -642,8 +694,8 @@ def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState
                 'score': rc.rerank_score,
                 'book_title': rc.chunk.book_title,
                 'author': rc.chunk.author,
-                'chapter': rc.chunk.chapter,      # ADD THIS LINE
-                'page': rc.chunk.page_number      # ADD THIS LINE
+                'chapter': rc.chunk.chapter,
+                'page': rc.chunk.page_number
             })
         
         def retrieval_fn(query_text: str, top_k: int = 5):
@@ -662,7 +714,6 @@ def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState
             for m in results.get('matches', []):
                 metadata = m.get('metadata', {})
                 
-                # FIXED: Build chapter string for expanded chunks
                 page_start = metadata.get('page_start')
                 page_end = metadata.get('page_end')
                 chunk_index = metadata.get('chunk_index', 0)
@@ -714,13 +765,23 @@ def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState
                 relevance_percentage=exp_result['score'] * 80
             ))
         
-        print(f"  → Expanded to {len(state.reranked_chunks)} total chunks")
+        after_expansion = len(state.reranked_chunks)
+        new_chunks_added = after_expansion - before_expansion
+        
+        # Track pipeline snapshot
+        state.pipeline_snapshots.append({
+            "stage": "multi_hop_expansion",
+            "chunk_count": after_expansion,
+            "chunks": state.reranked_chunks[before_expansion:after_expansion][:10],
+            "new_chunks_added": new_chunks_added
+        })
+        
+        print(f"  → Expanded to {after_expansion} total chunks (+{new_chunks_added} new)")
         
     except Exception as e:
         print(f"  ⚠️ Multi-hop expansion failed: {e}")
     
     return state
-
 
 def cluster_expansion_node(state: AgentState) -> AgentState:
     """PASS 4: Cluster-Based Expansion"""
@@ -732,22 +793,45 @@ def cluster_expansion_node(state: AgentState) -> AgentState:
         cluster_manager = get_cluster_manager()
         
         if not cluster_manager.chunk_to_cluster:
-            print("  ⚠️ No clusters available")
+            print("  ⚠️ No clusters available, skipping")
+            state.pipeline_snapshots.append({
+                "stage": "cluster_expansion",
+                "chunk_count": len(state.reranked_chunks),
+                "chunks": [],
+                "skipped": True
+            })
             return state
+        
+        before_expansion = len(state.reranked_chunks)
         
         chunk_ids = [rc.chunk.chunk_id for rc in state.reranked_chunks[:10]]
         neighbor_ids = cluster_manager.get_cluster_neighbors(chunk_ids, max_neighbors=5)
         
+        # Track snapshot
+        state.pipeline_snapshots.append({
+            "stage": "cluster_expansion",
+            "chunk_count": len(state.reranked_chunks),
+            "chunks": [],
+            "neighbors_found": len(neighbor_ids)
+        })
+        
         print(f"  → Found {len(neighbor_ids)} cluster neighbors")
         
     except Exception as e:
-        print(f"  ⚠️ Cluster expansion failed: {e}")
+        print(f"  ⚠️ Cluster expansion failed: {e}, skipping")
+        state.pipeline_snapshots.append({
+            "stage": "cluster_expansion",
+            "chunk_count": len(state.reranked_chunks),
+            "chunks": [],
+            "skipped": True
+        })
     
     return state
 
 
-def context_assembly_node(state: AgentState, max_tokens: int = 2500) -> AgentState:
-    """PASS 5: Compression & Assembly"""
+
+def context_assembly_node(state: AgentState) -> AgentState:
+    """PASS 5: Compression & Assembly - Now reads max_tokens from state"""
     state.current_node = "context_assembly"
     
     if not state.reranked_chunks or not state.parsed_query:
@@ -755,7 +839,12 @@ def context_assembly_node(state: AgentState, max_tokens: int = 2500) -> AgentSta
         return state
     
     try:
-        print(f"\n[PASS 5] Context Compression & Assembly")
+        # Read configuration from state
+        max_tokens = state.max_tokens
+        
+        print(f"\n[PASS 5] Context Compression & Assembly (max_tokens={max_tokens})")
+        
+        before_compression = len(state.reranked_chunks)
         
         compressor = get_compressor(
             target_tokens=int(max_tokens * 0.8),
@@ -786,10 +875,26 @@ def context_assembly_node(state: AgentState, max_tokens: int = 2500) -> AgentSta
         state.assembled_context = compressed_context
         state.system_prompt = _build_system_prompt(state.parsed_query)
         
+        after_compression = len(state.reranked_chunks)
+        removed_count = before_compression - after_compression
+        
+        # Track pipeline snapshot
+        state.pipeline_snapshots.append({
+            "stage": "context_assembly",
+            "chunk_count": after_compression,
+            "chunks": state.reranked_chunks[:10],
+            "removed_duplicates": removed_count
+        })
+        
+        print(f"  → Assembled context with {after_compression} chunks")
+        if removed_count > 0:
+            print(f"  → Removed {removed_count} duplicates")
+        
     except Exception as e:
         state.errors.append(f"Context assembly failed: {str(e)}")
     
     return state
+
 
 
 def _build_system_prompt(query: ParsedQuery) -> str:

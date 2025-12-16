@@ -6,7 +6,8 @@ from typing import Callable, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 
-from states import AgentState
+from rag_based_book_bot.agents.states import AgentState
+
 
 
 class NodeStatus(Enum):
@@ -200,7 +201,7 @@ def build_query_graph() -> Graph:
     6. Context Compression & Assembly (Pass 5: Token management)
     7. LLM Reasoning (Final answer)
     """
-    from nodes import (
+    from rag_based_book_bot.agents.nodes import (
         user_query_node, query_rewriter_node, vector_search_node, reranking_node,
         multi_hop_expansion_node, cluster_expansion_node,
         context_assembly_node, llm_reasoning_node

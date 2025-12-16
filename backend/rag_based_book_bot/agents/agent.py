@@ -4,7 +4,8 @@ RAG Agent orchestration using graph-based execution.
 
 from typing import Optional
 
-from states import AgentState
+from rag_based_book_bot.agents.states import AgentState
+
 from config import PipelineConfig, get_default_config
 from graph import (
     Graph, ExecutionResult,
