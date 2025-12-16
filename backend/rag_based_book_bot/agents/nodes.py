@@ -846,31 +846,49 @@ def context_assembly_node(state: AgentState) -> AgentState:
         
         before_compression = len(state.reranked_chunks)
         
-        compressor = get_compressor(
-            target_tokens=int(max_tokens * 0.8),
-            max_tokens=max_tokens
-        )
-        
-        chunks_for_compression = []
-        for rc in state.reranked_chunks:
-            chunks_for_compression.append({
-                'text': rc.chunk.content,
-                'metadata': {
-                    'chapter_title': rc.chunk.chapter,
-                    'page_start': rc.chunk.page_number,
-                    'contains_code': rc.chunk.chunk_type == 'code',
-                    'book_title': rc.chunk.book_title,
-                    'author': rc.chunk.author
-                },
-                'score': rc.rerank_score,
-                'chunk_type': rc.chunk.chunk_type
-            })
-        
-        compressed_context = compressor.compress_context(
-            chunks_for_compression,
-            state.parsed_query.raw_query,
-            preserve_code=True
-        )
+        # Try to get compressor, fallback to simple assembly if it fails
+        try:
+            compressor = get_compressor(
+                target_tokens=int(max_tokens * 0.8),
+                max_tokens=max_tokens
+            )
+            
+            if compressor is None:
+                raise ValueError("Compressor initialization returned None")
+            
+            chunks_for_compression = []
+            for rc in state.reranked_chunks:
+                chunks_for_compression.append({
+                    'text': rc.chunk.content,
+                    'metadata': {
+                        'chapter_title': rc.chunk.chapter,
+                        'page_start': rc.chunk.page_number,
+                        'contains_code': rc.chunk.chunk_type == 'code',
+                        'book_title': rc.chunk.book_title,
+                        'author': rc.chunk.author
+                    },
+                    'score': rc.rerank_score,
+                    'chunk_type': rc.chunk.chunk_type
+                })
+            
+            compressed_context = compressor.compress_context(
+                chunks_for_compression,
+                state.parsed_query.raw_query,
+                preserve_code=True
+            )
+            
+        except Exception as comp_error:
+            # Fallback: Simple concatenation without compression
+            print(f"  ⚠️ Compressor failed: {comp_error}")
+            print(f"  → Using simple concatenation fallback")
+            
+            context_parts = []
+            for rc in state.reranked_chunks[:10]:  # Limit to top 10
+                context_parts.append(
+                    f"[{rc.chunk.book_title} - {rc.chunk.chapter}]\n{rc.chunk.content}\n"
+                )
+            
+            compressed_context = "\n---\n".join(context_parts)
         
         state.assembled_context = compressed_context
         state.system_prompt = _build_system_prompt(state.parsed_query)
@@ -894,6 +912,7 @@ def context_assembly_node(state: AgentState) -> AgentState:
         state.errors.append(f"Context assembly failed: {str(e)}")
     
     return state
+
 
 
 
