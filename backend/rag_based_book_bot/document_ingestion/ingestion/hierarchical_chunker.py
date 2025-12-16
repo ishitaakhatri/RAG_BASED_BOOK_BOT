@@ -10,7 +10,7 @@ logger = logging.getLogger("hierarchical_chunker")
 
 class HierarchicalChunker:
     """
-    Chunks text based on GROBID structure tree.
+    Chunks text based on the parser's structure tree.
     Enforces that every chunk carries its hierarchical context.
     """
     
@@ -21,7 +21,9 @@ class HierarchicalChunker:
 
     def process_document_tree(self, sections_tree: List[Dict], book_title: str, author: str) -> List[Tuple[str, Dict]]:
         """
-        Walks the GROBID tree and produces flat, context-aware chunks.
+        Walks the tree and produces flat, context-aware chunks.
+        Args:
+            sections_tree: List of Chapter nodes (which contain subsection children)
         """
         all_chunks = []
         
@@ -36,20 +38,24 @@ class HierarchicalChunker:
         """
         chunks = []
         
-        # 1. Construct the Context Header
+        # 1. Construct the Context Header (Breadcrumbs)
+        # format: "Context: The Pragmatic Programmer > Chapter 1: A Pragmatic Philosophy > The Cat Ate My Source Code"
         hierarchy_path_str = " > ".join(node["path"])
         context_header = f"Context: {book_title} > {hierarchy_path_str}\n"
         
         context_tokens = len(self.tokenizer.encode(context_header))
         
-        # 2. Chunk the text of THIS node
+        # 2. Chunk the text of THIS node (if any)
         if node["text"] and node["text"].strip():
+            # Reserve space for context, ensure at least 200 tokens for actual content
             available_tokens = self.max_tokens - context_tokens
-            if available_tokens < 200: available_tokens = 200
+            if available_tokens < 200: 
+                available_tokens = 200
             
             text_segments = self._sliding_window_split(node["text"], available_tokens)
             
             for i, segment in enumerate(text_segments):
+                # Prepend context to the actual text chunk
                 final_text = f"{context_header}\n{segment}"
                 
                 metadata = {
@@ -63,18 +69,20 @@ class HierarchicalChunker:
                 }
                 chunks.append((final_text, metadata))
 
-        # 3. Recursively process Children
+        # 3. Recursively process Children (Subsections)
         for subsection in node["subsections"]:
             chunks.extend(self._process_node(subsection, book_title, author))
             
         return chunks
 
     def _sliding_window_split(self, text: str, max_tokens: int) -> List[str]:
+        """Simple sliding window splitter based on token count."""
         tokens = self.tokenizer.encode(text)
         if len(tokens) <= max_tokens:
             return [text]
             
         chunks = []
+        # Step size is window size minus overlap
         step = max(1, max_tokens - self.overlap)
         
         for i in range(0, len(tokens), step):

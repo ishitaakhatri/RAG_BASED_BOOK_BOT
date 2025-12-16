@@ -1,5 +1,6 @@
 """
 Unified 4-Pass Hierarchical Retriever
+Integrates: Dense -> Reranking -> Multi-Hop -> Compression
 """
 import os
 import logging
@@ -13,6 +14,7 @@ try:
 except Exception:
     _HAS_PINECONE = False
 
+# Import your custom modules
 from rag_based_book_bot.retrieval.cross_encoder_reranker import CrossEncoderReranker
 from rag_based_book_bot.retrieval.multi_hop_expander import MultiHopExpander
 from rag_based_book_bot.retrieval.context_compressor import EnhancedContextCompressor
@@ -29,7 +31,7 @@ class RetrievalConfig:
     initial_top_k: int = 50
     rerank_top_k: int = 10
     enable_multi_hop: bool = True
-    multi_hop_threshold: float = 0.5
+    multi_hop_threshold: float = 0.6
     max_context_tokens: int = 4000
 
 class HierarchicalRetriever:
@@ -41,6 +43,7 @@ class HierarchicalRetriever:
             raise ImportError("Pinecone credentials missing")
         self.pinecone_index = Pinecone(api_key=PINECONE_API_KEY).Index(PINECONE_INDEX)
         
+        # Load Components
         try:
             self.reranker = CrossEncoderReranker()
             self.has_reranker = True
@@ -56,60 +59,94 @@ class HierarchicalRetriever:
     def retrieve(self, query: str, book_filter: Optional[str] = None) -> Dict:
         logger.info(f"🚀 Starting Retrieval for: '{query}'")
         
-        def raw_retrieve_fn(q_text, k):
-            return self._dense_search_and_group(q_text, k, book_filter)
+        # Helper wrapper for the Expander to call back into
+        def raw_retrieve_wrapper(q_text, top_k):
+            return self._dense_search_and_group(q_text, top_k, book_filter)
 
-        # Pass 1: Dense Search
-        grouped = raw_retrieve_fn(query, self.config.initial_top_k)
+        # ---------------------------------------------------------
+        # PASS 1: Dense Search (Vector DB)
+        # ---------------------------------------------------------
+        initial_candidates = raw_retrieve_wrapper(query, self.config.initial_top_k)
         
-        # Pass 2: Reranking
-        final_candidates = grouped
-        if self.has_reranker and grouped:
-            rerank_input = [(g['combined_text'], g) for g in grouped]
-            reranked = self.reranker.rerank(query, rerank_input, self.config.rerank_top_k)
-            final_candidates = []
-            for _, meta, score in reranked:
+        # ---------------------------------------------------------
+        # PASS 2: Reranking (Cross-Encoder)
+        # ---------------------------------------------------------
+        reranked_candidates = initial_candidates
+        if self.has_reranker and initial_candidates:
+            # Reranker expects [(text, metadata), ...]
+            rerank_input = [(c['combined_text'], c) for c in initial_candidates]
+            
+            # Get top K
+            reranked_results = self.reranker.rerank(query, rerank_input, self.config.rerank_top_k)
+            
+            # Unpack back to list of dicts
+            reranked_candidates = []
+            for _, meta, score in reranked_results:
                 meta['score'] = score
-                final_candidates.append(meta)
+                reranked_candidates.append(meta)
 
-        # Pass 3: Multi-Hop
+        # ---------------------------------------------------------
+        # PASS 3: Multi-Hop Expansion (If confidence is low)
+        # ---------------------------------------------------------
+        final_candidates = reranked_candidates
         best_score = final_candidates[0]['score'] if final_candidates else 0
+        
         if self.has_expander and self.config.enable_multi_hop and (best_score < self.config.multi_hop_threshold):
             logger.info(f"Triggering Multi-Hop (Score: {best_score:.2f})")
-            context_strs = [r['combined_text'] for r in final_candidates[:3]]
-            concepts = self.expander.extract_concepts(query, context_strs)
             
-            existing_ids = {c['group_id'] for c in final_candidates}
-            for concept in concepts:
-                results = raw_retrieve_fn(concept, k=3)
-                for res in results:
-                    if res['group_id'] not in existing_ids:
-                        final_candidates.append(res)
-                        existing_ids.add(res['group_id'])
+            # Use the ROBUST logic from your MultiHopExpander class
+            # We pass the reranked candidates as the starting point
+            final_candidates = self.expander.multi_hop_retrieve(
+                query=query,
+                initial_results=reranked_candidates,
+                retrieval_fn=raw_retrieve_wrapper, # Callback
+                max_hops=2,
+                top_k_per_hop=3
+            )
             
-            final_candidates.sort(key=lambda x: x['score'], reverse=True)
+            # Re-sort after hopping
+            final_candidates.sort(key=lambda x: x.get('score', 0), reverse=True)
 
-        # Pass 4: Compression
+        # ---------------------------------------------------------
+        # PASS 4: Context Compression
+        # ---------------------------------------------------------
         compressor_inputs = []
         for cand in final_candidates:
+            # Ensure required fields exist for the compressor
             compressor_inputs.append({
                 "text": cand['combined_text'],
                 "metadata": {
-                    "book_title": cand['book_title'],
-                    "section_title": cand['section_title'],
-                    "hierarchy_path": cand['hierarchy_path'],
-                    "score": cand['score']
-                }
+                    "book_title": cand.get('book_title', 'Unknown'),
+                    "section_title": cand.get('section_title', 'Unknown'),
+                    "hierarchy_path": cand.get('hierarchy_path', ''),
+                    "author": cand.get('author', ''),
+                    "page_start": cand.get('chunk_index', 0)
+                },
+                "score": cand.get('score', 0)
             })
             
-        final_context = self.compressor.compress_context(compressor_inputs, query, preserve_code=True)
+        final_context = self.compressor.compress_context(
+            compressor_inputs, 
+            query, 
+            preserve_code=True,
+            use_semantic_dedup=True
+        )
         
         return {
             "context": final_context,
-            "raw_results": final_candidates
+            "raw_results": final_candidates,
+            "stats": {
+                "initial_count": len(initial_candidates),
+                "reranked_count": len(reranked_candidates),
+                "final_count": len(final_candidates)
+            }
         }
 
     def _dense_search_and_group(self, query: str, top_k: int, book_filter: str) -> List[Dict]:
+        """
+        Performs dense search and RECONSTRUCTS the section hierarchy.
+        This is critical for the 'Book -> Chapter -> Section' view.
+        """
         query_vec = self.embedding_model.encode(query).tolist()
         filter_dict = {"book_title": book_filter} if book_filter else {}
         
@@ -118,40 +155,53 @@ class HierarchicalRetriever:
             filter=filter_dict, include_metadata=True
         )
         
+        # Group chunks by their Unique Section ID (Book + Hierarchy Path)
         groups = {}
         for match in results.get('matches', []):
             meta = match['metadata']
+            
+            # Create a unique key for the section
             h_path = meta.get('hierarchy_path', 'unknown')
-            group_key = f"{meta.get('book_title')}::{h_path}"
+            book_title = meta.get('book_title', 'unknown')
+            group_key = f"{book_title}::{h_path}"
             
             if group_key not in groups:
                 groups[group_key] = {
                     "group_id": group_key,
-                    "book_title": meta.get('book_title'),
+                    "book_title": book_title,
                     "section_title": meta.get('section_title'),
                     "hierarchy_path": h_path,
+                    "author": meta.get('author', ''),
                     "chunks": [],
                     "max_score": match['score']
                 }
+            
+            # Add chunk text and index to the group
             groups[group_key]['chunks'].append({
                 "text": meta.get('text', ''),
                 "index": int(meta.get('chunk_index', 0))
             })
+            # Keep the highest score seen for this group
             groups[group_key]['max_score'] = max(groups[group_key]['max_score'], match['score'])
 
+        # Flatten groups back into single "Section" objects
         flattened = []
         for g in groups.values():
+            # Sort chunks by index to reconstruct the original text order
             g['chunks'].sort(key=lambda x: x['index'])
             combined = "\n".join([c['text'] for c in g['chunks']])
+            
             flattened.append({
                 "group_id": g['group_id'],
                 "book_title": g['book_title'],
                 "section_title": g['section_title'],
                 "hierarchy_path": g['hierarchy_path'],
                 "combined_text": combined,
-                "score": g['max_score']
+                "score": g['max_score'],
+                "author": g.get('author')
             })
             
+        # Initial sort by dense score
         flattened.sort(key=lambda x: x['score'], reverse=True)
         return flattened
 
