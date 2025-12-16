@@ -6,6 +6,7 @@ These dataclasses define the structure of data flowing between nodes.
 from dataclasses import dataclass, field
 from typing import Optional, List
 from enum import Enum
+import time  # NEW IMPORT
 
 
 class QueryIntent(Enum):
@@ -76,6 +77,29 @@ class LLMResponse:
     confidence: float = 0.0
 
 
+# ============================================================================
+# NEW: Conversation Memory Classes
+# ============================================================================
+
+@dataclass
+class ConversationTurn:
+    """
+    Single Q&A turn in a conversation
+    
+    Represents one complete interaction with user query and assistant response.
+    Used for conversation memory and context resolution.
+    """
+    user_query: str
+    assistant_response: str
+    timestamp: float = field(default_factory=time.time)
+    sources_used: List[str] = field(default_factory=list)
+    
+    # Context resolution metadata
+    resolved_query: Optional[str] = None  # Standalone query after context resolution
+    needs_retrieval: bool = True  # Whether retrieval was needed
+    referenced_turn: Optional[int] = None  # Which previous turn was referenced
+
+
 @dataclass
 class AgentState:
     """
@@ -112,15 +136,41 @@ class AgentState:
     # Final Output
     response: Optional[LLMResponse] = None
     
-    # Filters and Configuration (NEW/UPDATED)
+    # Filters and Configuration
     book_filter: Optional[str] = None
     chapter_filter: Optional[str] = None
-    pass1_k: int = 50                    # NEW: Top-k for Pass 1 (vector search)
-    pass2_k: int = 15                    # NEW: Top-k for Pass 2 (reranking)
-    pass3_enabled: bool = True           # NEW: Enable/disable multi-hop expansion
-    max_tokens: int = 2500               # NEW: Max tokens for context assembly
+    pass1_k: int = 50                    # Top-k for Pass 1 (vector search)
+    pass2_k: int = 15                    # Top-k for Pass 2 (reranking)
+    pass3_enabled: bool = True           # Enable/disable multi-hop expansion
+    max_tokens: int = 2500               # Max tokens for context assembly
+    
+    # ============================================================================
+    # NEW: Conversation Memory Fields
+    # ============================================================================
+    
+    # Conversation history (loaded from Pinecone)
+    conversation_history: List[ConversationTurn] = field(default_factory=list)
+    
+    # Context resolution results
+    resolved_query: Optional[str] = None  # Standalone query (no pronouns/references)
+    needs_retrieval: bool = True  # Whether retrieval needed or can answer from history
+    referenced_turn: Optional[int] = None  # Which previous turn is referenced (1, 2, 3...)
+    
+    # Relevant past context (from semantic search over conversation)
+    relevant_past_turns: List[ConversationTurn] = field(default_factory=list)
+    
+    # Session tracking
+    session_id: Optional[str] = None  # Current session identifier
+    user_id: Optional[str] = None  # Optional user identifier
+    
+    # Configuration
+    max_history_turns: int = 5  # How many past turns to consider for context
+    
+    # ============================================================================
+    # End of Conversation Memory Fields
+    # ============================================================================
     
     # Pipeline metadata
     current_node: str = ""
     errors: list[str] = field(default_factory=list)
-    pipeline_snapshots: List[dict] = field(default_factory=list)  # NEW: Track chunk counts per stage
+    pipeline_snapshots: List[dict] = field(default_factory=list)  # Track chunk counts per stage

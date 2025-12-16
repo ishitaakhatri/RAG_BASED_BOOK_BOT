@@ -15,6 +15,7 @@ from typing import List
 from dotenv import load_dotenv
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
+load_dotenv()
 
 # LangChain imports
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -31,7 +32,7 @@ from rag_based_book_bot.retrieval.multi_hop_expander import MultiHopExpander
 from rag_based_book_bot.retrieval.cluster_manager import ClusterManager
 from rag_based_book_bot.retrieval.context_compressor import EnhancedContextCompressor
 
-load_dotenv()
+
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "coding-books")
@@ -149,17 +150,12 @@ def user_query_node(state: AgentState) -> AgentState:
 
 def query_rewriter_node(state: AgentState, num_variations: int = 3) -> AgentState:
     """
-    Query Rewriting Node - Generates alternative query formulations
+    Query Rewriting Node - NOW USES RESOLVED QUERY
     
-    Uses Gemini LLM to create semantically similar but differently phrased queries
-    to improve retrieval recall by covering different ways of expressing the same intent.
+    Generates alternative query formulations using the RESOLVED query
+    (which is already standalone after context resolution).
     
-    Args:
-        state: Current agent state with parsed_query
-        num_variations: Number of alternative queries to generate (default: 3)
-    
-    Returns:
-        Updated state with rewritten_queries populated
+    No conversation history needed here - that's handled by context_resolution_node!
     """
     state.current_node = "query_rewriter"
     
@@ -168,11 +164,18 @@ def query_rewriter_node(state: AgentState, num_variations: int = 3) -> AgentStat
         return state
     
     try:
-        print(f"\n[Query Rewriting] Generating {num_variations} alternative queries...")
+        # ============================================================
+        # KEY CHANGE: Use resolved_query if available
+        # ============================================================
+        query_to_expand = state.resolved_query or state.parsed_query.raw_query
         
-        # Use LLM to generate query variations
+        print(f"\n[Query Rewriting] Generating {num_variations} alternative queries...")
+        print(f"  Expanding query: '{query_to_expand}'")
+        
+        # Generate variations using the STANDALONE query
+        # No conversation history needed - query is already resolved!
         rewritten = _generate_query_variations(
-            state.parsed_query.raw_query,
+            query_to_expand,
             state.parsed_query.intent,
             num_variations
         )
@@ -185,10 +188,10 @@ def query_rewriter_node(state: AgentState, num_variations: int = 3) -> AgentStat
         
     except Exception as e:
         print(f"  ⚠️ Query rewriting failed: {e}")
-        print(f"  → Continuing with original query only")
         state.rewritten_queries = []
     
     return state
+
 
 def _generate_query_variations(query: str, intent: QueryIntent, num_variations: int = 3) -> list[str]:
     """Generate alternative query formulations using Gemini"""
@@ -453,13 +456,7 @@ def chunking_embedding_node(state: AgentState) -> AgentState:
 def vector_search_node(state: AgentState) -> AgentState:
     """
     PASS 1: Coarse Semantic Search with Query Expansion
-    
-    Now fully self-contained:
-    - Reads state.rewritten_queries (from query_rewriter_node)
-    - Reads state.book_filter and state.chapter_filter
-    - Uses state.pass1_k for top_k configuration
-    - Performs parallel search with all queries
-    - Deduplicates results internally
+    NOW USES RESOLVED QUERY as main query
     """
     state.current_node = "vector_search"
     
@@ -469,13 +466,19 @@ def vector_search_node(state: AgentState) -> AgentState:
     
     try:
         # Read configuration from state
-        top_k = state.pass1_k  # Use configured value from state
+        top_k = state.pass1_k
         
-        # Collect all queries (original + rewritten)
-        all_queries = [state.parsed_query.raw_query] + state.rewritten_queries
+        # ============================================================
+        # KEY CHANGE: Use resolved_query as main query
+        # ============================================================
+        main_query = state.resolved_query or state.parsed_query.raw_query
+        
+        # Collect all queries (resolved + rewritten variations)
+        all_queries = [main_query] + state.rewritten_queries
         
         print(f"\n[PASS 1] Vector Search (top_k={top_k})")
-        print(f"  → Searching with {len(all_queries)} queries (1 original + {len(state.rewritten_queries)} rewritten)")
+        print(f"  → Main query: '{main_query}'")
+        print(f"  → Total queries: {len(all_queries)} (1 resolved + {len(state.rewritten_queries)} variations)")
         
         index = get_pinecone_index()
         model = get_embedding_model()
@@ -581,6 +584,7 @@ def vector_search_node(state: AgentState) -> AgentState:
         state.errors.append(f"Vector search failed: {str(e)}")
     
     return state
+
 
 
 

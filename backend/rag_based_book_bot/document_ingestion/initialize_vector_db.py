@@ -6,6 +6,7 @@ import os
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
+load_dotenv()
 
 # Load environment variables
 env_path = Path(__file__).resolve().parents[2] / ".env"

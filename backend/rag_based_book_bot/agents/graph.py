@@ -6,7 +6,14 @@ from typing import Callable, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 
-from rag_based_book_bot.agents.states import AgentState
+from .states import AgentState  # Existing import
+
+# NEW IMPORTS: Memory nodes
+from rag_based_book_bot.agents.memory_nodes import (
+    query_context_resolution_node,
+    conversation_search_node,
+    answer_from_history_node
+)
 
 
 
@@ -189,57 +196,111 @@ def build_indexing_graph() -> Graph:
 
 def build_query_graph() -> Graph:
     """
-    Builds the FULL 5-PASS query graph with Query Rewriting.
+    Builds the FULL query graph with CONVERSATION MEMORY support
     
-    Pipeline:
+    Pipeline with Memory:
     1. Query Parser
-    1.5. Query Rewriter (NEW) - Generates alternative query formulations
-    2. Vector Search (Pass 1: Coarse) - Now searches with multiple queries
-    3. Cross-Encoder Reranking (Pass 2: Precision)
-    4. Multi-Hop Expansion (Pass 3: Cross-chapter)
-    5. Cluster Expansion (Pass 4: Concept linking)
-    6. Context Compression & Assembly (Pass 5: Token management)
-    7. LLM Reasoning (Final answer)
+    2. Context Resolution (NEW) - Resolve pronouns, detect if needs retrieval
+    3A. Answer from History (NEW) - If can answer from memory
+    3B. Query Rewriter - If needs retrieval
+    4. Vector Search (Pass 1: Coarse) - Uses resolved standalone query
+    5. Cross-Encoder Reranking (Pass 2: Precision)
+    6. Multi-Hop Expansion (Pass 3: Cross-chapter)
+    7. Context Compression & Assembly (Pass 5: Token management)
+    8. LLM Reasoning (Final answer) - Includes referenced turn context
+    
+    Conditional Branching:
+    - After context_resolution, if needs_retrieval=False → answer_from_history
+    - After context_resolution, if needs_retrieval=True → query_rewriter → retrieval pipeline
     """
-    from rag_based_book_bot.agents.nodes import (
+    from .nodes import (
         user_query_node, query_rewriter_node, vector_search_node, reranking_node,
         multi_hop_expansion_node, cluster_expansion_node,
         context_assembly_node, llm_reasoning_node
     )
     
-    graph = Graph(name="5_pass_query_pipeline_with_rewriter")
+    graph = Graph(name="rag_with_conversation_memory")
     
+    # ============================================================
     # Add all nodes
+    # ============================================================
+    
+    # Stage 1: Query Understanding
     graph.add_node("query_parser", user_query_node, 
-                   "Parse user query")
+                   "Parse user query and detect intent")
+    
+    # Stage 2: Context Resolution (NEW)
+    graph.add_node("context_resolution", query_context_resolution_node,
+                   "Resolve query using conversation history")
+    
+    # Stage 3A: Answer from Memory (NEW - conditional)
+    graph.add_node("answer_from_history", answer_from_history_node,
+                   "Answer directly from conversation history")
+    
+    # Stage 3B: Query Rewriting (for retrieval path)
     graph.add_node("query_rewriter", query_rewriter_node,
-                   "Generate alternative query formulations")  # NEW
+                   "Generate alternative query formulations")
+    
+    # Stage 4-8: Retrieval Pipeline
     graph.add_node("vector_search", vector_search_node, 
-                   "PASS 1: Coarse vector search with query expansion")
+                   "PASS 1: Coarse vector search")
     graph.add_node("cross_encoder_reranking", reranking_node, 
-                   "PASS 2: Cross-encoder reranking (top 15)")
+                   "PASS 2: Cross-encoder reranking")
     graph.add_node("multi_hop_expansion", multi_hop_expansion_node, 
-                   "PASS 3: Multi-hop retrieval (cross-chapter)")
+                   "PASS 3: Multi-hop retrieval")
     graph.add_node("cluster_expansion", cluster_expansion_node, 
                    "PASS 4: Cluster-based expansion")
     graph.add_node("context_compression", context_assembly_node, 
-                   "PASS 5: Compression & deduplication")
+                   "PASS 5: Context assembly")
     graph.add_node("llm_reasoning", llm_reasoning_node, 
-                   "Generate final answer")
+                   "Generate final answer with LLM")
     
-    # Connect nodes in sequence
-    graph.add_edge("query_parser", "query_rewriter")  # NEW EDGE
-    graph.add_edge("query_rewriter", "vector_search")  # MODIFIED EDGE
+    # ============================================================
+    # Connect nodes with edges
+    # ============================================================
+    
+    # Always start with query parser
+    graph.add_edge("query_parser", "context_resolution")
+    
+    # ============================================================
+    # CONDITIONAL BRANCHING based on needs_retrieval
+    # ============================================================
+    
+    # Path A: Can answer from history (skip retrieval)
+    graph.add_edge(
+        "context_resolution", 
+        "answer_from_history",
+        condition=lambda s: not s.needs_retrieval
+    )
+    
+    # Path B: Need retrieval (go to query rewriter)
+    graph.add_edge(
+        "context_resolution",
+        "query_rewriter",
+        condition=lambda s: s.needs_retrieval
+    )
+    
+    # ============================================================
+    # Retrieval Pipeline (Path B continues)
+    # ============================================================
+    graph.add_edge("query_rewriter", "vector_search")
     graph.add_edge("vector_search", "cross_encoder_reranking")
     graph.add_edge("cross_encoder_reranking", "multi_hop_expansion")
     graph.add_edge("multi_hop_expansion", "cluster_expansion")
     graph.add_edge("cluster_expansion", "context_compression")
     graph.add_edge("context_compression", "llm_reasoning")
     
+    # ============================================================
+    # Set entry and end points
+    # ============================================================
     graph.set_entry_point("query_parser")
-    graph.set_end_point("llm_reasoning")
+    
+    # Two possible end points:
+    graph.set_end_point("llm_reasoning")      # End after retrieval + LLM
+    graph.set_end_point("answer_from_history") # End after answering from memory
     
     return graph
+
 
 
 
