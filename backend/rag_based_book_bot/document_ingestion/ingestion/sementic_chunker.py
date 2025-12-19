@@ -5,7 +5,7 @@ Enhanced with GROBID structure-aware chunking
 import re
 import tiktoken
 import numpy as np
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional,Callable
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from dataclasses import dataclass
@@ -68,7 +68,8 @@ class SemanticChunker:
         pages_text: List[Dict],
         book_title: str,
         author: str,
-        batch_size: int = 20
+        batch_size: int = 20,
+        progress_callback: Optional[Callable[[int, int], None]] = None
     ) -> List[Tuple[str, Dict]]:
         """
         Chunk pages in batches with structure awareness
@@ -78,6 +79,7 @@ class SemanticChunker:
             book_title: Title of the book
             author: Author name
             batch_size: Number of pages to process at once
+            progress_callback: Optional callback function(batch_num: int, current_page: int)
             
         Returns:
             List of (chunk_text, metadata) tuples
@@ -106,9 +108,10 @@ class SemanticChunker:
                 pages_text,
                 book_title,
                 author,
-                batch_size
+                batch_size,
+                progress_callback
             )
-        
+
         logger.info(f"✅ Created {len(all_chunks)} semantic chunks from {total_pages} pages")
         logger.info(f"   Book: '{book_title}' by {author}")
         return all_chunks
@@ -231,7 +234,8 @@ class SemanticChunker:
         pages_text: List[Dict],
         book_title: str,
         author: str,
-        batch_size: int
+        batch_size: int,
+        progress_callback: Optional[Callable[[int, int], None]] = None
     ) -> List[Tuple[str, Dict]]:
         """
         Original semantic chunking without structure hints
@@ -250,6 +254,12 @@ class SemanticChunker:
             
             # Progress
             logger.info(f"📊 Processing pages {batch_start+1}-{batch_end} ({batch_end/total_pages*100:.1f}% complete)")
+            
+            # Call progress callback
+            if progress_callback:
+                batch_num = (batch_start // batch_size) + 1
+                progress_callback(batch_num, batch_end)
+
             
             # Combine batch pages into one text block
             combined_text = ""

@@ -13,6 +13,10 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
+from fastapi import WebSocket, WebSocketDisconnect
+import asyncio
+import json
+from rag_based_book_bot.document_ingestion.progress_tracker import get_progress_tracker
 import os
 import tempfile
 import time
@@ -506,11 +510,15 @@ async def ingest_book(
     book_title: Optional[str] = None,
     author: Optional[str] = None
 ):
-    """Ingest a new PDF book"""
+    """Ingest a new PDF book with real-time progress tracking"""
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files supported")
     
     try:
+        # Reset tracker for new ingestion
+        tracker = get_progress_tracker()
+        tracker.reset()
+        
         # Auto-extract from filename
         if not book_title or not author:
             extracted_title, extracted_author = parse_book_filename(file.filename)
@@ -527,6 +535,9 @@ async def ingest_book(
             content = await file.read()
             tmp_file.write(content)
             tmp_path = tmp_file.name
+        
+        print(f"📥 Received file: {file.filename}")
+        print(f"📊 Starting ingestion for '{final_book_title}'")
         
         # Ingest
         config = IngestorConfig(
@@ -545,19 +556,24 @@ async def ingest_book(
         
         # Store metadata
         code_chunks = result.get('code_chunks', 0)
+        total_chunks = result.get('chunks', 0)
+        
         store_book_metadata(
             book_title=final_book_title,
             author=final_author,
-            total_chunks=result.get('total_chunks', 0),
+            total_chunks=total_chunks,
             code_chunks=code_chunks
         )
         
         # Cleanup
         os.unlink(tmp_path)
         
+        print(f"✅ Ingestion complete: {total_chunks} chunks from {result.get('total_pages', 0)} pages")
+        
         return IngestResponse(success=True, result=result)
         
     except Exception as e:
+        print(f"❌ Ingest error: {str(e)}")
         if 'tmp_path' in locals():
             try:
                 os.unlink(tmp_path)
@@ -565,6 +581,79 @@ async def ingest_book(
                 pass
         
         return IngestResponse(success=False, error=str(e))
+
+@app.websocket("/ws/ingestion-progress")
+async def websocket_ingestion_progress(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time ingestion progress updates
+    
+    Frontend connects with: ws://localhost:8000/ws/ingestion-progress
+    Receives progress updates as JSON messages during book ingestion
+    
+    Message format:
+    {
+        "total_pages": int,
+        "current_page": int,
+        "current_batch": int,
+        "total_batches": int,
+        "percentage": float (0-100),
+        "status": str ("initializing", "parsing_pdf", "chunking", "embedding", "upserting", "completed", "failed"),
+        "current_task": str,
+        "chunks_created": int,
+        "embeddings_generated": int,
+        "vectors_upserted": int,
+        "elapsed_time": float,
+        "estimated_time_remaining": float,
+        "speed_pages_per_sec": float,
+        "book_title": str,
+        "author": str,
+        "errors": list
+    }
+    """
+    await websocket.accept()
+    tracker = get_progress_tracker()
+    
+    print(f"🔌 WebSocket client connected for progress tracking")
+    
+    async def send_update(state):
+        """Callback function to send progress updates to WebSocket client"""
+        try:
+            progress_data = state.to_dict()
+            await websocket.send_json(progress_data)
+            print(f"📤 Sent progress update: {progress_data['percentage']}% - {progress_data['current_task']}")
+        except Exception as e:
+            print(f"⚠️ WebSocket send error: {e}")
+    
+    # Register the callback
+    tracker.on_progress(send_update)
+    
+    try:
+        while True:
+            # Keep connection alive and listen for client messages
+            # This prevents the connection from closing
+            try:
+                # Wait for client to send something (keepalive or close signal)
+                # This will timeout if no message received (adjust as needed)
+                message = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                
+                # If client sends "ping", respond with "pong"
+                if message.lower() == "ping":
+                    await websocket.send_text("pong")
+                    
+            except asyncio.TimeoutError:
+                # Timeout is fine, just keep connection open
+                pass
+                
+    except WebSocketDisconnect:
+        print("🔌 WebSocket client disconnected from progress stream")
+    except Exception as e:
+        print(f"❌ WebSocket error: {e}")
+    finally:
+        try:
+            await websocket.close()
+        except:
+            pass
+
 
 
 @app.get("/sessions", response_model=SessionListResponse)

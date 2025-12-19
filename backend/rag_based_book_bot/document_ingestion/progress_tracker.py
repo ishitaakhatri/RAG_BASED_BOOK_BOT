@@ -1,0 +1,285 @@
+"""
+Progress Tracker for Document Ingestion
+
+Tracks ingestion progress in real-time and provides:
+- Current page/batch processing status
+- Percentage calculation
+- Real-time progress updates via callback
+- Progress state management for WebSocket streaming
+"""
+
+import logging
+import time
+from typing import Callable, Optional, Dict, Any
+from dataclasses import dataclass, field, asdict
+from threading import Lock
+from datetime import datetime
+
+logger = logging.getLogger("progress_tracker")
+
+
+@dataclass
+class ProgressState:
+    """Current progress state"""
+    total_pages: int = 0
+    current_page: int = 0
+    current_batch: int = 0
+    total_batches: int = 0
+    percentage: float = 0.0
+    status: str = "initializing"
+    current_task: str = ""
+    chunks_created: int = 0
+    embeddings_generated: int = 0
+    vectors_upserted: int = 0
+    start_time: float = field(default_factory=time.time)
+    elapsed_time: float = 0.0
+    estimated_time_remaining: float = 0.0
+    speed_pages_per_sec: float = 0.0
+    book_title: str = ""
+    author: str = ""
+    errors: list = field(default_factory=list)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization"""
+        return {
+            "total_pages": self.total_pages,
+            "current_page": self.current_page,
+            "current_batch": self.current_batch,
+            "total_batches": self.total_batches,
+            "percentage": round(self.percentage, 2),
+            "status": self.status,
+            "current_task": self.current_task,
+            "chunks_created": self.chunks_created,
+            "embeddings_generated": self.embeddings_generated,
+            "vectors_upserted": self.vectors_upserted,
+            "elapsed_time": round(self.elapsed_time, 2),
+            "estimated_time_remaining": round(self.estimated_time_remaining, 2),
+            "speed_pages_per_sec": round(self.speed_pages_per_sec, 2),
+            "book_title": self.book_title,
+            "author": self.author,
+            "errors": self.errors
+        }
+
+
+class ProgressTracker:
+    """
+    Tracks ingestion progress and broadcasts updates
+    
+    Usage:
+        tracker = ProgressTracker()
+        tracker.on_progress(lambda state: print(f"{state.percentage}%"))
+        
+        tracker.start_ingestion(pdf_path, total_pages=278)
+        tracker.update_batch(batch_num=1, current_page=20)
+        tracker.update_chunks(chunks_count=100)
+        tracker.update_embeddings(count=100)
+        tracker.update_upsert(count=100)
+        tracker.finish()
+    """
+    
+    def __init__(self):
+        self.state = ProgressState()
+        self.lock = Lock()
+        self.callbacks: list[Callable[[ProgressState], None]] = []
+        self.log_history: list[Dict[str, Any]] = []
+        
+    def on_progress(self, callback: Callable[[ProgressState], None]) -> None:
+        """Register a callback to receive progress updates"""
+        self.callbacks.append(callback)
+    
+    def _notify_callbacks(self) -> None:
+        """Notify all registered callbacks"""
+        for callback in self.callbacks:
+            try:
+                callback(self.state)
+            except Exception as e:
+                logger.error(f"Error in progress callback: {e}")
+    
+    def _calculate_eta(self) -> None:
+        """Calculate estimated time remaining"""
+        if self.state.current_page == 0 or self.state.current_page == self.state.total_pages:
+            self.state.estimated_time_remaining = 0.0
+            return
+        
+        self.state.elapsed_time = time.time() - self.state.start_time
+        
+        if self.state.elapsed_time > 0:
+            self.state.speed_pages_per_sec = self.state.current_page / self.state.elapsed_time
+            
+            if self.state.speed_pages_per_sec > 0:
+                remaining_pages = self.state.total_pages - self.state.current_page
+                self.state.estimated_time_remaining = remaining_pages / self.state.speed_pages_per_sec
+    
+    def start_ingestion(
+        self, 
+        pdf_path: str, 
+        total_pages: int,
+        book_title: str = "",
+        author: str = ""
+    ) -> None:
+        """Initialize ingestion tracker"""
+        with self.lock:
+            self.state.total_pages = total_pages
+            self.state.book_title = book_title
+            self.state.author = author
+            self.state.status = "parsing_pdf"
+            self.state.current_task = f"Loading PDF: {pdf_path}"
+            self.state.start_time = time.time()
+            self.state.percentage = 0.0
+            
+            self._log_event("ingestion_started", {
+                "total_pages": total_pages,
+                "book_title": book_title,
+                "pdf_path": pdf_path
+            })
+            self._notify_callbacks()
+    
+    def update_batch(
+        self, 
+        batch_num: int, 
+        total_batches: int,
+        current_page: int
+    ) -> None:
+        """Update batch processing progress"""
+        with self.lock:
+            self.state.current_batch = batch_num
+            self.state.total_batches = total_batches
+            self.state.current_page = current_page
+            self.state.status = "chunking"
+            self.state.current_task = f"Processing pages {current_page - 19} - {current_page} (Batch {batch_num}/{total_batches})"
+            
+            # Calculate percentage based on pages processed
+            if self.state.total_pages > 0:
+                self.state.percentage = (self.state.current_page / self.state.total_pages) * 100
+            
+            self._calculate_eta()
+            self._notify_callbacks()
+    
+    def start_chunking(self) -> None:
+        """Mark start of chunking phase"""
+        with self.lock:
+            self.state.status = "chunking"
+            self.state.current_task = "Applying semantic chunking..."
+            self.state.percentage = 45.0
+            self._log_event("chunking_started", {})
+            self._notify_callbacks()
+    
+    def update_chunks(self, chunks_count: int) -> None:
+        """Update number of chunks created"""
+        with self.lock:
+            self.state.chunks_created = chunks_count
+            self.state.current_task = f"Created {chunks_count} semantic chunks"
+            self.state.percentage = 50.0
+            self._notify_callbacks()
+    
+    def start_embedding(self) -> None:
+        """Mark start of embedding phase"""
+        with self.lock:
+            self.state.status = "embedding"
+            self.state.current_task = "Generating embeddings..."
+            self.state.percentage = 55.0
+            self._log_event("embedding_started", {
+                "chunks_count": self.state.chunks_created
+            })
+            self._notify_callbacks()
+    
+    def update_embeddings(self, count: int) -> None:
+        """Update number of embeddings generated"""
+        with self.lock:
+            self.state.embeddings_generated = count
+            if self.state.chunks_created > 0:
+                embed_progress = (count / self.state.chunks_created) * 30  # 30% of total
+                self.state.percentage = 55.0 + embed_progress
+            self.state.current_task = f"Generated {count}/{self.state.chunks_created} embeddings"
+            self._notify_callbacks()
+    
+    def start_upsert(self) -> None:
+        """Mark start of Pinecone upsert phase"""
+        with self.lock:
+            self.state.status = "upserting"
+            self.state.current_task = "Upserting vectors to Pinecone..."
+            self.state.percentage = 85.0
+            self._log_event("upsert_started", {
+                "embeddings_count": self.state.embeddings_generated
+            })
+            self._notify_callbacks()
+    
+    def update_upsert(self, count: int) -> None:
+        """Update number of vectors upserted"""
+        with self.lock:
+            self.state.vectors_upserted = count
+            if self.state.embeddings_generated > 0:
+                upsert_progress = (count / self.state.embeddings_generated) * 10  # 10% of total
+                self.state.percentage = 85.0 + upsert_progress
+            self.state.current_task = f"Upserted {count}/{self.state.embeddings_generated} vectors"
+            self._notify_callbacks()
+    
+    def add_error(self, error_msg: str) -> None:
+        """Log an error during ingestion"""
+        with self.lock:
+            self.state.errors.append(error_msg)
+            logger.error(f"Ingestion error: {error_msg}")
+            self._log_event("error_occurred", {"error": error_msg})
+            self._notify_callbacks()
+    
+    def finish(self, success: bool = True) -> None:
+        """Mark ingestion as complete"""
+        with self.lock:
+            if success:
+                self.state.status = "completed"
+                self.state.percentage = 100.0
+                self.state.current_task = "Ingestion completed successfully"
+                self._log_event("ingestion_completed", {
+                    "chunks_created": self.state.chunks_created,
+                    "embeddings_generated": self.state.embeddings_generated,
+                    "vectors_upserted": self.state.vectors_upserted,
+                    "total_time": round(time.time() - self.state.start_time, 2)
+                })
+            else:
+                self.state.status = "failed"
+                self.state.current_task = "Ingestion failed"
+                self._log_event("ingestion_failed", {
+                    "errors": self.state.errors
+                })
+            
+            self.state.elapsed_time = time.time() - self.state.start_time
+            self._notify_callbacks()
+    
+    def get_state(self) -> Dict[str, Any]:
+        """Get current progress state as dictionary"""
+        with self.lock:
+            return self.state.to_dict()
+    
+    def get_log_history(self) -> list[Dict[str, Any]]:
+        """Get all logged events"""
+        with self.lock:
+            return self.log_history.copy()
+    
+    def _log_event(self, event_type: str, data: Dict[str, Any]) -> None:
+        """Log an event internally"""
+        event = {
+            "timestamp": datetime.now().isoformat(),
+            "event_type": event_type,
+            "data": data
+        }
+        self.log_history.append(event)
+    
+    def reset(self) -> None:
+        """Reset tracker for new ingestion"""
+        with self.lock:
+            self.state = ProgressState()
+            self.log_history = []
+
+
+# Global tracker instance (shared across all requests)
+_global_tracker = ProgressTracker()
+
+
+def get_progress_tracker() -> ProgressTracker:
+    """Get the global progress tracker instance"""
+    return _global_tracker
+
+
+def reset_progress_tracker() -> None:
+    """Reset the global tracker"""
+    _global_tracker.reset()
