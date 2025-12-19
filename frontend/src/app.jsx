@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   Search, BookOpen, Upload, Settings, MessageSquare, FileText, Code, 
   Sparkles, AlertCircle, CheckCircle, Loader, Book, ChevronDown, 
-  ChevronUp, Eye, Filter, Layers, Tag, Repeat  // NEW: Added Repeat icon
+  ChevronUp, Eye, Filter, Layers, Tag, Repeat, Plus, Trash2, Clock,
+  MessageCircle, History, X
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
@@ -14,12 +15,19 @@ export default function RAGBookBot() {
   const [loading, setLoading] = useState(false);
   const [books, setBooks] = useState([]);
   const [selectedBook, setSelectedBook] = useState('all');
-  const [topK, setTopK] = useState(5);
   const [showSettings, setShowSettings] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [uploadFile, setUploadFile] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(null);
   const messagesEndRef = useRef(null);
+
+  // SESSION MANAGEMENT - NEW
+  const [sessions, setSessions] = useState([]);
+  const [currentSessionId, setCurrentSessionId] = useState(null);
+  const [showSessions, setShowSessions] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
 
   // Pipeline settings
   const [pass1K, setPass1K] = useState(50);
@@ -29,6 +37,7 @@ export default function RAGBookBot() {
 
   useEffect(() => {
     fetchBooks();
+    fetchSessions(); // NEW: Load sessions on mount
   }, []);
 
   useEffect(() => {
@@ -63,6 +72,102 @@ export default function RAGBookBot() {
     }
   };
 
+  // NEW: Fetch sessions list
+  const fetchSessions = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/sessions?limit=50`);
+      const data = await response.json();
+      setSessions(data.sessions || []);
+    } catch (error) {
+      console.error('Failed to fetch sessions:', error);
+    }
+  };
+
+  // NEW: Load conversation from session
+  const loadSession = async (sessionId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/conversation/${sessionId}`);
+      const data = await response.json();
+      
+      // Convert to message format
+      const loadedMessages = [];
+      for (const turn of data.turns) {
+        loadedMessages.push({
+          role: 'user',
+          content: turn.user_query
+        });
+        loadedMessages.push({
+          role: 'assistant',
+          content: turn.assistant_response,
+          sources: turn.sources_used ? 
+            turn.sources_used.map(id => ({ chunk_id: id })) : [],
+          stats: {}
+        });
+      }
+      
+      setMessages(loadedMessages);
+      setCurrentSessionId(sessionId);
+      setSearchResults([]); // Clear search when loading session
+    } catch (error) {
+      console.error('Failed to load session:', error);
+    }
+  };
+
+  // NEW: Start new chat
+  const startNewChat = () => {
+    setMessages([]);
+    setCurrentSessionId(null);
+    setSearchResults([]);
+  };
+
+  // NEW: Delete session
+  const deleteSession = async (sessionId, e) => {
+    e.stopPropagation(); // Prevent triggering loadSession
+    
+    if (!confirm('Are you sure you want to delete this conversation?')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/conversation/${sessionId}`, {
+        method: 'DELETE'
+      });
+      
+      if (response.ok) {
+        // Refresh sessions list
+        await fetchSessions();
+        
+        // If deleted current session, clear messages
+        if (sessionId === currentSessionId) {
+          startNewChat();
+        }
+      }
+    } catch (error) {
+      console.error('Failed to delete session:', error);
+    }
+  };
+
+  // NEW: Search across sessions
+  const searchSessions = async () => {
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/search/sessions?query=${encodeURIComponent(searchQuery)}&limit=10`
+      );
+      const data = await response.json();
+      setSearchResults(data.results || []);
+    } catch (error) {
+      console.error('Search failed:', error);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
   const handleQuerySubmit = async (e) => {
     e.preventDefault();
     if (!query.trim() || loading) return;
@@ -78,8 +183,9 @@ export default function RAGBookBot() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query,
+          session_id: currentSessionId, // IMPORTANT: Pass session ID
           book_filter: selectedBook === 'all' ? null : selectedBook,
-          top_k: topK,
+          top_k: 5,
           pass1_k: pass1K,
           pass2_k: pass2K,
           pass3_enabled: pass3Enabled,
@@ -103,8 +209,18 @@ export default function RAGBookBot() {
           stats: data.stats,
           confidence: data.confidence,
           pipeline_stages: data.pipeline_stages,
-          rewritten_queries: data.rewritten_queries || []  // NEW: Capture rewritten queries
+          rewritten_queries: data.rewritten_queries || [],
+          answered_from_history: data.answered_from_history,
+          resolved_query: data.resolved_query
         }]);
+
+        // Update session ID if new session
+        if (!currentSessionId && data.session_id) {
+          setCurrentSessionId(data.session_id);
+        }
+
+        // Refresh sessions list to show new/updated session
+        await fetchSessions();
       }
     } catch (error) {
       setMessages(prev => [...prev, {
@@ -141,17 +257,7 @@ export default function RAGBookBot() {
           result: data.result
         });
         
-        setUploadProgress(prev => ({
-          ...prev,
-          message: prev.message + ' Refreshing book list...'
-        }));
-        
         await fetchBooks();
-        
-        setUploadProgress(prev => ({
-          ...prev,
-          message: `✅ ${data.result.title} added successfully!`
-        }));
         
         setTimeout(() => {
           setShowUpload(false);
@@ -173,264 +279,438 @@ export default function RAGBookBot() {
     }
   };
 
+  // Format timestamp
+  const formatTimestamp = (timestamp) => {
+    const date = new Date(timestamp * 1000);
+    const now = new Date();
+    const diff = now - date;
+    
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+    
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    if (days < 7) return `${days}d ago`;
+    return date.toLocaleDateString();
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
-      {/* Header */}
-      <header className="bg-black/20 backdrop-blur-lg border-b border-white/10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-2 rounded-lg">
-                <BookOpen className="w-8 h-8 text-white" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-white">RAG Book Bot</h1>
-                <p className="text-sm text-purple-200">AI-Powered Book Assistant with Query Rewriting</p>
-              </div>
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex">
+      {/* SESSIONS SIDEBAR - NEW */}
+      <div className={`${showSessions ? 'w-80' : 'w-0'} transition-all duration-300 bg-black/30 backdrop-blur-lg border-r border-white/10 overflow-hidden flex flex-col`}>
+        <div className="p-4 border-b border-white/10">
+          <button
+            onClick={startNewChat}
+            className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all"
+          >
+            <Plus className="w-5 h-5" />
+            <span className="font-semibold">New Chat</span>
+          </button>
+        </div>
+
+        {/* Search Bar */}
+        <div className="p-4 border-b border-white/10">
+          <div className="relative">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && searchSessions()}
+              placeholder="Search conversations..."
+              className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-purple-300 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+            />
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-purple-300" />
+            {searchQuery && (
+              <button
+                onClick={() => {
+                  setSearchQuery('');
+                  setSearchResults([]);
+                }}
+                className="absolute right-3 top-2.5 text-purple-300 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+          {isSearching && (
+            <div className="mt-2 text-xs text-purple-300 flex items-center">
+              <Loader className="w-3 h-3 animate-spin mr-2" />
+              Searching...
             </div>
-            <div className="flex items-center space-x-3">
-              <button
-                onClick={() => setShowUpload(!showUpload)}
-                className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all"
-              >
-                <Upload className="w-4 h-4" />
-                <span>Upload Book</span>
-              </button>
-              <button
-                onClick={() => setShowSettings(!showSettings)}
-                className="p-2 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-all"
-              >
-                <Settings className="w-5 h-5" />
-              </button>
+          )}
+        </div>
+
+        {/* Sessions List */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {searchResults.length > 0 ? (
+            // Show search results
+            <>
+              <div className="text-xs text-purple-300 mb-2">
+                {searchResults.length} results for "{searchQuery}"
+              </div>
+              {searchResults.map((result, idx) => (
+                <div
+                  key={idx}
+                  onClick={() => loadSession(result.session_id)}
+                  className="bg-white/5 hover:bg-white/10 rounded-lg p-3 cursor-pointer transition-all border border-white/10 hover:border-purple-400/50"
+                >
+                  <div className="text-sm text-white font-medium mb-1 truncate">
+                    {result.user_query}
+                  </div>
+                  <div className="text-xs text-purple-200 mb-2 line-clamp-2">
+                    {result.assistant_response}
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-purple-300">
+                    <span className="flex items-center">
+                      <Clock className="w-3 h-3 mr-1" />
+                      {formatTimestamp(result.timestamp)}
+                    </span>
+                    <span className="text-green-400">
+                      {(result.relevance_score * 100).toFixed(0)}% match
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </>
+          ) : (
+            // Show sessions list
+            <>
+              {currentSessionId && (
+                <div className="mb-2 text-xs text-purple-300 font-semibold">
+                  CURRENT CHAT
+                </div>
+              )}
+              {sessions.map((session, idx) => {
+                const isCurrent = session.session_id === currentSessionId;
+                return (
+                  <div
+                    key={idx}
+                    onClick={() => loadSession(session.session_id)}
+                    className={`rounded-lg p-3 cursor-pointer transition-all border ${
+                      isCurrent
+                        ? 'bg-purple-600/30 border-purple-400'
+                        : 'bg-white/5 hover:bg-white/10 border-white/10 hover:border-purple-400/50'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-white font-medium mb-1 truncate">
+                          {session.title}
+                        </div>
+                        <div className="text-xs text-purple-200 truncate mb-2">
+                          {session.last_message}
+                        </div>
+                        <div className="flex items-center space-x-3 text-xs text-purple-300">
+                          <span className="flex items-center">
+                            <MessageCircle className="w-3 h-3 mr-1" />
+                            {session.message_count}
+                          </span>
+                          <span className="flex items-center">
+                            <Clock className="w-3 h-3 mr-1" />
+                            {formatTimestamp(session.updated_at)}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => deleteSession(session.session_id, e)}
+                        className="ml-2 p-1 hover:bg-red-500/20 rounded text-red-400 hover:text-red-300 transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* MAIN CONTENT AREA */}
+      <div className="flex-1 flex flex-col">
+        {/* Header */}
+        <header className="bg-black/20 backdrop-blur-lg border-b border-white/10">
+          <div className="px-4 sm:px-6 lg:px-8 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <button
+                  onClick={() => setShowSessions(!showSessions)}
+                  className="p-2 hover:bg-white/10 rounded-lg transition-all text-white"
+                >
+                  <History className="w-5 h-5" />
+                </button>
+                <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-2 rounded-lg">
+                  <BookOpen className="w-8 h-8 text-white" />
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-white">RAG Book Bot</h1>
+                  <p className="text-sm text-purple-200">
+                    {currentSessionId ? 'Conversation with Memory' : 'Start New Conversation'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-3">
+                <button
+                  onClick={() => setShowUpload(!showUpload)}
+                  className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>Upload Book</span>
+                </button>
+                <button
+                  onClick={() => setShowSettings(!showSettings)}
+                  className="p-2 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-all"
+                >
+                  <Settings className="w-5 h-5" />
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          {/* Sidebar */}
-          <div className="lg:col-span-1 space-y-4">
-            {/* Books List */}
-            <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20">
-              <h3 className="text-lg font-semibold text-white mb-3 flex items-center">
-                <Book className="w-5 h-5 mr-2" />
-                Available Books
-              </h3>
-              <div className="space-y-2">
-                <button
-                  onClick={() => setSelectedBook('all')}
-                  className={`w-full text-left px-3 py-2 rounded-lg transition-all ${
-                    selectedBook === 'all'
-                      ? 'bg-purple-600 text-white'
-                      : 'bg-white/5 text-purple-200 hover:bg-white/10'
-                  }`}
-                >
-                  All Books
-                </button>
-                {books.map((book, idx) => (
+        <div className="flex-1 overflow-hidden px-4 sm:px-6 lg:px-8 py-6">
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-full">
+            {/* Sidebar */}
+            <div className="lg:col-span-1 space-y-4 overflow-y-auto">
+              {/* Books List */}
+              <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20">
+                <h3 className="text-lg font-semibold text-white mb-3 flex items-center">
+                  <Book className="w-5 h-5 mr-2" />
+                  Available Books
+                </h3>
+                <div className="space-y-2">
                   <button
-                    key={idx}
-                    onClick={() => setSelectedBook(book.title)}
-                    className={`w-full text-left px-3 py-2 rounded-lg transition-all truncate ${
-                      selectedBook === book.title
+                    onClick={() => setSelectedBook('all')}
+                    className={`w-full text-left px-3 py-2 rounded-lg transition-all ${
+                      selectedBook === 'all'
                         ? 'bg-purple-600 text-white'
                         : 'bg-white/5 text-purple-200 hover:bg-white/10'
                     }`}
-                    title={`${book.title} by ${book.author}`}
                   >
-                    <div className="text-sm font-semibold">{book.title}</div>
-                    <div className="text-xs opacity-75">by {book.author}</div>
-                    {book.total_chunks > 0 && (
-                      <div className="text-xs opacity-60 mt-1">{book.total_chunks} chunks</div>
-                    )}
+                    All Books
                   </button>
-                ))}
+                  {books.map((book, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setSelectedBook(book.title)}
+                      className={`w-full text-left px-3 py-2 rounded-lg transition-all truncate ${
+                        selectedBook === book.title
+                          ? 'bg-purple-600 text-white'
+                          : 'bg-white/5 text-purple-200 hover:bg-white/10'
+                      }`}
+                      title={`${book.title} by ${book.author}`}
+                    >
+                      <div className="text-sm font-semibold">{book.title}</div>
+                      <div className="text-xs opacity-75">by {book.author}</div>
+                      {book.total_chunks > 0 && (
+                        <div className="text-xs opacity-60 mt-1">{book.total_chunks} chunks</div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Quick Stats */}
+              <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20">
+                <h3 className="text-lg font-semibold text-white mb-3">Stats</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between text-purple-200">
+                    <span>Total Books:</span>
+                    <span className="font-semibold text-white">{books.length}</span>
+                  </div>
+                  <div className="flex justify-between text-purple-200">
+                    <span>Sessions:</span>
+                    <span className="font-semibold text-white">{sessions.length}</span>
+                  </div>
+                  <div className="flex justify-between text-purple-200">
+                    <span>Current Queries:</span>
+                    <span className="font-semibold text-white">
+                      {messages.filter(m => m.role === 'user').length}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* Quick Stats */}
-            <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20">
-              <h3 className="text-lg font-semibold text-white mb-3">Stats</h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between text-purple-200">
-                  <span>Total Books:</span>
-                  <span className="font-semibold text-white">{books.length}</span>
-                </div>
-                <div className="flex justify-between text-purple-200">
-                  <span>Queries:</span>
-                  <span className="font-semibold text-white">{messages.filter(m => m.role === 'user').length}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Main Chat Area */}
-          <div className="lg:col-span-3 space-y-4">
-            {/* Settings Panel */}
-            {showSettings && (
-              <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
-                <h3 className="text-lg font-semibold text-white mb-4 flex items-center">
-                  <Settings className="w-5 h-5 mr-2" />
-                  5-Pass Retrieval Settings
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-purple-200 mb-2">
-                      Pass 1: Initial Candidates
-                    </label>
-                    <input
-                      type="range"
-                      min="30"
-                      max="100"
-                      value={pass1K}
-                      onChange={(e) => setPass1K(parseInt(e.target.value))}
-                      className="w-full"
-                    />
-                    <span className="text-white text-sm">{pass1K} chunks</span>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-purple-200 mb-2">
-                      Pass 2: After Reranking
-                    </label>
-                    <input
-                      type="range"
-                      min="10"
-                      max="30"
-                      value={pass2K}
-                      onChange={(e) => setPass2K(parseInt(e.target.value))}
-                      className="w-full"
-                    />
-                    <span className="text-white text-sm">{pass2K} chunks</span>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-purple-200 mb-2">
-                      Max Context Tokens
-                    </label>
-                    <input
-                      type="range"
-                      min="1500"
-                      max="4000"
-                      step="100"
-                      value={maxTokens}
-                      onChange={(e) => setMaxTokens(parseInt(e.target.value))}
-                      className="w-full"
-                    />
-                    <span className="text-white text-sm">{maxTokens} tokens</span>
-                  </div>
-                  <div>
-                    <label className="flex items-center space-x-2 text-purple-200 cursor-pointer">
+            {/* Main Chat Area */}
+            <div className="lg:col-span-3 space-y-4 flex flex-col h-full">
+              {/* Settings Panel */}
+              {showSettings && (
+                <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
+                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center">
+                    <Settings className="w-5 h-5 mr-2" />
+                    5-Pass Retrieval Settings
+                  </h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-purple-200 mb-2">
+                        Pass 1: Initial Candidates
+                      </label>
                       <input
-                        type="checkbox"
-                        checked={pass3Enabled}
-                        onChange={(e) => setPass3Enabled(e.target.checked)}
-                        className="w-4 h-4"
+                        type="range"
+                        min="30"
+                        max="100"
+                        value={pass1K}
+                        onChange={(e) => setPass1K(parseInt(e.target.value))}
+                        className="w-full"
                       />
-                      <span>Enable Multi-Hop (Pass 3)</span>
-                    </label>
+                      <span className="text-white text-sm">{pass1K} chunks</span>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-purple-200 mb-2">
+                        Pass 2: After Reranking
+                      </label>
+                      <input
+                        type="range"
+                        min="10"
+                        max="30"
+                        value={pass2K}
+                        onChange={(e) => setPass2K(parseInt(e.target.value))}
+                        className="w-full"
+                      />
+                      <span className="text-white text-sm">{pass2K} chunks</span>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-purple-200 mb-2">
+                        Max Context Tokens
+                      </label>
+                      <input
+                        type="range"
+                        min="1500"
+                        max="4000"
+                        step="100"
+                        value={maxTokens}
+                        onChange={(e) => setMaxTokens(parseInt(e.target.value))}
+                        className="w-full"
+                      />
+                      <span className="text-white text-sm">{maxTokens} tokens</span>
+                    </div>
+                    <div>
+                      <label className="flex items-center space-x-2 text-purple-200 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={pass3Enabled}
+                          onChange={(e) => setPass3Enabled(e.target.checked)}
+                          className="w-4 h-4"
+                        />
+                        <span>Enable Multi-Hop (Pass 3)</span>
+                      </label>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Upload Panel */}
-            {showUpload && (
-              <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
-                <h3 className="text-lg font-semibold text-white mb-4 flex items-center">
-                  <Upload className="w-5 h-5 mr-2" />
-                  Upload New Book
-                </h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-purple-200 mb-2">
-                      Select PDF File (Format: "Book Title - Author Name.pdf")
-                    </label>
-                    <input
-                      type="file"
-                      accept=".pdf"
-                      onChange={(e) => setUploadFile(e.target.files[0])}
-                      className="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white"
-                    />
-                    {uploadFile && (
-                      <p className="text-xs text-purple-300 mt-2">
-                        📄 Selected: {uploadFile.name}
-                      </p>
-                    )}
-                  </div>
-                  {uploadProgress && (
-                    <div className={`p-4 rounded-lg ${
-                      uploadProgress.status === 'success' ? 'bg-green-500/20 border border-green-500/50' :
-                      uploadProgress.status === 'error' ? 'bg-red-500/20 border border-red-500/50' :
-                      'bg-blue-500/20 border border-blue-500/50'
-                    }`}>
-                      <div className="flex items-center space-x-2 text-white">
-                        {uploadProgress.status === 'uploading' && <Loader className="w-5 h-5 animate-spin" />}
-                        {uploadProgress.status === 'success' && <CheckCircle className="w-5 h-5" />}
-                        {uploadProgress.status === 'error' && <AlertCircle className="w-5 h-5" />}
-                        <span>{uploadProgress.message}</span>
+              {/* Upload Panel */}
+              {showUpload && (
+                <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
+                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center">
+                    <Upload className="w-5 h-5 mr-2" />
+                    Upload New Book
+                  </h3>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-purple-200 mb-2">
+                        Select PDF File (Format: "Book Title - Author Name.pdf")
+                      </label>
+                      <input
+                        type="file"
+                        accept=".pdf"
+                        onChange={(e) => setUploadFile(e.target.files[0])}
+                        className="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white"
+                      />
+                      {uploadFile && (
+                        <p className="text-xs text-purple-300 mt-2">
+                          📄 Selected: {uploadFile.name}
+                        </p>
+                      )}
+                    </div>
+                    {uploadProgress && (
+                      <div className={`p-4 rounded-lg ${
+                        uploadProgress.status === 'success' ? 'bg-green-500/20 border border-green-500/50' :
+                        uploadProgress.status === 'error' ? 'bg-red-500/20 border border-red-500/50' :
+                        'bg-blue-500/20 border border-blue-500/50'
+                      }`}>
+                        <div className="flex items-center space-x-2 text-white">
+                          {uploadProgress.status === 'uploading' && <Loader className="w-5 h-5 animate-spin" />}
+                          {uploadProgress.status === 'success' && <CheckCircle className="w-5 h-5" />}
+                          {uploadProgress.status === 'error' && <AlertCircle className="w-5 h-5" />}
+                          <span>{uploadProgress.message}</span>
+                        </div>
                       </div>
+                    )}
+                    <button
+                      onClick={handleUploadSubmit}
+                      disabled={!uploadFile || uploadProgress?.status === 'uploading'}
+                      className="w-full px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    >
+                      {uploadProgress?.status === 'uploading' ? 'Uploading...' : 'Upload & Ingest'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Chat Messages */}
+              <div className="flex-1 bg-white/10 backdrop-blur-lg rounded-xl border border-white/20 flex flex-col">
+                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                  {messages.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-center">
+                      <Sparkles className="w-16 h-16 text-purple-400 mb-4" />
+                      <h3 className="text-2xl font-semibold text-white mb-2">
+                        {currentSessionId ? 'Continue Your Conversation' : 'Welcome to RAG Book Bot'}
+                      </h3>
+                      <p className="text-purple-200 max-w-md">
+                        {currentSessionId 
+                          ? 'Ask follow-up questions - I remember our conversation!'
+                          : 'Ask questions about your ingested books and get AI-powered answers with memory!'}
+                      </p>
+                      <p className="text-purple-300 text-sm mt-4">
+                        💡 Tip: Your conversations are saved automatically
+                      </p>
+                    </div>
+                  ) : (
+                    messages.map((msg, idx) => (
+                      <MessageBubble key={idx} message={msg} id={`msg-${idx}`} />
+                    ))
+                  )}
+                  {loading && (
+                    <div className="flex items-center space-x-2 text-purple-200">
+                      <Loader className="w-5 h-5 animate-spin" />
+                      <span>Thinking with context from our conversation...</span>
                     </div>
                   )}
-                  <button
-                    onClick={handleUploadSubmit}
-                    disabled={!uploadFile || uploadProgress?.status === 'uploading'}
-                    className="w-full px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                  >
-                    {uploadProgress?.status === 'uploading' ? 'Uploading...' : 'Upload & Ingest'}
-                  </button>
+                  <div ref={messagesEndRef} />
                 </div>
-              </div>
-            )}
 
-            {/* Chat Messages */}
-            <div className="bg-white/10 backdrop-blur-lg rounded-xl border border-white/20 h-[600px] flex flex-col">
-              <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                {messages.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full text-center">
-                    <Sparkles className="w-16 h-16 text-purple-400 mb-4" />
-                    <h3 className="text-2xl font-semibold text-white mb-2">
-                      Welcome to RAG Book Bot
-                    </h3>
-                    <p className="text-purple-200 max-w-md">
-                      Ask questions about your ingested books and get AI-powered answers with query rewriting!
-                    </p>
-                    <p className="text-purple-300 text-sm mt-4">
-                      💡 Tip: Upload PDFs in format "Book Title - Author Name.pdf" for auto-extraction
-                    </p>
+                {/* Input Area */}
+                <div className="p-4 border-t border-white/20">
+                  <div className="flex space-x-3">
+                    <input
+                      type="text"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleQuerySubmit(e)}
+                      placeholder={currentSessionId 
+                        ? "Ask a follow-up question..." 
+                        : "Ask a question about your books..."}
+                      className="flex-1 px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      disabled={loading}
+                    />
+                    <button
+                      onClick={handleQuerySubmit}
+                      disabled={loading || !query.trim()}
+                      className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    >
+                      <Search className="w-5 h-5" />
+                    </button>
                   </div>
-                ) : (
-                  messages.map((msg, idx) => (
-                    <MessageBubble key={idx} message={msg} id={`msg-${idx}`} />
-                  ))
-                )}
-                {loading && (
-                  <div className="flex items-center space-x-2 text-purple-200">
-                    <Loader className="w-5 h-5 animate-spin" />
-                    <span>Generating alternative queries and searching...</span>
-                  </div>
-                )}
-                <div ref={messagesEndRef} />
-              </div>
-
-              {/* Input Area */}
-              <div className="p-4 border-t border-white/20">
-                <div className="flex space-x-3">
-                  <input
-                    type="text"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleQuerySubmit(e)}
-                    placeholder="Ask a question about your books..."
-                    className="flex-1 px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    disabled={loading}
-                  />
-                  <button
-                    onClick={handleQuerySubmit}
-                    disabled={loading || !query.trim()}
-                    className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                  >
-                    <Search className="w-5 h-5" />
-                  </button>
+                  {currentSessionId && (
+                    <div className="mt-2 text-xs text-purple-300 flex items-center">
+                      <MessageCircle className="w-3 h-3 mr-1" />
+                      Session active - I remember our conversation
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -444,7 +724,7 @@ export default function RAGBookBot() {
 function MessageBubble({ message, id }) {
   const [showSources, setShowSources] = useState(false);
   const [showPipeline, setShowPipeline] = useState(false);
-  const [showRewrittenQueries, setShowRewrittenQueries] = useState(false);  // NEW
+  const [showRewrittenQueries, setShowRewrittenQueries] = useState(false);
 
   if (message.role === 'user') {
     return (
@@ -466,7 +746,24 @@ function MessageBubble({ message, id }) {
           </div>
         ) : (
           <>
-            {/* NEW: Rewritten Queries Section - Shows BEFORE answer */}
+            {/* Memory Indicator */}
+            {message.answered_from_history && (
+              <div className="mb-3 bg-blue-500/20 border border-blue-400/50 rounded-lg p-3">
+                <div className="flex items-center space-x-2 text-blue-200">
+                  <History className="w-4 h-4" />
+                  <span className="text-sm font-semibold">
+                    Answered from conversation memory
+                  </span>
+                </div>
+                {message.resolved_query && message.resolved_query !== message.content && (
+                  <div className="mt-2 text-xs text-blue-300">
+                    Resolved query: "{message.resolved_query}"
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Rewritten Queries Section */}
             {message.rewritten_queries && message.rewritten_queries.length > 0 && (
               <div className="mb-3">
                 <button
@@ -495,9 +792,6 @@ function MessageBubble({ message, id }) {
                           </p>
                         </div>
                       ))}
-                    </div>
-                    <div className="mt-3 text-xs text-purple-300 bg-purple-500/10 rounded p-2 border border-purple-400/30">
-                      💡 These alternative phrasings help retrieve diverse relevant chunks from different perspectives
                     </div>
                   </div>
                 )}
