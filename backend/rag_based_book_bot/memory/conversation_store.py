@@ -1,15 +1,21 @@
 """
-Conversation storage using Pinecone vector database
+Enhanced Conversation Storage with Full Session Management
 
-Stores conversation turns as vectors for semantic search and retrieval.
-Each turn is embedded and stored with metadata for context resolution.
+Features:
+- Persistent storage in Pinecone
+- Session listing and metadata
+- Cross-session search
+- Robust error handling
+- Automatic retry logic
 """
 
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 from pinecone import Pinecone
 import os
 import time
 from dotenv import load_dotenv, find_dotenv
+from functools import wraps
+import logging
 
 from .embedding_utils import (
     embed_conversation_turn,
@@ -19,25 +25,57 @@ from .embedding_utils import (
 
 load_dotenv(find_dotenv(), override=True)
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Pinecone configuration
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "coding-books")
 NAMESPACE_CONVERSATIONS = "conversations"
+NAMESPACE_SESSION_META = "session_metadata"
 
-# Global Pinecone instances (lazy loading)
+# Global instances (lazy loading)
 _pc = None
 _index = None
 
 
+def retry_on_failure(max_retries=3, delay=1.0):
+    """Decorator for retry logic on Pinecone operations"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        logger.error(f"{func.__name__} failed after {max_retries} attempts: {e}")
+                        raise
+                    logger.warning(f"{func.__name__} attempt {attempt + 1} failed: {e}. Retrying...")
+                    time.sleep(delay * (attempt + 1))
+            return None
+        return wrapper
+    return decorator
+
+
 def get_pinecone_index():
-    """Get Pinecone index (lazy initialization)"""
+    """Get Pinecone index (lazy initialization with error handling)"""
     global _pc, _index
     if _index is None:
-        _pc = Pinecone(api_key=PINECONE_API_KEY)
-        _index = _pc.Index(INDEX_NAME)
+        try:
+            if not PINECONE_API_KEY:
+                raise ValueError("PINECONE_API_KEY not found in environment")
+            _pc = Pinecone(api_key=PINECONE_API_KEY)
+            _index = _pc.Index(INDEX_NAME)
+            logger.info(f"✅ Connected to Pinecone index: {INDEX_NAME}")
+        except Exception as e:
+            logger.error(f"❌ Failed to connect to Pinecone: {e}")
+            raise
     return _index
 
 
+@retry_on_failure(max_retries=3)
 def save_conversation_turn(
     session_id: str,
     turn_number: int,
@@ -50,7 +88,7 @@ def save_conversation_turn(
     user_id: Optional[str] = None
 ) -> Dict:
     """
-    Save a conversation turn to Pinecone
+    Save a conversation turn to Pinecone with retry logic
     
     Args:
         session_id: Unique session identifier
@@ -59,7 +97,7 @@ def save_conversation_turn(
         assistant_response: Assistant's answer
         resolved_query: Standalone query after context resolution
         needs_retrieval: Whether retrieval was needed
-        referenced_turn: Which previous turn was referenced (if any)
+        referenced_turn: Which previous turn was referenced
         sources_used: List of chunk IDs used as sources
         user_id: Optional user identifier
     
@@ -69,40 +107,33 @@ def save_conversation_turn(
     try:
         index = get_pinecone_index()
         
-        # Create embedding for Q+A pair
+        # Create embedding
         embedding = embed_conversation_turn(user_query, assistant_response)
         
-        # Create vector ID
+        # Vector ID
         vector_id = f"{session_id}_turn{turn_number}"
         
-        # Build metadata
+        # Build metadata (all strings, ints, or floats for Pinecone)
         metadata = {
-            # Session tracking
             "session_id": session_id,
-            "turn_number": turn_number,
-            "timestamp": time.time(),
-            
-            # Conversation content
-            "user_query": user_query,
-            "assistant_response": assistant_response[:1000],  # Limit to 1000 chars for metadata
-            
-            # Context resolution
-            "resolved_query": resolved_query or user_query,
-            "needs_retrieval": needs_retrieval,
-            
-            # For search and filtering
+            "turn_number": int(turn_number),
+            "timestamp": float(time.time()),
+            "user_query": user_query[:1000],  # Limit length
+            "assistant_response": assistant_response[:1000],
+            "resolved_query": (resolved_query or user_query)[:1000],
+            "needs_retrieval": str(needs_retrieval),  # Convert bool to string
             "combined_text": format_turn_for_embedding(user_query, assistant_response, max_response_length=500)
         }
         
         # Optional fields
         if referenced_turn is not None:
-            metadata["referenced_turn"] = referenced_turn
+            metadata["referenced_turn"] = int(referenced_turn)
         
         if sources_used:
-            metadata["sources_used"] = ",".join(sources_used[:5])  # Limit to 5 sources
+            metadata["sources_used"] = ",".join(sources_used[:5])
         
         if user_id:
-            metadata["user_id"] = user_id
+            metadata["user_id"] = str(user_id)
         
         # Upsert to Pinecone
         index.upsert(
@@ -114,7 +145,10 @@ def save_conversation_turn(
             namespace=NAMESPACE_CONVERSATIONS
         )
         
-        print(f"✅ Saved conversation turn: {vector_id}")
+        # Update session metadata
+        update_session_metadata(session_id, user_query, turn_number, user_id)
+        
+        logger.info(f"✅ Saved: {vector_id}")
         
         return {
             "success": True,
@@ -124,20 +158,21 @@ def save_conversation_turn(
         }
         
     except Exception as e:
-        print(f"❌ Failed to save conversation turn: {e}")
+        logger.error(f"❌ Failed to save turn: {e}")
         return {
             "success": False,
             "error": str(e)
         }
 
 
+@retry_on_failure(max_retries=3)
 def load_conversation(session_id: str, max_turns: int = 10) -> List[Dict]:
     """
     Load conversation history for a session
     
     Args:
         session_id: Session identifier
-        max_turns: Maximum number of turns to load
+        max_turns: Maximum turns to load
     
     Returns:
         List of conversation turns, ordered by turn_number
@@ -145,45 +180,52 @@ def load_conversation(session_id: str, max_turns: int = 10) -> List[Dict]:
     try:
         index = get_pinecone_index()
         
-        # Query Pinecone with a dummy vector to get all matches for session
-        # (We use metadata filtering, so the query vector doesn't matter)
+        # Query with session filter
         dummy_vector = [0.0] * 384
         
         results = index.query(
             vector=dummy_vector,
             filter={"session_id": session_id},
-            top_k=max_turns,
+            top_k=max_turns * 2,  # Fetch more to ensure we get all
             namespace=NAMESPACE_CONVERSATIONS,
             include_metadata=True
         )
         
-        # Extract turns from results
+        # Extract turns
         turns = []
         for match in results.get("matches", []):
             metadata = match.get("metadata", {})
+            
+            # Convert bool string back to bool
+            needs_retrieval = metadata.get("needs_retrieval", "True") == "True"
+            
             turns.append({
-                "turn_number": metadata.get("turn_number", 0),
+                "turn_number": int(metadata.get("turn_number", 0)),
                 "user_query": metadata.get("user_query", ""),
                 "assistant_response": metadata.get("assistant_response", ""),
                 "resolved_query": metadata.get("resolved_query"),
-                "needs_retrieval": metadata.get("needs_retrieval", True),
+                "needs_retrieval": needs_retrieval,
                 "referenced_turn": metadata.get("referenced_turn"),
-                "timestamp": metadata.get("timestamp", 0),
+                "timestamp": float(metadata.get("timestamp", 0)),
                 "sources_used": metadata.get("sources_used", "").split(",") if metadata.get("sources_used") else []
             })
         
         # Sort by turn number
         turns.sort(key=lambda x: x["turn_number"])
         
-        print(f"📥 Loaded {len(turns)} turns for session {session_id}")
+        # Limit to max_turns
+        turns = turns[:max_turns]
+        
+        logger.info(f"📥 Loaded {len(turns)} turns for session {session_id}")
         
         return turns
         
     except Exception as e:
-        print(f"❌ Failed to load conversation: {e}")
+        logger.error(f"❌ Failed to load conversation: {e}")
         return []
 
 
+@retry_on_failure(max_retries=3)
 def search_conversation_context(
     session_id: str,
     query: str,
@@ -192,11 +234,9 @@ def search_conversation_context(
     """
     Semantic search over conversation history
     
-    Finds most relevant past turns for a given query using vector similarity.
-    
     Args:
         session_id: Session to search within
-        query: Search query (e.g., "What did you say about advantages?")
+        query: Search query
         top_k: Number of relevant turns to return
     
     Returns:
@@ -205,10 +245,10 @@ def search_conversation_context(
     try:
         index = get_pinecone_index()
         
-        # Embed the search query
+        # Embed query
         query_embedding = embed_query_for_search(query)
         
-        # Search in Pinecone with session filter
+        # Search with session filter
         results = index.query(
             vector=query_embedding,
             filter={"session_id": session_id},
@@ -222,40 +262,199 @@ def search_conversation_context(
         for match in results.get("matches", []):
             metadata = match.get("metadata", {})
             relevant_turns.append({
-                "turn_number": metadata.get("turn_number", 0),
+                "turn_number": int(metadata.get("turn_number", 0)),
                 "user_query": metadata.get("user_query", ""),
                 "assistant_response": metadata.get("assistant_response", ""),
                 "resolved_query": metadata.get("resolved_query"),
-                "timestamp": metadata.get("timestamp", 0),
-                "relevance_score": match.get("score", 0.0),
+                "timestamp": float(metadata.get("timestamp", 0)),
+                "relevance_score": float(match.get("score", 0.0)),
                 "sources_used": metadata.get("sources_used", "").split(",") if metadata.get("sources_used") else []
             })
         
-        print(f"🔍 Found {len(relevant_turns)} relevant turns for query: '{query[:50]}...'")
+        logger.info(f"🔍 Found {len(relevant_turns)} relevant turns")
         
         return relevant_turns
         
     except Exception as e:
-        print(f"❌ Failed to search conversation context: {e}")
+        logger.error(f"❌ Search failed: {e}")
         return []
 
 
-def get_session_turns(session_id: str) -> List[Dict]:
+@retry_on_failure(max_retries=3)
+def list_all_sessions(user_id: Optional[str] = None, limit: int = 50) -> List[Dict]:
     """
-    Get all turns for a session (alias for load_conversation with no limit)
+    List all conversation sessions
     
     Args:
-        session_id: Session identifier
+        user_id: Optional filter by user
+        limit: Maximum sessions to return
     
     Returns:
-        All conversation turns for the session
+        List of session summaries
     """
+    try:
+        index = get_pinecone_index()
+        
+        # Query session metadata namespace
+        dummy_vector = [1.0] * 384
+        
+        filter_dict = {}
+        if user_id:
+            filter_dict["user_id"] = str(user_id)
+        
+        results = index.query(
+            vector=dummy_vector,
+            filter=filter_dict if filter_dict else None,
+            top_k=limit,
+            namespace=NAMESPACE_SESSION_META,
+            include_metadata=True
+        )
+        
+        sessions = []
+        for match in results.get("matches", []):
+            metadata = match.get("metadata", {})
+            
+            # Skip initialization vectors
+            if metadata.get("session_id") == "__init__":
+                continue
+            
+            sessions.append({
+                "session_id": metadata.get("session_id", ""),
+                "title": metadata.get("title", "Untitled"),
+                "last_message": metadata.get("last_message", ""),
+                "message_count": int(metadata.get("message_count", 0)),
+                "created_at": float(metadata.get("created_at", 0)),
+                "updated_at": float(metadata.get("updated_at", 0))
+            })
+        
+        # Sort by updated_at (most recent first)
+        sessions.sort(key=lambda x: x["updated_at"], reverse=True)
+        
+        logger.info(f"📋 Listed {len(sessions)} sessions")
+        
+        return sessions
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to list sessions: {e}")
+        return []
+
+
+@retry_on_failure(max_retries=3)
+def search_across_sessions(
+    query: str,
+    user_id: Optional[str] = None,
+    top_k: int = 10
+) -> List[Dict]:
+    """
+    Search across all conversation sessions
+    
+    Args:
+        query: Search query
+        user_id: Optional filter by user
+        top_k: Number of results to return
+    
+    Returns:
+        List of matching conversation turns from any session
+    """
+    try:
+        index = get_pinecone_index()
+        
+        # Embed query
+        query_embedding = embed_query_for_search(query)
+        
+        filter_dict = {}
+        if user_id:
+            filter_dict["user_id"] = str(user_id)
+        
+        # Search across all conversations
+        results = index.query(
+            vector=query_embedding,
+            filter=filter_dict if filter_dict else None,
+            top_k=top_k,
+            namespace=NAMESPACE_CONVERSATIONS,
+            include_metadata=True
+        )
+        
+        # Extract matches
+        matches = []
+        for match in results.get("matches", []):
+            metadata = match.get("metadata", {})
+            matches.append({
+                "session_id": metadata.get("session_id", ""),
+                "turn_number": int(metadata.get("turn_number", 0)),
+                "user_query": metadata.get("user_query", ""),
+                "assistant_response": metadata.get("assistant_response", ""),
+                "timestamp": float(metadata.get("timestamp", 0)),
+                "relevance_score": float(match.get("score", 0.0))
+            })
+        
+        logger.info(f"🔍 Cross-session search: {len(matches)} matches")
+        
+        return matches
+        
+    except Exception as e:
+        logger.error(f"❌ Cross-session search failed: {e}")
+        return []
+
+
+@retry_on_failure(max_retries=3)
+def update_session_metadata(
+    session_id: str,
+    last_message: str,
+    turn_number: int,
+    user_id: Optional[str] = None
+):
+    """Update session metadata for listing"""
+    try:
+        index = get_pinecone_index()
+        
+        # Generate title from first message
+        title = last_message[:50]
+        if len(last_message) > 50:
+            title += "..."
+        
+        current_time = time.time()
+        
+        metadata = {
+            "session_id": session_id,
+            "title": title,
+            "last_message": last_message[:200],
+            "message_count": int(turn_number),
+            "updated_at": float(current_time)
+        }
+        
+        # Add created_at only for first turn
+        if turn_number == 1:
+            metadata["created_at"] = float(current_time)
+        
+        if user_id:
+            metadata["user_id"] = str(user_id)
+        
+        # Upsert metadata
+        index.upsert(
+            vectors=[{
+                "id": f"session_{session_id}",
+                "values": [1.0] * 384,  # Dummy vector
+                "metadata": metadata
+            }],
+            namespace=NAMESPACE_SESSION_META
+        )
+        
+        logger.info(f"✅ Updated metadata for session {session_id}")
+        
+    except Exception as e:
+        logger.error(f"⚠️ Failed to update metadata: {e}")
+
+
+def get_session_turns(session_id: str) -> List[Dict]:
+    """Get all turns for a session (alias)"""
     return load_conversation(session_id, max_turns=100)
 
 
+@retry_on_failure(max_retries=3)
 def delete_session(session_id: str) -> Dict:
     """
-    Delete all conversation turns for a session
+    Delete all conversation turns and metadata for a session
     
     Args:
         session_id: Session to delete
@@ -266,26 +465,34 @@ def delete_session(session_id: str) -> Dict:
     try:
         index = get_pinecone_index()
         
-        # Get all vector IDs for this session
+        # Delete conversation turns
         dummy_vector = [0.0] * 384
         results = index.query(
             vector=dummy_vector,
             filter={"session_id": session_id},
-            top_k=100,
+            top_k=1000,
             namespace=NAMESPACE_CONVERSATIONS,
             include_metadata=True
         )
         
-        # Extract IDs
         vector_ids = [match["id"] for match in results.get("matches", [])]
         
         if vector_ids:
-            # Delete vectors
             index.delete(
                 ids=vector_ids,
                 namespace=NAMESPACE_CONVERSATIONS
             )
-            print(f"🗑️ Deleted {len(vector_ids)} turns for session {session_id}")
+        
+        # Delete session metadata
+        try:
+            index.delete(
+                ids=[f"session_{session_id}"],
+                namespace=NAMESPACE_SESSION_META
+            )
+        except:
+            pass  # Metadata might not exist
+        
+        logger.info(f"🗑️ Deleted session {session_id}: {len(vector_ids)} turns")
         
         return {
             "success": True,
@@ -294,7 +501,7 @@ def delete_session(session_id: str) -> Dict:
         }
         
     except Exception as e:
-        print(f"❌ Failed to delete session: {e}")
+        logger.error(f"❌ Delete failed: {e}")
         return {
             "success": False,
             "error": str(e)
@@ -309,7 +516,7 @@ def get_conversation_stats(session_id: str) -> Dict:
         session_id: Session identifier
     
     Returns:
-        Stats including total turns, first/last interaction time, etc.
+        Stats including total turns, timestamps, etc.
     """
     turns = get_session_turns(session_id)
     

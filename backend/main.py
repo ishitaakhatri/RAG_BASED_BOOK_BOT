@@ -1,23 +1,24 @@
 """
-FastAPI Backend - WITH CONVERSATION MEMORY (Pinecone Vector DB)
+FastAPI Backend - Production-Ready RAG with Conversation Memory
 
 Features:
-- Graph-based pipeline execution
-- Conversation memory stored in Pinecone
-- Context resolution for follow-up questions
-- Can answer from conversation history without retrieval
-- Session management
+- Persistent session storage in Pinecone
+- Smart context resolution with LLM
+- Full conversation history management
+- Robust error handling
+- Code/Text chunk separation
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict
 import os
 import tempfile
 import time
 import hashlib
 from uuid import uuid4
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -30,17 +31,17 @@ from rag_based_book_bot.agents.states import AgentState, ConversationTurn
 from rag_based_book_bot.agents.graph import build_query_graph
 from rag_based_book_bot.agents.nodes import get_pinecone_index, get_embedding_model
 
-# NEW: Conversation memory imports
 from rag_based_book_bot.memory import (
     save_conversation_turn,
     load_conversation,
     get_conversation_stats,
-    delete_session
+    delete_session,
+    list_all_sessions,
+    search_across_sessions
 )
 
-app = FastAPI(title="RAG Book Bot API", version="3.0.0")
+app = FastAPI(title="RAG Book Bot API", version="4.0.0")
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:5173"],
@@ -68,8 +69,8 @@ class ChunkDetail(BaseModel):
 
 class QueryRequest(BaseModel):
     query: str
-    session_id: Optional[str] = None  # For conversation continuity
-    user_id: Optional[str] = None  # Optional user tracking
+    session_id: Optional[str] = None
+    user_id: Optional[str] = None
     book_filter: Optional[str] = None
     chapter_filter: Optional[str] = None
     top_k: int = 5
@@ -77,6 +78,7 @@ class QueryRequest(BaseModel):
     pass2_k: int = 15
     pass3_enabled: bool = True
     max_tokens: int = 2500
+    force_retrieval: bool = False  # Override memory detection
 
 
 class PipelineStage(BaseModel):
@@ -92,10 +94,11 @@ class QueryResponse(BaseModel):
     stats: dict
     pipeline_stages: List[PipelineStage]
     rewritten_queries: List[str] = []
-    session_id: str  # Return session_id to frontend
-    conversation_turn: int  # Which turn is this
-    resolved_query: Optional[str] = None  # The standalone query used
-    answered_from_history: bool = False  # Whether answered from memory
+    session_id: str
+    conversation_turn: int
+    resolved_query: Optional[str] = None
+    answered_from_history: bool = False
+    needs_context: bool = False  # NEW: indicates if query needed context
 
 
 class IngestResponse(BaseModel):
@@ -108,6 +111,8 @@ class BookInfo(BaseModel):
     title: str
     author: str
     total_chunks: int
+    code_chunks: int = 0
+    text_chunks: int = 0
     indexed_at: Optional[float] = None
 
 
@@ -119,6 +124,20 @@ class ConversationHistoryResponse(BaseModel):
     session_id: str
     total_turns: int
     turns: List[dict]
+
+
+class SessionSummary(BaseModel):
+    session_id: str
+    title: str
+    last_message: str
+    message_count: int
+    created_at: float
+    updated_at: float
+
+
+class SessionListResponse(BaseModel):
+    sessions: List[SessionSummary]
+    total: int
 
 
 # ============================================================================
@@ -141,7 +160,7 @@ def parse_book_filename(filename: str) -> tuple[str, str]:
     return title, author
 
 
-def store_book_metadata(book_title: str, author: str, total_chunks: int):
+def store_book_metadata(book_title: str, author: str, total_chunks: int, code_chunks: int = 0):
     """Store book metadata in separate namespace"""
     try:
         index = get_pinecone_index()
@@ -156,6 +175,8 @@ def store_book_metadata(book_title: str, author: str, total_chunks: int):
                     "book_title": book_title,
                     "author": author,
                     "total_chunks": total_chunks,
+                    "code_chunks": code_chunks,
+                    "text_chunks": total_chunks - code_chunks,
                     "indexed_at": time.time()
                 }
             }],
@@ -183,11 +204,13 @@ def get_available_books() -> List[BookInfo]:
             books_info = []
             for match in results.get("matches", []):
                 metadata = match.get("metadata", {})
-                if metadata.get("book_title"):
+                if metadata.get("book_title") and metadata.get("book_title") != "__init__":
                     books_info.append(BookInfo(
                         title=metadata.get("book_title", "Unknown"),
                         author=metadata.get("author", "Unknown"),
                         total_chunks=metadata.get("total_chunks", 0),
+                        code_chunks=metadata.get("code_chunks", 0),
+                        text_chunks=metadata.get("text_chunks", 0),
                         indexed_at=metadata.get("indexed_at")
                     ))
             
@@ -197,32 +220,7 @@ def get_available_books() -> List[BookInfo]:
         except Exception as e:
             print(f"Metadata namespace error: {e}")
         
-        # Fallback
-        namespace = os.getenv("PINECONE_NAMESPACE", "books_rag")
-        books_set = {}
-        
-        import random
-        for _ in range(10):
-            random_vector = [random.uniform(-1, 1) for _ in range(384)]
-            results = index.query(
-                vector=random_vector,
-                top_k=1000,
-                namespace=namespace,
-                include_metadata=True
-            )
-            
-            for match in results.get("matches", []):
-                metadata = match.get("metadata", {})
-                book_title = metadata.get("book_title")
-                if book_title and book_title not in books_set:
-                    books_set[book_title] = BookInfo(
-                        title=book_title,
-                        author=metadata.get("author", "Unknown"),
-                        total_chunks=0,
-                        indexed_at=None
-                    )
-        
-        return list(books_set.values())
+        return []
         
     except Exception as e:
         print(f"❌ Error fetching books: {e}")
@@ -260,14 +258,11 @@ def extract_pipeline_stages(state: AgentState, executed_nodes: List[str]) -> Lis
     for snapshot in state.pipeline_snapshots:
         stage_name = snapshot.get("stage", "")
         
-        # Skip if not in executed nodes
         if stage_name not in executed_nodes:
             continue
         
-        # Get user-friendly name
         display_name = stage_mapping.get(stage_name, stage_name)
         
-        # Add context to display name
         if snapshot.get("skipped"):
             display_name += " (SKIPPED)"
         elif snapshot.get("answered_from_memory"):
@@ -277,7 +272,6 @@ def extract_pipeline_stages(state: AgentState, executed_nodes: List[str]) -> Lis
         elif snapshot.get("removed_duplicates"):
             display_name += f" (-{snapshot['removed_duplicates']} duplicates)"
         
-        # Format chunks
         chunks = []
         for chunk in snapshot.get("chunks", [])[:10]:
             chunks.append(format_chunk_detail(chunk, stage_name))
@@ -307,6 +301,14 @@ def convert_pinecone_to_conversation_turns(pinecone_turns: List[dict]) -> List[C
     ]
 
 
+def generate_session_title(first_query: str) -> str:
+    """Generate a title for the session from first query"""
+    title = first_query[:50]
+    if len(first_query) > 50:
+        title += "..."
+    return title
+
+
 # ============================================================================
 # API ENDPOINTS
 # ============================================================================
@@ -316,13 +318,14 @@ async def root():
     """Health check"""
     return {
         "status": "online",
-        "message": "RAG Book Bot API v3.0 - Conversation Memory (Pinecone)",
+        "message": "RAG Book Bot API v4.0 - Production Ready",
         "features": [
             "graph_execution",
-            "conversation_memory",
-            "context_resolution",
-            "semantic_conversation_search",
-            "answer_from_history"
+            "persistent_conversation_memory",
+            "smart_context_detection",
+            "full_session_management",
+            "code_text_separation",
+            "robust_error_handling"
         ]
     }
 
@@ -337,14 +340,14 @@ async def list_books():
 @app.post("/query", response_model=QueryResponse)
 async def process_query(request: QueryRequest):
     """
-    Process query with CONVERSATION MEMORY (Pinecone)
+    Process query with smart conversation memory
     
     Features:
-    - Loads conversation history from Pinecone vectors
-    - Context resolution via LLM (resolves "it", "this", "that")
+    - Loads conversation history from Pinecone
+    - LLM determines if context is needed
     - Can answer from history without retrieval
-    - Saves conversation turn to Pinecone after response
-    - Semantic search over past conversations
+    - Saves conversation turn after response
+    - Robust error handling
     """
     try:
         print(f"\n{'='*80}")
@@ -353,9 +356,9 @@ async def process_query(request: QueryRequest):
         # Get or create session
         session_id = request.session_id or str(uuid4())
         
-        # Load conversation history from Pinecone
+        # Load conversation history
         print(f"[SESSION] {session_id}")
-        print(f"[LOADING] Conversation history from Pinecone...")
+        print(f"[LOADING] Conversation history...")
         
         pinecone_turns = load_conversation(session_id, max_turns=10)
         conversation_history = convert_pinecone_to_conversation_turns(pinecone_turns)
@@ -363,7 +366,7 @@ async def process_query(request: QueryRequest):
         print(f"[HISTORY] Loaded {len(conversation_history)} previous turns")
         print(f"{'='*80}")
         
-        # Initialize state with conversation history
+        # Initialize state
         state = AgentState(
             user_query=request.query,
             conversation_history=conversation_history,
@@ -379,7 +382,7 @@ async def process_query(request: QueryRequest):
         )
         
         # Build and execute graph
-        print("\n[GRAPH] Building query pipeline with conversation memory...")
+        print("\n[GRAPH] Building query pipeline...")
         query_graph = build_query_graph()
         
         print("[GRAPH] Executing pipeline...")
@@ -413,7 +416,7 @@ async def process_query(request: QueryRequest):
         # Calculate turn number
         turn_number = len(conversation_history) + 1
         
-        # Save conversation turn to Pinecone
+        # Save conversation turn
         print(f"\n[SAVING] Conversation turn to Pinecone...")
         save_result = save_conversation_turn(
             session_id=session_id,
@@ -428,9 +431,9 @@ async def process_query(request: QueryRequest):
         )
         
         if save_result.get('success'):
-            print(f"✅ Saved turn #{turn_number} to Pinecone: {save_result.get('vector_id')}")
+            print(f"✅ Saved turn #{turn_number}: {save_result.get('vector_id')}")
         else:
-            print(f"⚠️ Failed to save conversation: {save_result.get('error')}")
+            print(f"⚠️ Failed to save: {save_result.get('error')}")
         
         # Extract pipeline stages
         pipeline_stages = extract_pipeline_stages(final_state, result.executed_nodes)
@@ -470,7 +473,7 @@ async def process_query(request: QueryRequest):
         if final_state.referenced_turn:
             print(f"[CONTEXT] Referenced turn #{final_state.referenced_turn}")
         if not final_state.needs_retrieval:
-            print(f"[MEMORY] Answered from conversation history (no retrieval)")
+            print(f"[MEMORY] Answered from conversation history")
         print(f"{'='*80}\n")
         
         return QueryResponse(
@@ -483,7 +486,8 @@ async def process_query(request: QueryRequest):
             session_id=session_id,
             conversation_turn=turn_number,
             resolved_query=final_state.resolved_query,
-            answered_from_history=not final_state.needs_retrieval
+            answered_from_history=not final_state.needs_retrieval,
+            needs_context=bool(final_state.referenced_turn)
         )
         
     except HTTPException:
@@ -507,15 +511,13 @@ async def ingest_book(
         raise HTTPException(status_code=400, detail="Only PDF files supported")
     
     try:
-        # Auto-extract from filename if not provided
+        # Auto-extract from filename
         if not book_title or not author:
             extracted_title, extracted_author = parse_book_filename(file.filename)
             final_book_title = book_title or extracted_title
             final_author = author or extracted_author
             
-            print(f"📖 Auto-extracted from filename:")
-            print(f"   Title: {final_book_title}")
-            print(f"   Author: {final_author}")
+            print(f"📖 Auto-extracted: '{final_book_title}' by {final_author}")
         else:
             final_book_title = book_title
             final_author = author
@@ -542,10 +544,12 @@ async def ingest_book(
         )
         
         # Store metadata
+        code_chunks = result.get('code_chunks', 0)
         store_book_metadata(
             book_title=final_book_title,
             author=final_author,
-            total_chunks=result.get('total_chunks', 0)
+            total_chunks=result.get('total_chunks', 0),
+            code_chunks=code_chunks
         )
         
         # Cleanup
@@ -561,6 +565,22 @@ async def ingest_book(
                 pass
         
         return IngestResponse(success=False, error=str(e))
+
+
+@app.get("/sessions", response_model=SessionListResponse)
+async def list_sessions(
+    user_id: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=100)
+):
+    """List all conversation sessions"""
+    try:
+        sessions = list_all_sessions(user_id=user_id, limit=limit)
+        return SessionListResponse(
+            sessions=sessions,
+            total=len(sessions)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list sessions: {str(e)}")
 
 
 @app.get("/conversation/{session_id}", response_model=ConversationHistoryResponse)
@@ -619,6 +639,28 @@ async def delete_conversation(session_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to delete conversation: {str(e)}")
 
 
+@app.get("/search/sessions")
+async def search_sessions(
+    query: str = Query(..., min_length=1),
+    user_id: Optional[str] = Query(None),
+    limit: int = Query(10, ge=1, le=50)
+):
+    """Search across all conversation sessions"""
+    try:
+        results = search_across_sessions(
+            query=query,
+            user_id=user_id,
+            top_k=limit
+        )
+        return {
+            "query": query,
+            "results": results,
+            "total": len(results)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
 @app.get("/health")
 async def health_check():
     """Detailed health check"""
@@ -628,7 +670,7 @@ async def health_check():
         
         return {
             "status": "healthy",
-            "version": "3.0.0",
+            "version": "4.0.0",
             "execution_mode": "graph-based",
             "memory_backend": "pinecone",
             "pinecone": "connected",
