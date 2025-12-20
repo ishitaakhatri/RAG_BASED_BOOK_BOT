@@ -288,7 +288,7 @@ export default function RAGBookBot() {
 
   // Show Chat View
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex">
+    <div className="h-screen overflow-hidden bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex">
       {/* SESSIONS SIDEBAR */}
       <div
         className={`${
@@ -422,7 +422,7 @@ export default function RAGBookBot() {
       </div>
 
       {/* MAIN CONTENT AREA */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col h-full overflow-hidden">
         {/* Header */}
         <header className="bg-black/20 backdrop-blur-lg border-b border-white/10">
           <div className="px-4 sm:px-6 lg:px-8 py-4">
@@ -612,7 +612,7 @@ export default function RAGBookBot() {
               )}
 
               {/* Chat Messages */}
-              <div className="flex-1 bg-white/10 backdrop-blur-lg rounded-xl border border-white/20 flex flex-col">
+              <div className="flex-1 bg-white/10 backdrop-blur-lg rounded-xl border border-white/20 flex flex-col overflow-hidden">
                 <div className="flex-1 overflow-y-auto p-6 space-y-4">
                   {messages.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-center">
@@ -1061,8 +1061,8 @@ function EnhancedPipelineDisplay({ stages, stats }) {
                         {chunk.chapter} • {chunk.relevance?.toFixed(0)}%
                         relevant
                       </div>
-                      <div className="text-gray-300 text-[10px] bg-black/30 p-1 rounded">
-                        {chunk.content_preview?.substring(0, 100)}...
+                      <div className="text-gray-300 text-[11px] bg-black/30 p-2 rounded whitespace-pre-wrap break-words leading-relaxed">
+                        {chunk.content_preview}
                       </div>
                     </div>
                   ))}
