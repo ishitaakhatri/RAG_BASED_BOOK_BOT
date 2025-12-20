@@ -7,8 +7,6 @@ import tiktoken
 from typing import List, Dict, Set, Tuple
 import re
 from difflib import SequenceMatcher
-from openai import OpenAI
-import os
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -28,23 +26,16 @@ class EnhancedContextCompressor:
         target_tokens: int = 2000,
         max_tokens: int = 4000,
         encoding_name: str = "cl100k_base",
-        semantic_threshold: float = 0.92  # Cosine similarity threshold
+        semantic_threshold: float = 0.92
     ):
-        """
-        Args:
-            target_tokens: Target context size
-            max_tokens: Maximum context size
-            encoding_name: Tokenizer to use
-            semantic_threshold: Cosine similarity above which chunks are duplicates
-        """
         self.target_tokens = target_tokens
         self.max_tokens = max_tokens
         self.tokenizer = tiktoken.get_encoding(encoding_name)
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        
+
         # Semantic deduplication
         self.semantic_threshold = semantic_threshold
         self.embedding_model = None  # Lazy load
+
     
     def _get_embedding_model(self):
         """Lazy load embedding model (only when needed)"""

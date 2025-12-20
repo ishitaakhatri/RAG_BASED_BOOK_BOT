@@ -13,6 +13,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 import os
 
+from langchain_ollama import ChatOllama
+
 
 class MultiHopExpander:
     """
@@ -27,10 +29,9 @@ class MultiHopExpander:
         Args:
             api_key: Google API key (defaults to env var)
         """
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=api_key or os.getenv("GOOGLE_API_KEY"),
-            temperature=0.3
+        self.llm = ChatOllama(
+            model="llama3.2:3b",
+            temperature=0.7
         )
     
     def extract_concepts(

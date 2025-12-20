@@ -19,7 +19,7 @@ from langchain_core.output_parsers import StrOutputParser
 @dataclass
 class SummaryConfig:
     """Configuration for summarizer"""
-    model: str = "ollama/llama3.2:3b"  # Default to Ollama
+    model: str = "llama3.2:3b"  # Default to Ollama
     temperature: float = 0.3
     min_section_tokens: int = 400  # Only summarize sections with this many tokens
     max_summary_tokens: int = 200  # Target summary length
@@ -372,7 +372,7 @@ Create a concise summary (2-4 sentences, 50-100 words):""")
 
 # Convenience function
 def create_summarizer(
-    model: str = "ollama/llama3.2:3b",
+    model: str = "llama3.2:3b",
     temperature: float = 0.3,
     min_section_tokens: int = 400
 ) -> Summarizer:
