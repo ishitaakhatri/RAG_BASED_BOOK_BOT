@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from rag_based_book_bot.document_ingestion.progress_tracker import (
     get_progress_tracker, ProgressTracker
 )
+from rag_based_book_bot.document_ingestion.ingestion.proposition_chunker import (
+    create_proposition_chunker
+)
+
 # PDF processing fallback
 import pdfplumber
 
@@ -65,6 +69,7 @@ class SemanticBookIngestor:
             max_chunk_tokens=self.config.max_chunk_size,
             overlap=100
         )
+        self.proposition_chunker = create_proposition_chunker()
         self.semantic_chunker = create_semantic_chunker(
             similarity_threshold=self.config.similarity_threshold,
             min_chunk_size=self.config.min_chunk_size,
@@ -139,19 +144,22 @@ class SemanticBookIngestor:
             method = "semantic_fallback"
 
             # Try GROBID first if available
+            # Try GROBID first if available
             if self.grobid_available:
                 try:
                     grobid_data = self._process_pdf_with_grobid(pdf_path)
                     if grobid_data and grobid_data.get("success"):
-                        logger.info("🌳 Using Hierarchical Tree Chunking")
-                        chunks = self.hierarchical_chunker.process_document_tree(
+                        logger.info("🌳 Using Proposition-Based Retrieval with GROBID sections")
+                        # Use proposition chunker instead of hierarchical chunker
+                        chunks = self.proposition_chunker.flatten_grobid_sections(
                             grobid_data['sections'], book_title, author
                         )
-                        method = "hierarchical"
+                        method = "proposition_based"
                         tracker.update_chunks(len(chunks))
                 except Exception as e:
                     logger.warning(f"GROBID chunking failed: {e}, falling back to semantic chunking")
                     tracker.add_error(f"GROBID error: {str(e)}")
+
 
             # Fallback to semantic chunking if GROBID failed or not available
             if not chunks:
@@ -239,40 +247,33 @@ class SemanticBookIngestor:
         tracker: Optional[ProgressTracker] = None
     ):
         """
-        Generate embeddings and upsert to Pinecone with progress tracking
-        
-        Args:
-            chunks: List of (text, metadata) tuples
-            book_id: Unique book identifier
-            book_title: Title of the book
-            author: Author name
-            tracker: Optional progress tracker for real-time updates
+        Generate embeddings from headings and upsert to Pinecone with full text in metadata
         """
         if not self.pinecone_index:
             logger.warning("Pinecone index not initialized, skipping upsert")
             return
 
         try:
-            # Extract texts and generate embeddings
-            texts = [c[0] for c in chunks]
-            logger.info(f"Generating embeddings for {len(texts)} chunks...")
+            # Extract HEADINGS for embedding (not full text)
+            headings = [c[0] for c in chunks]  # Changed from texts
+            logger.info(f"Generating embeddings for {len(headings)} section headings...")
             
             embeddings = self.embedding_model.encode(
-                texts, 
+                headings,  # Changed: embed headings only
                 batch_size=64, 
                 show_progress_bar=True
             )
             
-            # Update tracker with embedding progress
             if tracker:
                 tracker.update_embeddings(len(embeddings))
-                logger.info(f"📊 Embeddings generated: {len(embeddings)}/{len(texts)}")
+                logger.info(f"📊 Embeddings generated: {len(embeddings)}/{len(headings)}")
             
             # Prepare vectors for upsert
             vectors = []
-            for i, (text, meta) in enumerate(chunks):
+            for i, (heading, meta) in enumerate(chunks):
                 clean_meta = {
-                    "text": text,
+                    "heading": meta.get("heading", heading),  # Store heading
+                    "full_text": meta.get("full_text", ""),  # Store full text in metadata
                     "book_id": book_id,
                     "book_title": book_title,
                     "author": author,
@@ -280,8 +281,7 @@ class SemanticBookIngestor:
                     "hierarchy_level": int(meta.get("hierarchy_level", 0)),
                     "section_title": meta.get("section_title", "Unknown"),
                     "chunk_index": int(meta.get("chunk_index", i)),
-                    "chunk_type": meta.get("chunk_type", "text_block"),
-                    "page_number": int(meta.get("page_start", 0))
+                    "chunk_type": meta.get("chunk_type", "text_block")
                 }
                 vectors.append({
                     "id": f"{book_id}_{i}",
@@ -289,7 +289,7 @@ class SemanticBookIngestor:
                     "metadata": clean_meta
                 })
             
-            # Upsert vectors in batches with progress tracking
+            # Rest remains the same...
             logger.info(f"Upserting {len(vectors)} vectors to Pinecone...")
             
             if tracker:
@@ -302,12 +302,10 @@ class SemanticBookIngestor:
                     namespace=PINECONE_NAMESPACE
                 )
                 
-                # Update tracker after each batch
                 if tracker:
                     vectors_upserted = min(batch_idx + BATCH_SIZE, len(vectors))
                     tracker.update_upsert(vectors_upserted)
                     
-                    # Log progress
                     if (batch_idx + BATCH_SIZE) % (BATCH_SIZE * 5) == 0 or (batch_idx + BATCH_SIZE) >= len(vectors):
                         logger.info(f"📤 Upserted {vectors_upserted}/{len(vectors)} vectors")
             
@@ -319,6 +317,7 @@ class SemanticBookIngestor:
             if tracker:
                 tracker.add_error(error_msg)
             raise
+
 # Factory
 def EnhancedBookIngestorPaddle(config: Optional[IngestorConfig] = None):
     return SemanticBookIngestor(config)
