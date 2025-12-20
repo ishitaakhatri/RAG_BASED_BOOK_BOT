@@ -14,6 +14,8 @@ from typing import Callable, Optional, Dict, Any
 from dataclasses import dataclass, field, asdict
 from threading import Lock
 from datetime import datetime
+import asyncio
+
 
 logger = logging.getLogger("progress_tracker")
 
@@ -88,12 +90,15 @@ class ProgressTracker:
         self.callbacks.append(callback)
     
     def _notify_callbacks(self) -> None:
-        """Notify all registered callbacks"""
         for callback in self.callbacks:
             try:
-                callback(self.state)
+                if asyncio.iscoroutinefunction(callback):
+                    asyncio.create_task(callback(self.state))
+                else:
+                    callback(self.state)
             except Exception as e:
                 logger.error(f"Error in progress callback: {e}")
+
     
     def _calculate_eta(self) -> None:
         """Calculate estimated time remaining"""
