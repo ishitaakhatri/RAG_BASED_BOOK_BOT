@@ -5,6 +5,8 @@ These nodes handle:
 1. Context resolution - Resolving ambiguous queries using conversation history
 2. Answering from history - Responding without retrieval when possible
 3. Conversation search - Finding relevant past context
+
+ALL NODES NOW INCLUDE LANGSMITH TRACING
 """
 
 import json
@@ -14,6 +16,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 import os
 from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
+from langsmith import traceable  # ADDED
 
 from rag_based_book_bot.agents.states import AgentState, ConversationTurn, LLMResponse
 from rag_based_book_bot.memory.conversation_store import search_conversation_context
@@ -27,6 +30,11 @@ llm = ChatOllama(
 )
 
 
+@traceable(
+    name="query_context_resolution_node",
+    run_type="chain",
+    metadata={"purpose": "resolve_query_with_history"}
+)
 def query_context_resolution_node(state: AgentState) -> AgentState:
     """
     LLM-based context resolution node
@@ -114,12 +122,12 @@ Query: "How do I implement LSTM?"
 
 Return ONLY valid JSON, no markdown formatting."""
 
-        # Call LLM
-        response = llm.invoke([HumanMessage(content=analysis_prompt)])
+        # Call LLM with tracing
+        response = _analyze_context_with_llm(analysis_prompt)
         response_text = response.content.strip()
         
         # Clean up markdown formatting if present
-        if response_text.startswith("```"):
+        if response_text.startswith("```json"):
             response_text = (
                 response_text
                 .replace("```json", "")
@@ -162,6 +170,17 @@ Return ONLY valid JSON, no markdown formatting."""
     return state
 
 
+@traceable(name="analyze_context_with_llm", run_type="llm")
+def _analyze_context_with_llm(prompt: str):
+    """Helper function to trace LLM call for context analysis"""
+    return llm.invoke([HumanMessage(content=prompt)])
+
+
+@traceable(
+    name="conversation_search_node",
+    run_type="retriever",
+    metadata={"backend": "pinecone", "search_type": "conversation_history"}
+)
 def conversation_search_node(state: AgentState) -> AgentState:
     """
     Semantic search over conversation history
@@ -223,6 +242,11 @@ def conversation_search_node(state: AgentState) -> AgentState:
     return state
 
 
+@traceable(
+    name="answer_from_history_node",
+    run_type="llm",
+    metadata={"source": "conversation_memory"}
+)
 def answer_from_history_node(state: AgentState) -> AgentState:
     """
     Answer directly from conversation history without retrieval
@@ -281,7 +305,7 @@ Extract or synthesize the answer from the conversation above.
 
 Answer:"""
 
-        response = llm.invoke([HumanMessage(content=prompt)])
+        response = _generate_answer_from_history(prompt)
         
         state.response = LLMResponse(
             answer=response.content,
@@ -306,3 +330,9 @@ Answer:"""
         state.errors.append(f"Failed to answer from history: {str(e)}")
     
     return state
+
+
+@traceable(name="generate_answer_from_history", run_type="llm")
+def _generate_answer_from_history(prompt: str):
+    """Helper function to trace LLM call for generating answer from history"""
+    return llm.invoke([HumanMessage(content=prompt)])

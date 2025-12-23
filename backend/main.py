@@ -7,6 +7,7 @@ Features:
 - Full conversation history management
 - Robust error handling
 - Code/Text chunk separation
+- LangSmith tracing with proper hierarchy
 """
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query
@@ -23,7 +24,7 @@ import time
 import hashlib
 from uuid import uuid4
 from datetime import datetime
-from langsmith import traceable
+from langsmith import traceable  # ADDED
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -83,7 +84,7 @@ class QueryRequest(BaseModel):
     pass2_k: int = 15
     pass3_enabled: bool = True
     max_tokens: int = 2500
-    force_retrieval: bool = False  # Override memory detection
+    force_retrieval: bool = False
 
 
 class PipelineStage(BaseModel):
@@ -103,7 +104,7 @@ class QueryResponse(BaseModel):
     conversation_turn: int
     resolved_query: Optional[str] = None
     answered_from_history: bool = False
-    needs_context: bool = False  # NEW: indicates if query needed context
+    needs_context: bool = False
 
 
 class IngestResponse(BaseModel):
@@ -146,7 +147,7 @@ class SessionListResponse(BaseModel):
 
 
 # ============================================================================
-# HELPER FUNCTIONS
+# HELPER FUNCTIONS WITH LANGSMITH TRACING
 # ============================================================================
 
 def parse_book_filename(filename: str) -> tuple[str, str]:
@@ -165,6 +166,7 @@ def parse_book_filename(filename: str) -> tuple[str, str]:
     return title, author
 
 
+@traceable(name="store_book_metadata", run_type="chain", metadata={"operation": "upsert"})
 def store_book_metadata(book_title: str, author: str, total_chunks: int, code_chunks: int = 0):
     """Store book metadata in separate namespace"""
     try:
@@ -192,6 +194,7 @@ def store_book_metadata(book_title: str, author: str, total_chunks: int, code_ch
         print(f"⚠️ Failed to store metadata: {e}")
 
 
+@traceable(name="get_available_books", run_type="retriever", metadata={"source": "pinecone_metadata"})
 def get_available_books() -> List[BookInfo]:
     """Retrieve all books from metadata namespace"""
     try:
@@ -314,8 +317,27 @@ def generate_session_title(first_query: str) -> str:
     return title
 
 
+@traceable(name="load_conversation_traced", run_type="retriever", metadata={"source": "pinecone_conversations"})
+def load_conversation_traced(session_id: str, max_turns: int):
+    """Load conversation with LangSmith tracing"""
+    return load_conversation(session_id, max_turns)
+
+
+@traceable(name="save_conversation_traced", run_type="chain", metadata={"target": "pinecone_conversations"})
+def save_conversation_traced(session_id: str, turn_number: int, user_query: str, 
+                            assistant_response: str, **kwargs):
+    """Save conversation with LangSmith tracing"""
+    return save_conversation_turn(
+        session_id=session_id,
+        turn_number=turn_number,
+        user_query=user_query,
+        assistant_response=assistant_response,
+        **kwargs
+    )
+
+
 # ============================================================================
-# API ENDPOINTS
+# API ENDPOINTS WITH LANGSMITH TRACING
 # ============================================================================
 
 @app.get("/")
@@ -323,19 +345,21 @@ async def root():
     """Health check"""
     return {
         "status": "online",
-        "message": "RAG Book Bot API v4.0 - Production Ready",
+        "message": "RAG Book Bot API v4.0 - Production Ready with LangSmith",
         "features": [
             "graph_execution",
             "persistent_conversation_memory",
             "smart_context_detection",
             "full_session_management",
             "code_text_separation",
-            "robust_error_handling"
+            "robust_error_handling",
+            "langsmith_tracing_with_hierarchy"
         ]
     }
 
 
 @app.get("/books", response_model=BooksResponse)
+@traceable(name="list_books_endpoint", run_type="chain")
 async def list_books():
     """Get list of available books"""
     books = get_available_books()
@@ -345,27 +369,71 @@ async def list_books():
 @app.post("/query", response_model=QueryResponse)
 async def process_query(request: QueryRequest):
     """
-    Process query with smart conversation memory
+    Process query with smart conversation memory and full LangSmith trace hierarchy
+    """
+    # Call the traced version which will be the root trace
+    return await _process_query_traced(request)
+
+
+@traceable(
+    name="RAG_Query_Pipeline",
+    run_type="chain",
+    metadata={"version": "4.0.0", "pipeline": "5-pass-rag-with-memory"}
+)
+async def _process_query_traced(request: QueryRequest):
+    """
+    Main query processing pipeline with full tracing hierarchy
     
-    Features:
-    - Loads conversation history from Pinecone
-    - LLM determines if context is needed
-    - Can answer from history without retrieval
-    - Saves conversation turn after response
-    - Robust error handling
+    This will appear as the ROOT trace in LangSmith with all nodes as children:
+    
+    RAG_Query_Pipeline (ROOT)
+    ├── load_conversation_traced
+    ├── execute_graph_traced
+    │   ├── Node: query_parser
+    │   │   └── 1_Query_Parser
+    │   │       └── parse_query_with_llm (ChatOllama)
+    │   ├── Node: context_resolution
+    │   │   └── 2_Context_Resolution
+    │   │       └── analyze_context_with_llm (ChatOllama)
+    │   ├── Node: query_rewriter
+    │   │   └── 3_Query_Rewriter
+    │   │       └── generate_query_variations (ChatOllama)
+    │   ├── Node: vector_search
+    │   │   └── 4_Vector_Search_Pass1
+    │   ├── Node: cross_encoder_reranking
+    │   │   └── 5_Cross_Encoder_Reranking_Pass2
+    │   ├── Node: multi_hop_expansion
+    │   │   └── 6_Multi_Hop_Expansion_Pass3
+    │   ├── Node: cluster_expansion
+    │   │   └── 7_Cluster_Expansion_Pass4
+    │   ├── Node: context_compression
+    │   │   └── 8_Context_Assembly_Pass5
+    │   └── Node: llm_reasoning
+    │       └── 9_LLM_Reasoning_Final (ChatOllama)
+    └── save_conversation_traced
     """
     try:
         print(f"\n{'='*80}")
         print(f"[NEW QUERY] {request.query}")
         
+        # Set tags for LangSmith filtering
+        tags = [
+            f"session:{request.session_id or 'new'}",
+            f"book:{request.book_filter or 'all'}"
+        ]
+        if request.user_id:
+            tags.append(f"user:{request.user_id}")
+        
+        os.environ["LANGCHAIN_TAGS"] = ",".join(tags)
+        
         # Get or create session
         session_id = request.session_id or str(uuid4())
         
-        # Load conversation history
+        # Load conversation history with tracing
         print(f"[SESSION] {session_id}")
         print(f"[LOADING] Conversation history...")
         
-        pinecone_turns = load_conversation(session_id, max_turns=10)
+        pinecone_turns = load_conversation_traced(session_id, max_turns=10)
         conversation_history = convert_pinecone_to_conversation_turns(pinecone_turns)
         
         print(f"[HISTORY] Loaded {len(conversation_history)} previous turns")
@@ -386,12 +454,14 @@ async def process_query(request: QueryRequest):
             max_tokens=request.max_tokens
         )
         
-        # Build and execute graph
+        # Build and execute graph with tracing
         print("\n[GRAPH] Building query pipeline...")
         query_graph = build_query_graph()
         
         print("[GRAPH] Executing pipeline...")
-        result = query_graph.execute(state)
+        
+        # Execute graph - this will nest all node traces under execute_graph_traced
+        result = _execute_graph_traced(query_graph, state)
         
         # Check execution result
         if not result.success:
@@ -421,9 +491,9 @@ async def process_query(request: QueryRequest):
         # Calculate turn number
         turn_number = len(conversation_history) + 1
         
-        # Save conversation turn
+        # Save conversation turn with tracing
         print(f"\n[SAVING] Conversation turn to Pinecone...")
-        save_result = save_conversation_turn(
+        save_result = save_conversation_traced(
             session_id=session_id,
             turn_number=turn_number,
             user_query=request.query,
@@ -505,7 +575,18 @@ async def process_query(request: QueryRequest):
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
 
+@traceable(name="execute_graph_traced", run_type="chain", metadata={"component": "graph_executor"})
+def _execute_graph_traced(graph, state: AgentState):
+    """
+    Execute graph with tracing - all nodes will be children of this trace
+    
+    This acts as the parent span for all node executions
+    """
+    return graph.execute(state)
+
+
 @app.post("/ingest", response_model=IngestResponse)
+@traceable(name="ingest_book_endpoint", run_type="chain", metadata={"operation": "document_ingestion"})
 async def ingest_book(
     file: UploadFile = File(...),
     book_title: Optional[str] = None,
@@ -583,6 +664,7 @@ async def ingest_book(
         
         return IngestResponse(success=False, error=str(e))
 
+
 @app.websocket("/ws/ingestion-progress")
 async def websocket_ingestion_progress(websocket: WebSocket):
     """
@@ -590,26 +672,6 @@ async def websocket_ingestion_progress(websocket: WebSocket):
     
     Frontend connects with: ws://localhost:8000/ws/ingestion-progress
     Receives progress updates as JSON messages during book ingestion
-    
-    Message format:
-    {
-        "total_pages": int,
-        "current_page": int,
-        "current_batch": int,
-        "total_batches": int,
-        "percentage": float (0-100),
-        "status": str ("initializing", "parsing_pdf", "chunking", "embedding", "upserting", "completed", "failed"),
-        "current_task": str,
-        "chunks_created": int,
-        "embeddings_generated": int,
-        "vectors_upserted": int,
-        "elapsed_time": float,
-        "estimated_time_remaining": float,
-        "speed_pages_per_sec": float,
-        "book_title": str,
-        "author": str,
-        "errors": list
-    }
     """
     await websocket.accept()
     tracker = get_progress_tracker()
@@ -631,10 +693,8 @@ async def websocket_ingestion_progress(websocket: WebSocket):
     try:
         while True:
             # Keep connection alive and listen for client messages
-            # This prevents the connection from closing
             try:
                 # Wait for client to send something (keepalive or close signal)
-                # This will timeout if no message received (adjust as needed)
                 message = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
                 
                 # If client sends "ping", respond with "pong"
@@ -656,8 +716,8 @@ async def websocket_ingestion_progress(websocket: WebSocket):
             pass
 
 
-
 @app.get("/sessions", response_model=SessionListResponse)
+@traceable(name="list_sessions_endpoint", run_type="chain")
 async def list_sessions(
     user_id: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=100)
@@ -674,6 +734,7 @@ async def list_sessions(
 
 
 @app.get("/conversation/{session_id}", response_model=ConversationHistoryResponse)
+@traceable(name="get_conversation_history_endpoint", run_type="retriever")
 async def get_conversation_history(session_id: str):
     """Get conversation history for a session"""
     try:
@@ -694,6 +755,7 @@ async def get_conversation_history(session_id: str):
 
 
 @app.get("/conversation/{session_id}/stats")
+@traceable(name="get_session_stats_endpoint", run_type="chain")
 async def get_session_stats(session_id: str):
     """Get statistics for a conversation session"""
     try:
@@ -710,6 +772,7 @@ async def get_session_stats(session_id: str):
 
 
 @app.delete("/conversation/{session_id}")
+@traceable(name="delete_conversation_endpoint", run_type="chain")
 async def delete_conversation(session_id: str):
     """Delete a conversation"""
     try:
@@ -730,6 +793,7 @@ async def delete_conversation(session_id: str):
 
 
 @app.get("/search/sessions")
+@traceable(name="search_sessions_endpoint", run_type="retriever")
 async def search_sessions(
     query: str = Query(..., min_length=1),
     user_id: Optional[str] = Query(None),
@@ -752,6 +816,7 @@ async def search_sessions(
 
 
 @app.get("/health")
+@traceable(name="health_check_endpoint", run_type="chain")
 async def health_check():
     """Detailed health check"""
     try:
@@ -763,6 +828,7 @@ async def health_check():
             "version": "4.0.0",
             "execution_mode": "graph-based",
             "memory_backend": "pinecone",
+            "tracing": "langsmith",
             "pinecone": "connected",
             "total_vectors": stats.get('total_vector_count', 0),
             "namespaces": {

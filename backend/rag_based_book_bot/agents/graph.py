@@ -1,10 +1,11 @@
 """
-Updated Graph with Full 5-Pass Retrieval Pipeline
+Updated Graph with Full 5-Pass Retrieval Pipeline and LangSmith Tracing
 """
 
 from typing import Callable, Optional
 from dataclasses import dataclass, field
 from enum import Enum
+from langsmith import traceable, get_current_run_tree  # UPDATED
 
 from .states import AgentState  # Existing import
 
@@ -14,7 +15,6 @@ from rag_based_book_bot.agents.memory_nodes import (
     conversation_search_node,
     answer_from_history_node
 )
-
 
 
 class NodeStatus(Enum):
@@ -103,7 +103,11 @@ class Graph:
         return next_nodes
     
     def execute(self, state: AgentState, start_from: Optional[str] = None) -> ExecutionResult:
-        """Executes the graph."""
+        """
+        Executes the graph with proper LangSmith trace hierarchy.
+        
+        Each node execution will be properly nested under this execution.
+        """
         current = start_from or self.entry_point
         if not current:
             return ExecutionResult(
@@ -122,8 +126,11 @@ class Graph:
                 )
             
             node.status = NodeStatus.RUNNING
+            
             try:
-                state = node.func(state)
+                # Execute node with explicit tracing context
+                print(f"\n🔄 Executing node: {current}")
+                state = self._execute_node_traced(node, state)
                 
                 if state.errors:
                     node.status = NodeStatus.FAILED
@@ -150,6 +157,27 @@ class Graph:
         
         return ExecutionResult(success=True, final_state=state, executed_nodes=executed)
     
+    @traceable(run_type="chain")
+    def _execute_node_traced(self, node: Node, state: AgentState) -> AgentState:
+        """
+        Execute a single node with tracing.
+        
+        This wrapper ensures each node appears as a child in the trace tree.
+        """
+        # Add node metadata to trace
+        run = get_current_run_tree()
+        if run:
+            run.name = f"Node: {node.name}"
+            run.metadata.update({
+                "node_name": node.name,
+                "node_description": node.description,
+                "node_status": node.status.value,
+                "graph_name": self.name
+            })
+        
+        # Execute the actual node function (which has its own @traceable)
+        return node.func(state)
+    
     def reset(self):
         """Resets all node statuses."""
         for node in self.nodes.values():
@@ -174,12 +202,12 @@ class Graph:
 
 
 # ============================================================================
-# UPDATED GRAPH BUILDERS WITH 5-PASS PIPELINE
+# UPDATED GRAPH BUILDERS WITH 5-PASS PIPELINE AND TRACING
 # ============================================================================
 
 def build_indexing_graph() -> Graph:
     """Builds the graph for document indexing."""
-    from nodes import pdf_loader_node, chunking_embedding_node
+    from .nodes import pdf_loader_node, chunking_embedding_node
     
     graph = Graph(name="indexing_pipeline")
     
@@ -194,9 +222,10 @@ def build_indexing_graph() -> Graph:
     return graph
 
 
+@traceable(name="build_query_graph", run_type="chain")
 def build_query_graph() -> Graph:
     """
-    Builds the FULL query graph with CONVERSATION MEMORY support
+    Builds the FULL query graph with CONVERSATION MEMORY support and LangSmith tracing
     
     Pipeline with Memory:
     1. Query Parser
@@ -302,11 +331,9 @@ def build_query_graph() -> Graph:
     return graph
 
 
-
-
 def build_full_graph() -> Graph:
     """Builds the complete RAG pipeline (indexing + query)."""
-    from nodes import (
+    from .nodes import (
         pdf_loader_node, chunking_embedding_node, user_query_node,
         vector_search_node, reranking_node, multi_hop_expansion_node,
         cluster_expansion_node, context_assembly_node, llm_reasoning_node

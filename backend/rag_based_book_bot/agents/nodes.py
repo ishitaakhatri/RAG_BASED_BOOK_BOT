@@ -1,11 +1,12 @@
 """
-Updated Node implementations with LangChain and Gemini
+Updated Node implementations with LangChain, Gemini, and LangSmith Tracing
 
 CHANGES:
 - Switched from direct OpenAI API calls to LangChain
-- Using Google's Gemini (ChatGoogleGenerativeAI)
+- Using Google's Gemini (ChatGoogleGenerativeAI) or Ollama
 - Enhanced metadata handling to preserve book_title throughout pipeline
 - Better chunk formatting with book information
+- Added LangSmith tracing to all nodes
 """
 
 import re
@@ -16,6 +17,8 @@ from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
+from langsmith import traceable  # ADDED
+
 load_dotenv()
 
 # LangChain imports
@@ -41,7 +44,7 @@ NAMESPACE = os.getenv("PINECONE_NAMESPACE", "books_rag")
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 # ============================================================================
-# LANGCHAIN LLM INITIALIZATION (Gemini)
+# LANGCHAIN LLM INITIALIZATION (Ollama)
 # ============================================================================
 
 # Initialize Ollama LLM at module level
@@ -104,9 +107,10 @@ def get_compressor(target_tokens=2000, max_tokens=4000):
 
 
 # ============================================================================
-# UPDATED: LLM-BASED QUERY PARSING NODE WITH LANGCHAIN
+# UPDATED: LLM-BASED QUERY PARSING NODE WITH LANGCHAIN AND LANGSMITH
 # ============================================================================
 
+@traceable(name="user_query_node", run_type="chain")
 def user_query_node(state: AgentState) -> AgentState:
     """
     ✨ LLM-based query parsing for intelligent intent detection using LangChain
@@ -146,7 +150,7 @@ def user_query_node(state: AgentState) -> AgentState:
     return state
 
 
-
+@traceable(name="query_rewriter_node", run_type="chain")
 def query_rewriter_node(state: AgentState, num_variations: int = 3) -> AgentState:
     """
     Query Rewriting Node - NOW USES RESOLVED QUERY
@@ -192,8 +196,9 @@ def query_rewriter_node(state: AgentState, num_variations: int = 3) -> AgentStat
     return state
 
 
+@traceable(name="generate_query_variations", run_type="llm")
 def _generate_query_variations(query: str, intent: QueryIntent, num_variations: int = 3) -> list[str]:
-    """Generate alternative query formulations using Gemini"""
+    """Generate alternative query formulations using LLM"""
     
     system_prompt = """You are an expert at reformulating search queries to improve information retrieval.
 
@@ -229,7 +234,7 @@ Hint: {intent_hints.get(intent, "")}
 Generate {num_variations} alternative phrasings."""
 
     try:
-        # Use LangChain to invoke Gemini
+        # Use LangChain to invoke LLM
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt)
@@ -238,12 +243,15 @@ Generate {num_variations} alternative phrasings."""
         response = llm.invoke(messages)
         response_text = response.content.strip()
         
-        # --- FIXED BROKEN STRINGS BELOW ---
+        # Clean markdown formatting
         if response_text.startswith("```"):
-            response_text = response_text.replace("```json", "").replace("```", "")
-        elif response_text.startswith("```"):
-            response_text = response_text.replace("```", "")
-        # --- END FIX ---
+            response_text = (
+                response_text
+                .replace("```json", "")
+                .replace("```", "")
+                .strip()
+        )
+
 
         # Parse JSON array
         variations = json.loads(response_text)
@@ -258,7 +266,6 @@ Generate {num_variations} alternative phrasings."""
     except Exception as e:
         print(f"  ⚠️ LLM query rewriting failed: {e}")
         return _fallback_query_variations(query, num_variations)
-
 
 
 def _fallback_query_variations(query: str, num_variations: int = 3) -> list[str]:
@@ -312,11 +319,9 @@ def _fallback_query_variations(query: str, num_variations: int = 3) -> list[str]
     return variations[:num_variations]
 
 
-
-
-
+@traceable(name="parse_query_with_llm", run_type="llm")
 def _parse_query_with_llm(query: str) -> dict:
-    """Intelligent query parsing using Gemini via LangChain"""
+    """Intelligent query parsing using LLM via LangChain"""
     
     system_prompt = """You are an expert query analyzer for a coding book learning assistant.
 
@@ -356,7 +361,7 @@ Respond with ONLY valid JSON:
 
     user_prompt = f'Analyze this query: "{query}"'
 
-    # Use LangChain to invoke Gemini
+    # Use LangChain to invoke LLM
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_prompt)
@@ -368,10 +373,14 @@ Respond with ONLY valid JSON:
     response_text = response.content.strip()
     
     # Remove markdown code blocks if present
-    if response_text.startswith("```json"):
-        response_text = response_text.replace("```json", "").replace("```", "").strip()
-    elif response_text.startswith("```"):
-        response_text = response_text.replace("```", "").strip()
+    if response_text.startswith("```"):
+        response_text = (
+            response_text
+            .replace("```json", "")
+            .replace("```", "")
+            .strip()
+        )
+
     
     parsed = json.loads(response_text)
     
@@ -449,9 +458,10 @@ def chunking_embedding_node(state: AgentState) -> AgentState:
 
 
 # ============================================================================
-# RETRIEVAL NODES (unchanged - no LLM calls here)
+# RETRIEVAL NODES WITH LANGSMITH TRACING
 # ============================================================================
 
+@traceable(name="vector_search_node", run_type="retriever", metadata={"pass": 1, "backend": "pinecone"})
 def vector_search_node(state: AgentState) -> AgentState:
     """
     PASS 1: Coarse Semantic Search with Query Expansion
@@ -467,9 +477,7 @@ def vector_search_node(state: AgentState) -> AgentState:
         # Read configuration from state
         top_k = state.pass1_k
         
-        # ============================================================
-        # KEY CHANGE: Use resolved_query as main query
-        # ============================================================
+        # Use resolved_query as main query
         main_query = state.resolved_query or state.parsed_query.raw_query
         
         # Collect all queries (resolved + rewritten variations)
@@ -585,11 +593,9 @@ def vector_search_node(state: AgentState) -> AgentState:
     return state
 
 
-
-
-
+@traceable(name="reranking_node", run_type="chain", metadata={"pass": 2, "model": "cross-encoder"})
 def reranking_node(state: AgentState) -> AgentState:
-    """PASS 2: Cross-Encoder Reranking - Now reads top_k from state"""
+    """PASS 2: Cross-Encoder Reranking"""
     state.current_node = "reranking"
     
     if not state.retrieved_chunks or not state.parsed_query:
@@ -598,7 +604,7 @@ def reranking_node(state: AgentState) -> AgentState:
     
     try:
         # Read configuration from state
-        top_k = state.pass2_k  # Use configured value
+        top_k = state.pass2_k
         
         print(f"\n[PASS 2] Cross-Encoder Reranking (top_k={top_k})")
         
@@ -663,8 +669,9 @@ def reranking_node(state: AgentState) -> AgentState:
     return state
 
 
+@traceable(name="multi_hop_expansion_node", run_type="chain", metadata={"pass": 3})
 def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState:
-    """PASS 3: Multi-Hop Retrieval - Now checks state.pass3_enabled"""
+    """PASS 3: Multi-Hop Retrieval"""
     state.current_node = "multi_hop_expansion"
     
     # Check if pass3 is enabled
@@ -786,6 +793,8 @@ def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState
     
     return state
 
+
+@traceable(name="cluster_expansion_node", run_type="chain", metadata={"pass": 4})
 def cluster_expansion_node(state: AgentState) -> AgentState:
     """PASS 4: Cluster-Based Expansion"""
     state.current_node = "cluster_expansion"
@@ -832,9 +841,9 @@ def cluster_expansion_node(state: AgentState) -> AgentState:
     return state
 
 
-
+@traceable(name="context_assembly_node", run_type="chain", metadata={"pass": 5})
 def context_assembly_node(state: AgentState) -> AgentState:
-    """PASS 5: Compression & Assembly - Now reads max_tokens from state"""
+    """PASS 5: Compression & Assembly"""
     state.current_node = "context_assembly"
     
     if not state.reranked_chunks or not state.parsed_query:
@@ -917,8 +926,6 @@ def context_assembly_node(state: AgentState) -> AgentState:
     return state
 
 
-
-
 def _build_system_prompt(query: ParsedQuery) -> str:
     """Build system prompt based on intent and complexity"""
     base = """You are an expert programming tutor with deep knowledge of coding books and technical documentation.
@@ -953,11 +960,12 @@ Always reference sources WITH BOOK TITLES and ensure code is correct and follows
 
 
 # ============================================================================
-# UPDATED: LLM REASONING NODE WITH LANGCHAIN & GEMINI
+# UPDATED: LLM REASONING NODE WITH LANGCHAIN & LANGSMITH
 # ============================================================================
 
+@traceable(name="llm_reasoning_node", run_type="llm")
 def llm_reasoning_node(state: AgentState) -> AgentState:
-    """Call Gemini LLM via LangChain for answer generation"""
+    """Call LLM via LangChain for answer generation"""
     state.current_node = "llm_reasoning"
     
     if not state.reranked_chunks or not state.parsed_query:
@@ -976,7 +984,7 @@ def llm_reasoning_node(state: AgentState) -> AgentState:
             HumanMessage(content=f"{state.assembled_context}\n\nQuestion: {state.parsed_query.raw_query}")
         ]
         
-        # Invoke Gemini via LangChain
+        # Invoke LLM via LangChain
         response = llm.invoke(messages)
         answer = response.content
         
@@ -1006,5 +1014,5 @@ def llm_reasoning_node(state: AgentState) -> AgentState:
                 sources=[c.chunk.chunk_id for c in chunks[:3]],
                 confidence=0.5
             )
-    
-    return state
+
+    return state    
