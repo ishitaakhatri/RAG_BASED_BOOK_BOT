@@ -37,7 +37,7 @@ from rag_based_book_bot.retrieval.context_compressor import EnhancedContextCompr
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "coding-books")
 NAMESPACE = os.getenv("PINECONE_NAMESPACE", "books_rag")
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 
 # ============================================================================
 # LANGCHAIN LLM INITIALIZATION (Gemini)

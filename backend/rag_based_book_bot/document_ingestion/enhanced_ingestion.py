@@ -38,7 +38,7 @@ from rag_based_book_bot.document_ingestion.ingestion.grobid_parser import (
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX = os.getenv("PINECONE_INDEX_NAME", "coding-books")
 PINECONE_NAMESPACE = os.getenv("PINECONE_NAMESPACE", "books_rag")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-0.6B")
 BATCH_SIZE = 100
 
 # GROBID Config
@@ -52,8 +52,8 @@ logger = logging.getLogger("enhanced_ingestion")
 @dataclass
 class IngestorConfig:
     similarity_threshold: float = 0.75
-    min_chunk_size: int = 200
-    max_chunk_size: int = 1000
+    min_chunk_size: int = 128
+    max_chunk_size: int = 256
     use_grobid: bool = True
     debug: bool = False
 

@@ -8,7 +8,7 @@ load_dotenv()
 
 try:
     pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
-    index = pc.Index("coding-books")
+    index = pc.Index(os.getenv("PINECONE_INDEX_NAME", "coding-books-2"))
     stats = index.describe_index_stats()
     
     print("✅ Pinecone connection SUCCESS!")

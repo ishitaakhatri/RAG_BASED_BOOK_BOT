@@ -24,11 +24,11 @@ except ImportError:
     print("   Run: pip install pinecone-client")
     sys.exit(1)
 
-# Configuration - hardcoded values
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")  # Only this from env
-INDEX_NAME = "coding-books"
-NAMESPACE = "books_rag"
-DIMENSION = 384  # sentence-transformers/all-MiniLM-L6-v2
+# Configuration
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "coding-books-2")
+NAMESPACE = os.getenv("PINECONE_NAMESPACE", "books_rag")
+DIMENSION = 1024  # Qwen/Qwen3-Embedding-0.6B
 METRIC = "cosine"
 CLOUD = "aws"
 REGION = "us-east-1"
