@@ -582,7 +582,7 @@ async def ingest_book(
         
         return IngestResponse(success=False, error=str(e))
 
-@app.websocket("/ws/ingestion-progress")
+@app.websocket("/ws/ingest")
 async def websocket_ingestion_progress(websocket: WebSocket):
     """
     WebSocket endpoint for real-time ingestion progress updates

@@ -1,39 +1,225 @@
-@import 'tailwindcss/base';
-@import 'tailwindcss/components';
-@import 'tailwindcss/utilities';
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
 
+/* ==================== GLOBAL RESET ==================== */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
-
+html,
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  height: 100%;
+  overflow: auto;
+}
+
+/* Prevent zoom on input focus for iOS */
+@media (max-width: 768px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
 }
 
 code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+  font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New",
+    monospace;
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
+/* ==================== CHAT MESSAGES SCROLLBAR ==================== */
+.chat-messages {
+  overflow-y: auto !important;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.2);
+}
+
+/* WebKit browsers (Chrome, Safari, Edge) */
+.chat-messages::-webkit-scrollbar {
   width: 8px;
 }
 
-::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.1);
+.chat-messages::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
   border-radius: 10px;
 }
 
-::-webkit-scrollbar-thumb {
-  background: rgba(147, 51, 234, 0.5);
+.chat-messages::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.chat-messages::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
+  background-clip: content-box;
+}
+
+/* ==================== THIN SCROLLBAR VARIANT ==================== */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
   border-radius: 10px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(147, 51, 234, 0.8);
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
+}
+
+/* Firefox */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #a855f7 transparent;
+}
+
+/* ==================== RESPONSIVE UTILITIES ==================== */
+/* Mobile-first adjustments */
+@media (max-width: 640px) {
+  /* Reduce padding on small devices */
+  .px-4 {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  /* Ensure proper spacing for mobile */
+  gap-3 {
+    gap: 0.75rem !important;
+  }
+}
+
+/* Tablet and above */
+@media (min-width: 768px) {
+  html,
+  body {
+    overflow: hidden;
+  }
+}
+
+/* ==================== INPUT STYLING ==================== */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(168, 85, 247, 0.4);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 2px 8px rgba(168, 85, 247, 0.4);
+}
+
+input[type="checkbox"] {
+  cursor: pointer;
+}
+
+/* ==================== ANIMATION ENHANCEMENTS ==================== */
+@keyframes slideInLeft {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideOutLeft {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes fadeInScale {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ==================== RESPONSIVE GRID ==================== */
+@media (max-width: 1024px) {
+  /* Stack on mobile */
+  .grid-cols-1 {
+    grid-template-columns: 1fr;
+  }
+
+  /* Hide sidebar on mobile, adjust on tablet */
+  .hidden {
+    display: none !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  /* Show sidebar on desktop */
+  .hidden.lg\:flex {
+    display: flex !important;
+  }
+}
+
+/* ==================== TOUCH-FRIENDLY TARGETS ==================== */
+@media (max-width: 768px) {
+  button,
+  a {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0.5rem;
+  }
+}
+
+/* ==================== ACCESSIBILITY ==================== */
+:focus-visible {
+  outline: 2px solid #a855f7;
+  outline-offset: 2px;
+}
+
+/* Reduce motion for users with motion sensitivity */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ==================== DARK MODE OPTIMIZATIONS ==================== */
+@media (prefers-color-scheme: dark) {
+  body {
+    background-color: #0f172a;
+    color: #f8fafc;
+  }
 }

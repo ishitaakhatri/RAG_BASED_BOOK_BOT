@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Upload,
   ArrowLeft,
@@ -12,7 +13,7 @@ import {
 } from "lucide-react";
 
 const API_BASE_URL = "http://localhost:8000";
-const WS_URL = "ws://localhost:8000/ws/ingestion-progress";
+const WS_URL = "ws://localhost:8000/ws/ingest";
 
 export default function IngestionPage({ books, onBack, onUploadSuccess }) {
   const [uploadFile, setUploadFile] = useState(null);
@@ -23,15 +24,14 @@ export default function IngestionPage({ books, onBack, onUploadSuccess }) {
   const [isIngesting, setIsIngesting] = useState(false);
   const wsRef = useRef(null);
   const logsEndRef = useRef(null);
+  const navigate = useNavigate();
 
-  // Auto-scroll logs to bottom
   useEffect(() => {
     if (logsEndRef.current && showLogs) {
       logsEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [logs, showLogs]);
 
-  // Cleanup WebSocket on unmount
   useEffect(() => {
     return () => {
       if (wsRef.current) {
@@ -60,7 +60,6 @@ export default function IngestionPage({ books, onBack, onUploadSuccess }) {
             const data = JSON.parse(event.data);
             setLiveProgress(data);
 
-            // Log significant changes
             if (data.status === "chunking") {
               addLog(
                 `📊 Chunking: ${data.chunks_created} chunks created`,
@@ -113,7 +112,6 @@ export default function IngestionPage({ books, onBack, onUploadSuccess }) {
     setShowLogs(true);
     addLog("📋 Starting ingestion process...", "info");
 
-    // Connect to WebSocket before uploading
     try {
       await connectWebSocket();
     } catch (error) {
@@ -129,7 +127,7 @@ export default function IngestionPage({ books, onBack, onUploadSuccess }) {
     setUploadProgress({
       status: "uploading",
       message: "Uploading and processing PDF...",
-      percentage: 0,
+      percentage: 10,
     });
 
     addLog(`📁 Uploading: ${uploadFile.name}`, "info");
@@ -159,7 +157,6 @@ export default function IngestionPage({ books, onBack, onUploadSuccess }) {
         );
         addLog(`📚 Method used: ${result.method}`, "success");
 
-        // Call the callback to refresh books in parent component
         if (onUploadSuccess) {
           setTimeout(() => {
             onUploadSuccess();
@@ -199,7 +196,7 @@ export default function IngestionPage({ books, onBack, onUploadSuccess }) {
     setLogs([]);
     setShowLogs(false);
     setIsIngesting(false);
-    onBack();
+    navigate("/");
   };
 
   const getStatusColor = (status) => {
@@ -219,25 +216,15 @@ export default function IngestionPage({ books, onBack, onUploadSuccess }) {
     }
   };
 
-  const getProgressBarColor = (status) => {
-    switch (status) {
-      case "completed":
-        return "from-green-500 to-emerald-600";
-      case "failed":
-        return "from-red-500 to-pink-600";
-      case "upserting":
-      case "embedding":
-      case "chunking":
-        return "from-blue-500 to-cyan-600";
-      default:
-        return "from-purple-500 to-pink-600";
-    }
-  };
+  const currentPercentage =
+    liveProgress?.percentage || uploadProgress?.percentage || 0;
+  const currentStatus =
+    liveProgress?.status || uploadProgress?.status || "idle";
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex flex-col">
       {/* Header */}
-      <header className="bg-black/20 backdrop-blur-lg border-b border-white/10">
+      <header className="bg-black/20 backdrop-blur-lg border-b border-white/10 sticky top-0 z-10">
         <div className="px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
@@ -268,326 +255,346 @@ export default function IngestionPage({ books, onBack, onUploadSuccess }) {
         </div>
       </header>
 
-      {/* Main Content */}
-      <div className="px-4 sm:px-6 lg:px-8 py-8">
-        <div className="max-w-4xl mx-auto">
-          {/* Upload Form Card */}
-          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20 mb-8">
-            <h2 className="text-2xl font-bold text-white mb-2">
-              Upload PDF Books
-            </h2>
-            <p className="text-purple-200 mb-6">
-              Upload PDF files to ingest them into your knowledge base. The
-              system will automatically extract text, create chunks, and index
-              them for retrieval.
-            </p>
+      {/* Main Content - Scrollable */}
+      <div className="flex-1 overflow-y-auto scrollbar-thin">
+        <div className="px-4 sm:px-6 lg:px-8 py-8">
+          <div className="max-w-7xl mx-auto">
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+              {/* LEFT SIDEBAR - Books & Stats */}
+              <div className="lg:col-span-1 space-y-6">
+                {/* Books List */}
+                <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
+                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center">
+                    <Book className="w-5 h-5 mr-2" />
+                    Available Books
+                  </h3>
 
-            <div className="space-y-6">
-              {/* File Input */}
-              <div>
-                <label className="block text-sm font-semibold text-purple-200 mb-3">
-                  Select PDF File
-                </label>
-                <label className="flex flex-col items-center justify-center w-full h-48 border-2 border-dashed border-purple-400 rounded-xl cursor-pointer bg-white/5 hover:bg-white/10 transition-all">
-                  <div className="flex flex-col items-center justify-center pt-8 pb-6">
-                    <Upload className="w-12 h-12 text-purple-300 mb-2" />
-                    <p className="text-sm font-semibold text-white">
-                      Click to upload or drag and drop
-                    </p>
-                    <p className="text-xs text-purple-300">PDF files only</p>
-                  </div>
-                  <input
-                    type="file"
-                    accept=".pdf"
-                    onChange={(e) => setUploadFile(e.target.files[0])}
-                    className="hidden"
-                    disabled={isIngesting}
-                  />
-                </label>
-                {uploadFile && (
-                  <div className="mt-4 p-4 bg-green-500/20 border border-green-400/50 rounded-lg">
-                    <div className="flex items-center space-x-3">
-                      <CheckCircle className="w-5 h-5 text-green-400" />
-                      <div>
-                        <p className="text-sm font-semibold text-green-300">
-                          {uploadFile.name}
-                        </p>
-                        <p className="text-xs text-green-200">
-                          {(uploadFile.size / 1024 / 1024).toFixed(2)} MB
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
+                  {/* Books Vault - Scrollable */}
+                  <div className="space-y-2 max-h-96 overflow-y-auto scrollbar-thin">
+                    <button className="w-full text-left px-3 py-2 rounded-lg transition-all bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold">
+                      All Books
+                    </button>
 
-              {/* File Requirements */}
-              <div className="bg-blue-500/10 border border-blue-400/30 rounded-lg p-4">
-                <h4 className="text-sm font-semibold text-blue-300 mb-2 flex items-center">
-                  <AlertCircle className="w-4 h-4 mr-2" />
-                  File Requirements
-                </h4>
-                <ul className="text-xs text-blue-200 space-y-1">
-                  <li>• File format: PDF (.pdf)</li>
-                  <li>• Recommended file size: Less than 50 MB</li>
-                  <li>
-                    • Filename format: "Book Title - Author Name.pdf" (optional
-                    but recommended)
-                  </li>
-                  <li>
-                    • The system will automatically extract and chunk the
-                    content
-                  </li>
-                </ul>
-              </div>
-
-              {/* Progress Section */}
-              {(uploadProgress || liveProgress) && (
-                <div className="space-y-4">
-                  {/* Progress Bar */}
-                  <div className="bg-white/5 rounded-lg p-6 border border-white/10">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex-1">
-                        <p className="text-sm font-semibold text-white mb-1">
-                          Ingestion Progress
-                        </p>
-                        <p
-                          className={`text-xs font-medium ${getStatusColor(
-                            liveProgress?.status || uploadProgress?.status
-                          )}`}
-                        >
-                          {liveProgress?.current_task ||
-                            uploadProgress?.message}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-2xl font-bold text-white">
-                          {Math.round(
-                            liveProgress?.percentage ||
-                              uploadProgress?.percentage ||
-                              0
-                          )}
-                          %
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Progress Bar */}
-                    <div className="w-full bg-white/10 rounded-full h-3 overflow-hidden border border-white/20">
-                      <div
-                        className={`h-full bg-gradient-to-r ${getProgressBarColor(
-                          liveProgress?.status || uploadProgress?.status
-                        )} transition-all duration-300`}
-                        style={{
-                          width: `${
-                            liveProgress?.percentage ||
-                            uploadProgress?.percentage ||
-                            0
-                          }%`,
-                        }}
-                      />
-                    </div>
-
-                    {/* Progress Details */}
-                    {liveProgress && (
-                      <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                        <div className="bg-white/5 rounded p-2 border border-white/10">
-                          <p className="text-purple-300">Pages</p>
-                          <p className="text-white font-semibold">
-                            {liveProgress.current_page}/
-                            {liveProgress.total_pages}
-                          </p>
+                    {books.map((book, idx) => (
+                      <button
+                        key={idx}
+                        className="w-full text-left px-3 py-2 rounded-lg transition-all bg-white/5 hover:bg-white/10 text-purple-200 hover:text-white"
+                      >
+                        <div className="text-sm font-semibold truncate">
+                          {book.title}
                         </div>
-                        <div className="bg-white/5 rounded p-2 border border-white/10">
-                          <p className="text-purple-300">Chunks</p>
-                          <p className="text-white font-semibold">
-                            {liveProgress.chunks_created}
-                          </p>
+                        <div className="text-xs opacity-75 truncate">
+                          by {book.author}
                         </div>
-                        <div className="bg-white/5 rounded p-2 border border-white/10">
-                          <p className="text-purple-300">Embeddings</p>
-                          <p className="text-white font-semibold">
-                            {liveProgress.embeddings_generated}
-                          </p>
-                        </div>
-                        <div className="bg-white/5 rounded p-2 border border-white/10">
-                          <p className="text-purple-300">Time</p>
-                          <p className="text-white font-semibold">
-                            {Math.round(liveProgress.elapsed_time)}s
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Speed Info */}
-                    {liveProgress && liveProgress.speed_pages_per_sec > 0 && (
-                      <div className="mt-3 text-xs text-purple-200">
-                        <p>
-                          Speed: {liveProgress.speed_pages_per_sec.toFixed(1)}{" "}
-                          pages/sec
-                        </p>
-                        {liveProgress.estimated_time_remaining > 0 && (
-                          <p>
-                            ETA:{" "}
-                            {Math.round(liveProgress.estimated_time_remaining)}s
-                          </p>
+                        {book.total_chunks > 0 && (
+                          <div className="text-xs opacity-60 mt-1">
+                            {book.total_chunks} chunks
+                          </div>
                         )}
-                      </div>
-                    )}
+                      </button>
+                    ))}
                   </div>
+                </div>
 
-                  {/* Message Display */}
-                  {uploadProgress?.status === "success" && (
-                    <div className="p-4 rounded-lg bg-green-500/20 border-green-500/50 border">
-                      <div className="flex items-center space-x-3">
-                        <CheckCircle className="w-5 h-5 text-green-400" />
-                        <div>
-                          <p className="font-semibold text-green-300">
-                            {uploadProgress.message}
+                {/* Stats Card */}
+                <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
+                  <h3 className="text-lg font-semibold text-white mb-4">
+                    Stats
+                  </h3>
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-purple-200 text-sm">
+                        Total Books:
+                      </span>
+                      <span className="font-bold text-white text-lg">
+                        {books.length}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-purple-200 text-sm">
+                        Total Chunks:
+                      </span>
+                      <span className="font-bold text-white text-lg">
+                        {books.reduce(
+                          (sum, b) => sum + (b.total_chunks || 0),
+                          0
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* RIGHT SIDE - Upload Form & Progress */}
+              <div className="lg:col-span-3 space-y-6">
+                {/* Upload Form Card */}
+                <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20">
+                  <h2 className="text-2xl font-bold text-white mb-2">
+                    Upload PDF Books
+                  </h2>
+                  <p className="text-purple-200 mb-6">
+                    Upload PDF files to ingest them into your knowledge base.
+                  </p>
+
+                  <div className="space-y-6">
+                    {/* File Input */}
+                    <div>
+                      <label className="block text-sm font-semibold text-purple-200 mb-3">
+                        Select PDF File
+                      </label>
+                      <label className="flex flex-col items-center justify-center w-full h-48 border-2 border-dashed border-purple-400 rounded-xl cursor-pointer bg-white/5 hover:bg-white/10 transition-all">
+                        <div className="flex flex-col items-center justify-center pt-8 pb-6">
+                          <Upload className="w-12 h-12 text-purple-300 mb-2" />
+                          <p className="text-sm font-semibold text-white">
+                            Click to upload or drag and drop
                           </p>
-                          {uploadProgress.result && (
-                            <div className="text-xs text-green-200 mt-1">
-                              <p>
-                                Total chunks: {uploadProgress.result.chunks}
+                          <p className="text-xs text-purple-300">
+                            PDF files only
+                          </p>
+                        </div>
+                        <input
+                          type="file"
+                          accept=".pdf"
+                          onChange={(e) => setUploadFile(e.target.files[0])}
+                          className="hidden"
+                          disabled={isIngesting}
+                        />
+                      </label>
+                      {uploadFile && (
+                        <div className="mt-4 p-4 bg-green-500/20 border border-green-400/50 rounded-lg">
+                          <div className="flex items-center space-x-3">
+                            <CheckCircle className="w-5 h-5 text-green-400" />
+                            <div>
+                              <p className="text-sm font-semibold text-green-300">
+                                {uploadFile.name}
+                              </p>
+                              <p className="text-xs text-green-200">
+                                {(uploadFile.size / 1024 / 1024).toFixed(2)} MB
                               </p>
                             </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* File Requirements */}
+                    <div className="bg-blue-500/10 border border-blue-400/30 rounded-lg p-4">
+                      <h4 className="text-sm font-semibold text-blue-300 mb-2 flex items-center">
+                        <AlertCircle className="w-4 h-4 mr-2" />
+                        File Requirements
+                      </h4>
+                      <ul className="text-xs text-blue-200 space-y-1">
+                        <li>• File format: PDF (.pdf)</li>
+                        <li>• Recommended file size: Less than 50 MB</li>
+                        <li>
+                          • Filename format: "Book Title - Author Name.pdf"
+                        </li>
+                        <li>• System will auto-extract and chunk content</li>
+                      </ul>
+                    </div>
+
+                    {/* Progress Section */}
+                    {(uploadProgress || liveProgress || isIngesting) && (
+                      <div className="bg-white/5 rounded-lg p-6 border border-white/10">
+                        <h3 className="text-lg font-bold text-white mb-4">
+                          Ingestion Progress
+                        </h3>
+
+                        <div className="space-y-4">
+                          {/* Circular Progress */}
+                          <div className="flex items-center justify-center">
+                            <div className="relative w-28 h-28">
+                              <svg className="w-full h-full transform -rotate-90">
+                                <circle
+                                  cx="56"
+                                  cy="56"
+                                  r="48"
+                                  stroke="rgba(255,255,255,0.1)"
+                                  strokeWidth="6"
+                                  fill="none"
+                                />
+                                <circle
+                                  cx="56"
+                                  cy="56"
+                                  r="48"
+                                  stroke="url(#grad)"
+                                  strokeWidth="6"
+                                  fill="none"
+                                  strokeDasharray={`${
+                                    (currentPercentage / 100) * 301.59
+                                  } 301.59`}
+                                  strokeLinecap="round"
+                                  className="transition-all duration-300"
+                                />
+                                <defs>
+                                  <linearGradient
+                                    id="grad"
+                                    x1="0%"
+                                    y1="0%"
+                                    x2="100%"
+                                    y2="100%"
+                                  >
+                                    <stop offset="0%" stopColor="#a855f7" />
+                                    <stop offset="100%" stopColor="#ec4899" />
+                                  </linearGradient>
+                                </defs>
+                              </svg>
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <p className="text-2xl font-bold text-white">
+                                  {Math.round(currentPercentage)}%
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Status */}
+                          <p
+                            className={`text-center text-sm font-semibold ${getStatusColor(
+                              currentStatus
+                            )}`}
+                          >
+                            {liveProgress?.current_task ||
+                              uploadProgress?.message ||
+                              "Ready"}
+                          </p>
+
+                          {/* Progress Details Grid */}
+                          {liveProgress && (
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="bg-white/5 rounded p-3 border border-white/10">
+                                <p className="text-xs text-purple-300 mb-1">
+                                  Pages
+                                </p>
+                                <p className="text-lg font-bold text-white">
+                                  {liveProgress.current_page}/
+                                  {liveProgress.total_pages}
+                                </p>
+                              </div>
+                              <div className="bg-white/5 rounded p-3 border border-white/10">
+                                <p className="text-xs text-purple-300 mb-1">
+                                  Chunks
+                                </p>
+                                <p className="text-lg font-bold text-white">
+                                  {liveProgress.chunks_created}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Success/Error Message */}
+                          {uploadProgress?.status === "success" && (
+                            <div className="p-4 rounded-lg bg-green-500/20 border border-green-400/50">
+                              <div className="flex items-center space-x-3">
+                                <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0" />
+                                <div>
+                                  <p className="text-sm font-semibold text-green-300">
+                                    Success!
+                                  </p>
+                                  <p className="text-xs text-green-200">
+                                    {uploadProgress.result?.chunks} chunks
+                                    created
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {uploadProgress?.status === "error" && (
+                            <div className="p-4 rounded-lg bg-red-500/20 border border-red-400/50">
+                              <div className="flex items-center space-x-3">
+                                <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
+                                <p className="text-sm font-semibold text-red-300">
+                                  {uploadProgress.message}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Logs */}
+                          {isIngesting && (
+                            <div className="mt-4 pt-4 border-t border-white/10">
+                              <button
+                                onClick={() => setShowLogs(!showLogs)}
+                                className="w-full flex items-center justify-center space-x-2 px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all text-sm"
+                              >
+                                {showLogs ? (
+                                  <EyeOff className="w-4 h-4" />
+                                ) : (
+                                  <Eye className="w-4 h-4" />
+                                )}
+                                <span className="font-medium">
+                                  {showLogs ? "Hide" : "View"} Logs
+                                </span>
+                              </button>
+
+                              {showLogs && (
+                                <div className="mt-3 bg-black/40 rounded-lg border border-white/10 p-3 h-40 overflow-y-auto scrollbar-thin font-mono text-xs">
+                                  {logs.length === 0 ? (
+                                    <p className="text-purple-300">
+                                      Waiting for logs...
+                                    </p>
+                                  ) : (
+                                    logs.map((log, idx) => (
+                                      <div
+                                        key={idx}
+                                        className={`${
+                                          log.type === "success"
+                                            ? "text-green-400"
+                                            : log.type === "error"
+                                            ? "text-red-400"
+                                            : log.type === "warning"
+                                            ? "text-yellow-400"
+                                            : "text-purple-300"
+                                        }`}
+                                      >
+                                        <span className="text-gray-500">
+                                          [{log.timestamp}]
+                                        </span>{" "}
+                                        {log.message}
+                                      </div>
+                                    ))
+                                  )}
+                                  <div ref={logsEndRef} />
+                                </div>
+                              )}
+                            </div>
                           )}
                         </div>
                       </div>
-                    </div>
-                  )}
-
-                  {uploadProgress?.status === "error" && (
-                    <div className="p-4 rounded-lg bg-red-500/20 border-red-500/50 border">
-                      <div className="flex items-center space-x-3">
-                        <AlertCircle className="w-5 h-5 text-red-400" />
-                        <p className="font-semibold text-red-300">
-                          {uploadProgress.message}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Live Logs Toggle & Display */}
-              {isIngesting && (
-                <div className="space-y-2">
-                  <button
-                    onClick={() => setShowLogs(!showLogs)}
-                    className="flex items-center space-x-2 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all"
-                  >
-                    {showLogs ? (
-                      <EyeOff className="w-4 h-4" />
-                    ) : (
-                      <Eye className="w-4 h-4" />
                     )}
-                    <span className="text-sm font-medium">
-                      {showLogs ? "Hide" : "View"} Live Logs
-                    </span>
-                  </button>
 
-                  {showLogs && (
-                    <div className="bg-black/40 rounded-lg border border-white/10 p-4 h-64 overflow-y-auto font-mono text-xs">
-                      <div className="space-y-1">
-                        {logs.length === 0 ? (
-                          <p className="text-purple-300">Waiting for logs...</p>
+                    {/* Buttons */}
+                    <div className="flex gap-3 pt-4">
+                      <button
+                        onClick={handleUploadSubmit}
+                        disabled={!uploadFile || isIngesting}
+                        className="flex-1 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-semibold flex items-center justify-center space-x-2"
+                      >
+                        {isIngesting ? (
+                          <>
+                            <Loader className="w-5 h-5 animate-spin" />
+                            <span>Processing...</span>
+                          </>
                         ) : (
-                          logs.map((log, idx) => (
-                            <div
-                              key={idx}
-                              className={`${
-                                log.type === "success"
-                                  ? "text-green-400"
-                                  : log.type === "error"
-                                  ? "text-red-400"
-                                  : log.type === "warning"
-                                  ? "text-yellow-400"
-                                  : "text-purple-300"
-                              }`}
-                            >
-                              <span className="text-gray-500">
-                                [{log.timestamp}]
-                              </span>{" "}
-                              {log.message}
-                            </div>
-                          ))
+                          <>
+                            <Upload className="w-5 h-5" />
+                            <span>Upload & Ingest</span>
+                          </>
                         )}
-                        <div ref={logsEndRef} />
-                      </div>
+                      </button>
+                      <button
+                        onClick={handleReset}
+                        disabled={isIngesting}
+                        className="px-6 py-3 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Cancel
+                      </button>
                     </div>
-                  )}
+                  </div>
                 </div>
-              )}
-
-              {/* Buttons */}
-              <div className="flex gap-3 pt-4">
-                <button
-                  onClick={handleUploadSubmit}
-                  disabled={!uploadFile || isIngesting}
-                  className="flex-1 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-semibold flex items-center justify-center space-x-2"
-                >
-                  {isIngesting ? (
-                    <>
-                      <Loader className="w-5 h-5 animate-spin" />
-                      <span>Processing...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-5 h-5" />
-                      <span>Upload & Ingest</span>
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={handleReset}
-                  disabled={isIngesting}
-                  className="px-6 py-3 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Cancel
-                </button>
               </div>
             </div>
           </div>
-
-          {/* Books List */}
-          {books.length > 0 && (
-            <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20">
-              <h2 className="text-2xl font-bold text-white mb-6">
-                Currently Ingested Books
-              </h2>
-              <div className="grid gap-4">
-                {books.map((book, idx) => (
-                  <div
-                    key={idx}
-                    className="bg-white/5 rounded-lg p-4 border border-white/10 hover:border-purple-400/50 transition-all"
-                  >
-                    <div className="flex items-start space-x-4">
-                      <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-3 rounded-lg flex-shrink-0">
-                        <Book className="w-6 h-6 text-white" />
-                      </div>
-                      <div className="flex-1">
-                        <h3 className="text-lg font-semibold text-white">
-                          {book.title}
-                        </h3>
-                        <p className="text-sm text-purple-300">
-                          by {book.author}
-                        </p>
-                        <div className="mt-2 flex items-center space-x-4 text-xs text-purple-200">
-                          <span className="flex items-center space-x-1">
-                            <FileText className="w-3 h-3" />
-                            <span>{book.total_chunks} chunks</span>
-                          </span>
-                          <span className="text-purple-300">•</span>
-                          <span>Ready for queries</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>
