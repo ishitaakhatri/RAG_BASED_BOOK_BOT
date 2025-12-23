@@ -23,6 +23,7 @@ import time
 import hashlib
 from uuid import uuid4
 from datetime import datetime
+from langsmith import traceable
 from dotenv import load_dotenv
 
 load_dotenv()
