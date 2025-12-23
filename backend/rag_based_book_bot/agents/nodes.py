@@ -13,7 +13,6 @@ import os
 import json
 from typing import List
 from dotenv import load_dotenv
-from langchain_ollama import ChatOllama
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
 load_dotenv()
@@ -45,9 +44,12 @@ EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 # ============================================================================
 
 # Initialize Ollama LLM at module level
-llm = ChatOllama(
-    model="llama3.2:3b",
-    temperature=0.7
+llm = ChatGoogleGenerativeAI(
+    model="models/gemma-3-27b-it", # Use the official model string (Gemma 3 might require models/ prefix)
+    google_api_key=os.getenv("GOOGLE_API_KEY"),
+    temperature=0.7,
+    max_retries=0, # FIX: Prevents passing the unexpected keyword argument
+    convert_system_message_to_human=True # Keep this for Gemma models
 )
 
 # Global instances (lazy loading)

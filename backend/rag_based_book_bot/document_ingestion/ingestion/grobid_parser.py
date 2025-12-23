@@ -1,6 +1,7 @@
 """
-GROBID TEI-XML Parser (Book-Optimized)
-Patches Grobid's flat structure by inferring hierarchy from Chapter titles.
+GROBID TEI-XML Parser (Safe 2-Level Hierarchy)
+Robust strategy for books with NO numbering and NO consistent capitalization.
+Structure: Book -> Chapter -> [All Sections as Siblings]
 """
 import re
 import logging
@@ -11,35 +12,46 @@ logger = logging.getLogger("grobid_parser")
 
 class GrobidTEIParser:
     """
-    Parser for GROBID's TEI-XML output that manually reconstructs 
-    Book -> Chapter -> Section hierarchy by analyzing titles.
+    Parser that enforces a strict 2-Level Hierarchy:
+    1. Level 1 (Anchor): Detected via 'Chapter X', 'Part I'.
+    2. Level 2 (Content): All other sections are treated as direct children of the current Anchor.
+    3. Skips Front/Back matter (Preface, Index, Copyright).
     """
     
-    # TEI namespace
     TEI_NS = {"tei": "http://www.tei-c.org/ns/1.0"}
     
     def __init__(self):
         self.sections = []
         self.metadata = {}
-        # Regex to identify Chapter starts. 
-        # Matches: "Chapter 1", "1. Introduction", "PART I", "Module 1"
-        self.chapter_pattern = re.compile(
-            r"^(chapter\s+\d+|part\s+[IVX\d]+|module\s+\d+|^\d+\.\s+([A-Z]|$))", 
+        
+        # 1. ANCHOR PATTERN: The only triggers for a new top-level container.
+        # Matches: "Chapter 1", "Part I", "Module 5", "Unit 2", "1. Introduction"
+        self.anchor_pattern = re.compile(
+            r"^(chapter\s+\d+|part\s+[IVX\d]+|module\s+\d+|unit\s+\d+|^\d+\.\s+([A-Z]|$))", 
             re.IGNORECASE
         )
-    
+
+        # 2. IGNORE PATTERN: Explicitly skip these sections.
+        self.ignore_pattern = re.compile(
+            r"^(preface|foreword|acknowledg+ments?|copyright|table\s+of\s+contents|contents|list\s+of\s+|dedication|abstract|about\s+the\s+author|colophon|index|bibliography|references)", 
+            re.IGNORECASE
+        )
+
     def parse_tei_xml(self, tei_content: str) -> Dict:
         """
         Parse TEI-XML content from GROBID into a tree structure.
         """
         try:
-            # Parse XML bytes
-            root = etree.fromstring(tei_content.encode('utf-8'))
+            # Handle both bytes and string input
+            if isinstance(tei_content, bytes):
+                root = etree.fromstring(tei_content)
+            else:
+                root = etree.fromstring(tei_content.encode('utf-8'))
             
-            # Extract metadata (Title, Authors, Abstract)
+            # Extract metadata
             self.metadata = self._extract_metadata(root)
             
-            # Extract structured tree of sections (Custom Logic)
+            # Extract structured tree
             self.sections = self._extract_book_structure(root)
             
             return {
@@ -59,8 +71,7 @@ class GrobidTEIParser:
     
     def _extract_book_structure(self, root) -> List[Dict]:
         """
-        Iterates through flat Grobid divs and reconstructs Book -> Chapter -> Section tree.
-        Filters out front matter (pages before Chapter 1).
+        Iterates through divs to reconstruct the book tree.
         """
         body = root.find(".//tei:text/tei:body", self.TEI_NS)
         if body is None:
@@ -69,86 +80,98 @@ class GrobidTEIParser:
         all_divs = body.findall("tei:div", self.TEI_NS)
         
         structured_chapters = []
-        current_chapter = None
+        current_chapter_node = None
         
-        # Flag to skip front matter (Preface, Foreword, etc.)
-        is_content_started = False
+        # 'Content Started' flag prevents skipping legitimate "Introduction" chapters
+        # just because they appear before "Chapter 1"
+        has_content_started = False
 
         for div in all_divs:
-            # 1. Process the raw div to get title and text
-            node = self._process_div_flat(div)
+            node = self._process_div_content(div)
             title = node["title"]
-            
-            # 2. Check if this div marks the start of a new Chapter
-            if self.chapter_pattern.match(title):
-                is_content_started = True # Stop skipping front matter
+            clean_title = title.strip().lower()
+
+            # --- 1. SKIP LOGIC ---
+            # If we haven't hit Chapter 1 yet, be aggressive about skipping junk
+            if not has_content_started:
+                if self.ignore_pattern.match(title):
+                    logger.info(f"Skipping Front Matter: {title}")
+                    continue
+                # Skip tiny generic snippets at the start (artifacts/page headers)
+                if len(node["text"]) < 50 and "intro" not in clean_title:
+                    continue
+
+            # --- 2. ANCHOR LOGIC (New Chapter) ---
+            if self.anchor_pattern.match(title):
+                has_content_started = True
                 
-                # Save the previous chapter if it exists
-                if current_chapter:
-                    structured_chapters.append(current_chapter)
-                
-                # Init new Chapter node
-                current_chapter = {
+                # Create NEW Chapter Node
+                current_chapter_node = {
                     "title": title,
-                    "text": node["text"], # Add the chapter intro text
-                    "path": [title],      # Path is just [Chapter Title]
-                    "subsections": []
+                    "text": node["text"],
+                    "path": [title],      # Path Context: [Chapter 1]
+                    "subsections": [] 
                 }
+                structured_chapters.append(current_chapter_node)
                 logger.info(f"New Chapter Detected: {title}")
-
-            elif is_content_started:
-                # We are inside a chapter, treat this div as a subsection
-                if current_chapter:
-                    # Update path to include Chapter parent
-                    node["path"] = current_chapter["path"] + [title]
-                    current_chapter["subsections"].append(node)
-                else:
-                    # Edge case: Content started but no "Chapter" title found yet.
-                    # Treat as top-level section.
-                    structured_chapters.append(node)
+                
+            # --- 3. CHILD LOGIC (Section inside Chapter) ---
+            elif current_chapter_node:
+                # We are inside a chapter. 
+                # Since we can't distinguish Section vs Subsection, we treat ALL as direct children.
+                # This creates a flat list of sections under the chapter.
+                
+                # Update Path Context: [Chapter 1, Section Title]
+                node["path"] = current_chapter_node["path"] + [title]
+                current_chapter_node["subsections"].append(node)
+                
+            # --- 4. ORPHAN LOGIC (Before Chapter 1) ---
             else:
-                # We are still in front matter (Preface, TOC, etc.) -> SKIP
-                continue
-
-        # Append the final chapter
-        if current_chapter:
-            structured_chapters.append(current_chapter)
-
-        # Fallback: If regex failed to find ANY chapters (e.g. flat book), return all flat nodes
-        if not structured_chapters and all_divs:
-            logger.warning("No chapters detected via Regex. Returning flat structure.")
-            return [self._process_div_flat(div) for div in all_divs]
+                # This handles "Introduction" or "Prologue" that appears before Chapter 1
+                # We treat them as root-level chapters themselves.
+                has_content_started = True 
+                node["path"] = [title]
+                structured_chapters.append(node)
+                logger.info(f"Root Level Section (Pre-Chapter): {title}")
 
         return structured_chapters
 
-    def _process_div_flat(self, div_element) -> Dict:
+    def _process_div_content(self, div_element) -> Dict:
         """
-        Process a single div to extract text and title, without recursion.
+        Process a single div to extract text and title.
         """
         # Get Title
         head = div_element.find("tei:head", self.TEI_NS)
         title = self._extract_text_recursive(head).strip() if head is not None else "Untitled Section"
         
-        # Get Content (Paragraphs & Formulas)
+        # Get Content (Paragraphs, Formulas, Lists)
         content_text_parts = []
+        
         for child in div_element:
             # Skip the head we already processed
             if child == head:
                 continue
                 
-            if child.tag == f"{{{self.TEI_NS['tei']}}}p":
+            tag = child.tag.replace(f"{{{self.TEI_NS['tei']}}}", "")
+            
+            if tag == "p":
                 text = self._extract_text_recursive(child).strip()
                 if text:
                     content_text_parts.append(text)
-            elif child.tag == f"{{{self.TEI_NS['tei']}}}formula":
+            elif tag == "formula":
                  text = child.text if child.text else ""
                  if text:
                      content_text_parts.append(f"[FORMULA: {text}]")
+            elif tag == "list":
+                 for item in child.findall(".//tei:item", self.TEI_NS):
+                    text = self._extract_text_recursive(item).strip()
+                    if text:
+                        content_text_parts.append(f"• {text}")
 
         return {
             "title": title,
             "text": "\n\n".join(content_text_parts),
-            "path": [title], # Default path (will be overwritten if it becomes a child)
+            "path": [title], # Placeholder, will be updated by parent logic
             "subsections": [] 
         }
 
@@ -187,11 +210,4 @@ class GrobidTEIParser:
         """Recursively extract text from element and children"""
         if element is None:
             return ""
-        texts = []
-        if element.text:
-            texts.append(element.text)
-        for child in element:
-            texts.append(self._extract_text_recursive(child))
-            if child.tail:
-                texts.append(child.tail)
-        return "".join(texts)
+        return "".join(element.itertext())
