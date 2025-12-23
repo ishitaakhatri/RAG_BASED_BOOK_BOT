@@ -40,10 +40,10 @@ class SemanticChunker:
     
     def __init__(
         self,
-        model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+        model_name: str = "Qwen/Qwen3-Embedding-0.6B",
         similarity_threshold: float = 0.75,
-        min_chunk_size: int = 200,
-        max_chunk_size: int = 1500,
+        min_chunk_size: int = 150,
+        max_chunk_size: int = 300,
         encoding_name: str = "cl100k_base"
     ):
         """
