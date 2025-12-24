@@ -35,6 +35,22 @@ from rag_based_book_bot.document_ingestion.ingestion.grobid_parser import (
     GrobidTEIParser
 )
 
+# ---- Text Sanitization (Tokenizer Safety) ----
+SPECIAL_TOKENS = {
+    "<|endoftext|>",
+    "<|assistant|>",
+    "<|user|>",
+    "<|system|>"
+}
+
+def sanitize_text(text: str) -> str:
+    if not text:
+        return ""
+    for tok in SPECIAL_TOKENS:
+        text = text.replace(tok, "")
+    return text
+
+
 # Config
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX = os.getenv("PINECONE_INDEX_NAME", "coding-books-2")
@@ -146,11 +162,18 @@ class SemanticBookIngestor:
                     grobid_data = self._process_pdf_with_grobid(pdf_path)
                     if grobid_data and grobid_data.get("success"):
                         logger.info("🌳 Using Hierarchical Tree Chunking")
+
+                        # Sanitize GROBID text BEFORE chunking
+                        for section in grobid_data.get("sections", []):
+                            if "text" in section:
+                                section["text"] = sanitize_text(section["text"])
+
                         chunks = self.hierarchical_chunker.process_document_tree(
                             grobid_data['sections'], book_title, author
                         )
                         method = "hierarchical"
                         tracker.update_chunks(len(chunks))
+
                 except Exception as e:
                     logger.warning(f"GROBID chunking failed: {e}, falling back to semantic chunking")
                     tracker.add_error(f"GROBID error: {str(e)}")
@@ -161,7 +184,13 @@ class SemanticBookIngestor:
                 
                 try:
                     with pdfplumber.open(pdf_path) as pdf:
-                        pages_text = [{"page": i+1, "text": p.extract_text() or ""} for i, p in enumerate(pdf.pages)]
+                        pages_text = [
+                                    {
+                                        "page": i + 1,
+                                        "text": sanitize_text(p.extract_text() or "")
+                                    }
+                                    for i, p in enumerate(pdf.pages)
+                                ]
                         total_pages = len(pdf.pages)
                         total_batches = (total_pages + 19) // 20  # Batch size = 20 pages
                         
@@ -251,7 +280,7 @@ class SemanticBookIngestor:
 
         try:
             # Extract texts and generate embeddings
-            texts = [c[0] for c in chunks]
+            texts = [sanitize_text(c[0]) for c in chunks]
             logger.info(f"Generating embeddings for {len(texts)} chunks...")
             
             tracker.start_embedding()

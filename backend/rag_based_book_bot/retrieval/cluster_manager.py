@@ -203,7 +203,7 @@ class ClusterManager:
 if __name__ == "__main__":
     # Simulate embeddings
     n_chunks = 1000
-    embedding_dim = 384
+    embedding_dim = 1024
     
     embeddings = np.random.rand(n_chunks, embedding_dim).astype(np.float32)
     chunk_ids = [f"chunk_{i}" for i in range(n_chunks)]

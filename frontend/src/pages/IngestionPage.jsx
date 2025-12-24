@@ -240,7 +240,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     return uploadProgress?.percentage ?? 0;
   };
 
-
   const currentPercentage = calculatePercentage();
 
   const currentStatus =
@@ -284,7 +283,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
       </header>
 
       {/* Main Content - Scrollable */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar">
+      <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-purple-500 scrollbar-track-white/5">
         <div className="px-4 sm:px-6 lg:px-8 py-8">
           <div className="max-w-7xl mx-auto">
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -298,7 +297,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                   </h3>
 
                   {/* Books Vault - Scrollable */}
-                  <div className="space-y-2 max-h-96 overflow-y-auto scrollbar-thin">
+                  <div className="space-y-2 max-h-96 overflow-y-auto scrollbar-thin scrollbar-thumb-purple-500 scrollbar-track-white/5">
                     <button className="w-full text-left px-3 py-2 rounded-lg transition-all bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold">
                       All Books
                     </button>
@@ -559,7 +558,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                               </button>
 
                               {showLogs && (
-                                <div className="mt-3 bg-black/40 rounded-lg border border-white/10 p-3 h-40 overflow-y-auto scrollbar-thin font-mono text-xs">
+                                <div className="mt-3 bg-black/40 rounded-lg border border-white/10 p-3 h-40 overflow-y-auto scrollbar-thin scrollbar-thumb-purple-500 scrollbar-track-white/10 font-mono text-xs">
                                   {logs.length === 0 ? (
                                     <p className="text-purple-300">
                                       Waiting for logs...
