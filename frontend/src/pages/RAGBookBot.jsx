@@ -1,4 +1,3 @@
-//RAGBookBot.jsx
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import "tailwindcss/tailwind.css";
@@ -29,6 +28,7 @@ import {
   MessageCircle,
   History,
   X,
+  Copy,
   Download,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -968,26 +968,58 @@ function MessageBubble({ message, id }) {
                 <h4 className="font-semibold text-purple-100">Answer</h4>
               </div>
               <div className="prose prose-invert prose-p:leading-relaxed prose-pre:bg-black/50 max-w-none text-gray-100">
-                <ReactMarkdown
-                  components={{
-                    code: ({ node, inline, className, children, ...props }) => {
-                      return (
-                        <code
-                          className={`${className} ${
-                            inline
-                              ? "bg-white/10 rounded px-1 py-0.5"
-                              : "block bg-black/30 p-4 rounded-lg overflow-x-auto"
-                          }`}
-                          {...props}
-                        >
-                          {children}
-                        </code>
-                      );
-                    },
-                  }}
-                >
-                  {message.content}
-                </ReactMarkdown>
+               <ReactMarkdown
+  components={{
+    code: ({ node, inline, className, children, ...props }) => {
+      const [copied, setCopied] = React.useState(false);
+      
+      const handleCopy = () => {
+        const codeText = String(children).replace(/\n$/, '');
+        navigator.clipboard.writeText(codeText);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      };
+      
+      if (inline) {
+        return (
+          <code className="bg-white/10 rounded px-1 py-0.5" {...props}>
+            {children}
+          </code>
+        );
+      }
+      
+      return (
+        <div className="relative group my-4">
+          <button
+            onClick={handleCopy}
+            className="absolute top-2 right-2 p-2 bg-purple-600/80 hover:bg-purple-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-200 z-10 flex items-center space-x-1.5 shadow-lg"
+          >
+            {copied ? (
+              <>
+                <CheckCircle className="w-4 h-4" />
+                <span className="text-xs">Copied!</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-4 h-4" />
+                <span className="text-xs">Copy</span>
+              </>
+            )}
+          </button>
+          <code
+            className="block bg-gradient-to-br from-gray-900 to-gray-800 p-4 pt-6 rounded-lg overflow-x-auto border border-white/10"
+            {...props}
+          >
+            {children}
+          </code>
+        </div>
+      );
+    },
+  }}
+>
+  {message.content}
+</ReactMarkdown>
+
               </div>
             </div>
 
@@ -1022,76 +1054,90 @@ function MessageBubble({ message, id }) {
             )}
 
             {/* Sources Section */}
-            {message.sources && message.sources.length > 0 && (
+         {message.sources && message.sources.length > 0 && (
               <div className="mt-3">
                 <button
                   onClick={() => setShowSources(!showSources)}
-                  className="flex items-center space-x-2 text-sm text-purple-300 hover:text-purple-100 transition-colors w-full justify-between bg-white/5 p-3 rounded-lg border border-white/10 hover:border-purple-400/50"
+                  className="flex items-center space-x-2 text-sm text-purple-300 hover:text-purple-100 transition-all duration-300 w-full justify-between bg-gradient-to-r from-white/5 to-white/10 p-4 rounded-xl border border-white/10 hover:border-purple-400/50 hover:shadow-lg hover:shadow-purple-500/20 group"
                 >
                   <div className="flex items-center space-x-2">
-                    <Book className="w-4 h-4" />
+                    <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-2 rounded-lg group-hover:scale-110 transition-transform duration-300">
+                      <Book className="w-4 h-4 text-white" />
+                    </div>
                     <span className="font-semibold">
                       {message.sources.length} Source
                       {message.sources.length > 1 ? "s" : ""}
                     </span>
                   </div>
-                  {showSources ? (
-                    <ChevronUp className="w-4 h-4" />
-                  ) : (
-                    <ChevronDown className="w-4 h-4" />
-                  )}
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs px-2 py-1 bg-purple-500/20 rounded-full border border-purple-400/30">
+                      References
+                    </span>
+                    {showSources ? (
+                      <ChevronUp className="w-4 h-4 group-hover:transform group-hover:-translate-y-1 transition-transform" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4 group-hover:transform group-hover:translate-y-1 transition-transform" />
+                    )}
+                  </div>
                 </button>
 
                 {showSources && (
-                  <div className="mt-2 space-y-2">
+                  <div className="mt-3 space-y-3">
                     {message.sources.map((source, idx) => (
                       <div
                         key={idx}
-                        className="bg-white/5 rounded-lg p-3 border border-white/10"
+                        className="group bg-gradient-to-br from-purple-900/20 via-pink-900/10 to-purple-900/20 rounded-xl p-4 border border-purple-400/20 hover:border-purple-400/50 transition-all duration-300 hover:shadow-xl hover:shadow-purple-500/20 backdrop-blur-sm relative overflow-hidden"
                       >
-                        <div className="flex items-start space-x-3">
-                          <div className="bg-gradient-to-br from-purple-500 to-pink-500 rounded p-2 flex-shrink-0">
-                            <Book className="w-4 h-4 text-white" />
+                        {/* Animated gradient overlay */}
+                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-purple-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+
+                        <div className="relative flex items-start space-x-4">
+                          {/* Icon with enhanced styling */}
+                          <div className="bg-gradient-to-br from-purple-500 via-purple-600 to-pink-500 rounded-xl p-3 flex-shrink-0 shadow-lg shadow-purple-500/30 group-hover:scale-105 group-hover:rotate-3 transition-all duration-300">
+                            <Book className="w-5 h-5 text-white" />
                           </div>
+
                           <div className="flex-1 min-w-0">
-                            <div className="text-sm font-semibold text-white mb-1">
+                            {/* Book title */}
+                            <div className="text-base font-bold text-white mb-2 leading-tight group-hover:text-purple-100 transition-colors">
                               {source.book_title}
                             </div>
+
+                            {/* Author */}
                             {source.author && (
-                              <div className="text-xs text-purple-300 mb-2">
-                                by {source.author}
+                              <div className="text-xs text-purple-300/80 mb-3 italic flex items-center space-x-1">
+                                <span className="w-1 h-1 bg-purple-400 rounded-full" />
+                                <span>by {source.author}</span>
                               </div>
                             )}
-                            <div className="text-xs text-purple-200 space-y-1">
-                              <div className="flex items-center space-x-2">
-                                <FileText className="w-3 h-3" />
-                                <span>{source.chapter}</span>
-                              </div>
-                              {source.page && <div>Page {source.page}</div>}
-                              {source.relevance && (
-                                <div className="flex items-center space-x-2 mt-2">
-                                  <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
-                                    <div
-                                      className="h-full bg-gradient-to-r from-green-400 to-green-500 rounded-full"
-                                      style={{ width: `${source.relevance}%` }}
-                                    />
-                                  </div>
-                                  <span className="text-green-300 text-xs font-mono">
-                                    {source.relevance.toFixed(0)}%
-                                  </span>
-                                </div>
+
+                            {/* Chapter info with pill design */}
+                            <div className="inline-flex items-center bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-400/30 rounded-lg px-3 py-2 text-xs text-purple-200">
+                              <div className="w-1.5 h-1.5 bg-purple-400 rounded-full mr-2 animate-pulse" />
+                              <span className="font-medium">{source.chapter}</span>
+                              {source.page && (
+                                <>
+                                  <span className="mx-2 text-purple-400">•</span>
+                                  <span className="text-purple-300">Page {source.page}</span>
+                                </>
                               )}
                             </div>
                           </div>
-                          <span
-                            className={`px-2 py-1 rounded text-xs flex-shrink-0 ${
-                              source.type === "code"
-                                ? "bg-green-500/30 text-green-200"
-                                : "bg-blue-500/30 text-blue-200"
-                            }`}
-                          >
-                            {source.type}
-                          </span>
+
+                          {/* Relevance percentage badge */}
+                          {source.relevance && (
+                            <div className="flex-shrink-0">
+                              <div className="relative">
+                                <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg blur opacity-50 group-hover:opacity-75 transition-opacity" />
+                                <div className="relative bg-gradient-to-r from-purple-600 to-pink-600 text-white text-sm font-bold px-4 py-2 rounded-lg border border-purple-400/30 shadow-lg">
+                                  {source.relevance.toFixed(0)}%
+                                </div>
+                              </div>
+                              <div className="text-[10px] text-purple-300 text-center mt-1">
+                                relevance
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}
