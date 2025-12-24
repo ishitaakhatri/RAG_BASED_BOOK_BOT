@@ -39,7 +39,7 @@ from rag_based_book_bot.document_ingestion.ingestion.grobid_parser import (
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX = os.getenv("PINECONE_INDEX_NAME", "coding-books-2")
 PINECONE_NAMESPACE = os.getenv("PINECONE_NAMESPACE", "books_rag")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-0.6B")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 BATCH_SIZE = 100
 
 # GROBID Config
@@ -237,13 +237,6 @@ class SemanticBookIngestor:
     ):
         """
         Generate embeddings and upsert to Pinecone with progress tracking
-        
-        Args:
-            chunks: List of (text, metadata) tuples
-            book_id: Unique book identifier
-            book_title: Title of the book
-            author: Author name
-            tracker: Optional progress tracker for real-time updates
         """
         if not self.pinecone_index:
             logger.warning("Pinecone index not initialized, skipping upsert")
@@ -270,18 +263,40 @@ class SemanticBookIngestor:
             # Prepare vectors for upsert
             vectors = []
             for i, (text, meta) in enumerate(chunks):
+                
+                # --- ALIGNMENT LOGIC ---
+                # Ensure Preview exists (especially for semantic fallback)
+                if "preview" not in meta:
+                    # heuristic: take first 100 chars, remove newlines
+                    preview_text = text.strip()[:100].replace('\n', ' ') + "..."
+                    meta["preview"] = preview_text
+
+                # Ensure Chapter/Section titles exist (for semantic fallback)
+                if "chapter_title" not in meta:
+                    # Semantic chunks use section_title if available (from GROBID structure mode), 
+                    # otherwise default
+                    meta["chapter_title"] = meta.get("section_title", "General Content")
+                    # If section_title was also missing
+                    if meta["chapter_title"] == "General Content":
+                         meta["section_title"] = f"Part {meta.get('chunk_index', i)}"
+                
                 clean_meta = {
                     "text": text,
                     "book_id": book_id,
                     "book_title": book_title,
                     "author": author,
+                    # NEW FIELDS EXPLICITLY INCLUDED
+                    "chapter_title": meta.get("chapter_title", "Unknown Chapter"),
+                    "section_title": meta.get("section_title", "Unknown Section"),
+                    "preview": meta.get("preview", ""),
+                    # EXISTING FIELDS
                     "hierarchy_path": meta.get("hierarchy_path", "root"),
                     "hierarchy_level": int(meta.get("hierarchy_level", 0)),
-                    "section_title": meta.get("section_title", "Unknown"),
                     "chunk_index": int(meta.get("chunk_index", i)),
                     "chunk_type": meta.get("chunk_type", "text_block"),
                     "page_number": int(meta.get("page_start", 0))
                 }
+                
                 vectors.append({
                     "id": f"{book_id}_{i}",
                     "values": embeddings[i].tolist(),

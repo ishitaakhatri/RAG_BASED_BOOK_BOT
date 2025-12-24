@@ -528,41 +528,43 @@ def vector_search_node(state: AgentState) -> AgentState:
         for match in matches:
             metadata = match.get("metadata", {})
             
-            # Get book metadata
+            # --- UPDATED METADATA EXTRACTION ---
             book_title = metadata.get("book_title", "Unknown Book")
             author = metadata.get("author", "Unknown Author")
             
-            # Get page info
-            page_start = metadata.get("page_start")
-            page_end = metadata.get("page_end")
-            chunk_index = metadata.get("chunk_index", 0)
+            # NEW: Direct mapping from metadata fields
+            chapter_title = metadata.get("chapter_title", "Unknown Chapter")
+            section_title = metadata.get("section_title", "")
+            preview_text = metadata.get("preview", "")
             
-            # Try to get chapter info
-            chapter_titles = metadata.get("chapter_titles", [])
-            chapter_numbers = metadata.get("chapter_numbers", [])
-            section_titles = metadata.get("section_titles", [])
+            # Fallback logic for legacy chunks (if any)
+            if chapter_title == "Unknown Chapter" and "hierarchy_path" in metadata:
+                 path_parts = metadata["hierarchy_path"].split(" > ")
+                 if len(path_parts) > 0: chapter_title = path_parts[0]
             
-            # Build chapter string
-            if chapter_titles and chapter_numbers:
-                chapter_str = f"Chapter {chapter_numbers[0]}: {chapter_titles[0]}"
-            elif page_start and page_end and page_start != page_end:
-                chapter_str = f"Pages {page_start}-{page_end}"
-            elif page_start:
-                chapter_str = f"Page {page_start}"
+            # Construct display strings
+            if section_title and section_title != chapter_title:
+                chapter_str = f"{chapter_title}: {section_title}"
             else:
-                chapter_str = f"Semantic Chunk #{chunk_index + 1}"
-            
+                chapter_str = chapter_title
+
+            # Get page info (fallback to 0 if missing)
+            page_start = metadata.get("page_number", 0)
+            if page_start == 0:
+                 page_start = int(metadata.get("page_start", 0))
+
             chunk = DocumentChunk(
                 chunk_id=match["id"],
                 content=metadata.get("text", ""),
                 chapter=chapter_str,
-                section=", ".join(section_titles) if section_titles else "",
+                section=section_title,
                 page_number=page_start,
-                chunk_type="code" if metadata.get("contains_code") else "text",
+                chunk_type=metadata.get("chunk_type", "text"),
                 book_title=book_title,
                 author=author,
-                chapter_title=chapter_titles[0] if chapter_titles else "",
-                chapter_number=chapter_numbers[0] if chapter_numbers else ""
+                # New fields
+                chapter_title=chapter_title,
+                preview=preview_text
             )
             
             retrieved_chunks.append(RetrievedChunk(
@@ -629,16 +631,24 @@ def reranking_node(state: AgentState) -> AgentState:
         
         reranked_chunks = []
         for chunk_data in reranked:
-            chunk = DocumentChunk(
-                chunk_id=chunk_data['metadata']['chunk_id'],
-                content=chunk_data['text'],
-                chapter=chunk_data['metadata']['chapter'],
-                section="",
-                page_number=chunk_data['metadata']['page'],
-                chunk_type=chunk_data['metadata']['type'],
-                book_title=chunk_data['metadata'].get('book_title', 'Unknown Book'),
-                author=chunk_data['metadata'].get('author', 'Unknown Author')
-            )
+            # Reconstruct DocumentChunk (we lose the extra fields in reranker round-trip if not careful)
+            # Efficient way: find original chunk in retrieved_chunks
+            original_rc = next((rc for rc in state.retrieved_chunks if rc.chunk.chunk_id == chunk_data['metadata']['chunk_id']), None)
+            
+            if original_rc:
+                chunk = original_rc.chunk
+            else:
+                # Fallback reconstruction
+                chunk = DocumentChunk(
+                    chunk_id=chunk_data['metadata']['chunk_id'],
+                    content=chunk_data['text'],
+                    chapter=chunk_data['metadata']['chapter'],
+                    section="",
+                    page_number=chunk_data['metadata']['page'],
+                    chunk_type=chunk_data['metadata']['type'],
+                    book_title=chunk_data['metadata'].get('book_title', 'Unknown Book'),
+                    author=chunk_data['metadata'].get('author', 'Unknown Author')
+                )
             
             reranked_chunks.append(RetrievedChunk(
                 chunk=chunk,
@@ -719,16 +729,14 @@ def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState
             for m in results.get('matches', []):
                 metadata = m.get('metadata', {})
                 
-                page_start = metadata.get('page_start')
-                page_end = metadata.get('page_end')
-                chunk_index = metadata.get('chunk_index', 0)
+                # New metadata handling
+                chapter_title = metadata.get("chapter_title", "Unknown Chapter")
+                section_title = metadata.get("section_title", "")
                 
-                if page_start and page_end and page_start != page_end:
-                    chapter_str = f"Pages {page_start}-{page_end}"
-                elif page_start:
-                    chapter_str = f"Page {page_start}"
+                if section_title and section_title != chapter_title:
+                    chapter_str = f"{chapter_title}: {section_title}"
                 else:
-                    chapter_str = f"Semantic Chunk #{chunk_index + 1}"
+                    chapter_str = chapter_title
                 
                 retrieved.append({
                     'id': m['id'],
@@ -737,7 +745,7 @@ def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState
                     'book_title': metadata.get('book_title', 'Unknown Book'),
                     'author': metadata.get('author', 'Unknown Author'),
                     'chapter': chapter_str,
-                    'page': page_start
+                    'page': metadata.get('page_number', 0)
                 })
             
             return retrieved

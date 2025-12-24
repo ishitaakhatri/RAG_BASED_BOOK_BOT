@@ -40,7 +40,17 @@ class HierarchicalChunker:
         
         # 1. Construct the Context Header (Breadcrumbs)
         # format: "Context: The Pragmatic Programmer > Chapter 1: A Pragmatic Philosophy > The Cat Ate My Source Code"
-        hierarchy_path_str = " > ".join(node["path"])
+        
+        # Extract metadata for strict hierarchy
+        path = node.get("path", [])
+        
+        # Chapter is strictly the first element in the path (Level 1)
+        chapter_title = path[0] if path else "Unknown Chapter"
+        
+        # Section is the title of the current node
+        section_title = node.get("title", "Untitled Section")
+        
+        hierarchy_path_str = " > ".join(path)
         context_header = f"Context: {book_title} > {hierarchy_path_str}\n"
         
         context_tokens = len(self.tokenizer.encode(context_header))
@@ -58,12 +68,17 @@ class HierarchicalChunker:
                 # Prepend context to the actual text chunk
                 final_text = f"{context_header}\n{segment}"
                 
+                # Generate Preview: First 100 characters of the ACTUAL content (not the header)
+                preview_text = segment.strip()[:100] + "..."
+                
                 metadata = {
                     "book_title": book_title,
                     "author": author,
-                    "section_title": node["title"],
+                    "section_title": section_title,
+                    "chapter_title": chapter_title,  # <--- NEW FIELD
+                    "preview": preview_text,         # <--- NEW FIELD
                     "hierarchy_path": hierarchy_path_str,
-                    "hierarchy_level": len(node["path"]),
+                    "hierarchy_level": len(path),
                     "chunk_type": "text_block",
                     "chunk_index": i
                 }

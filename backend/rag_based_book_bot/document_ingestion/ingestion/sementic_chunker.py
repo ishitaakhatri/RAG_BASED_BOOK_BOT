@@ -40,7 +40,7 @@ class SemanticChunker:
     
     def __init__(
         self,
-        model_name: str = "Qwen/Qwen3-Embedding-0.6B",
+        model_name: str = "BAAI/bge-m3",
         similarity_threshold: float = 0.75,
         min_chunk_size: int = 150,
         max_chunk_size: int = 300,
