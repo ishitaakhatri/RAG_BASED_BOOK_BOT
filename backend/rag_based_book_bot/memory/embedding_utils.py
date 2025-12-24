@@ -61,11 +61,11 @@ def embed_conversation_turn(user_query: str, assistant_response: str) -> List[fl
         assistant_response: Assistant's answer
     
     Returns:
-        384-dimensional embedding vector
+        1024-dimensional embedding vector
     
     Example:
         >>> embed_conversation_turn("What is CNN?", "Convolutional Neural Networks...")
-        [0.234, 0.567, -0.123, ...]  # 384 dimensions
+        [0.234, 0.567, -0.123, ...]  #1024 dimensions
     """
     model = get_embedding_model()
     

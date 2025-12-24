@@ -41,7 +41,7 @@ class EnhancedContextCompressor:
         """Lazy load embedding model (only when needed)"""
         if self.embedding_model is None:
             print("  Loading embedding model for semantic deduplication...")
-            self.embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+            self.embedding_model = SentenceTransformer("Qwen/Qwen3-Embedding-0.6B")
         return self.embedding_model
     
     def count_tokens(self, text: str) -> int:

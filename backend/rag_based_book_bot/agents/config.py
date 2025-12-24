@@ -11,8 +11,8 @@ import os
 @dataclass
 class EmbeddingConfig:
     """Configuration for embedding generation."""
-    model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
-    dimension: int = 384
+    model_name: str = "Qwen/Qwen3-Embedding-0.6B"
+    dimension: int = 1024
     batch_size: int = 32
     normalize: bool = True
     use_gpu: bool = False
