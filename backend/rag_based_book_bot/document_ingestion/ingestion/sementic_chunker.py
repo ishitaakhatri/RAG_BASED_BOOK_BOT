@@ -255,10 +255,7 @@ class SemanticChunker:
             # Progress
             logger.info(f"📊 Processing pages {batch_start+1}-{batch_end} ({batch_end/total_pages*100:.1f}% complete)")
             
-            # Call progress callback
-            if progress_callback:
-                batch_num = (batch_start // batch_size) + 1
-                progress_callback(batch_num, batch_end)
+           
 
             
             # Combine batch pages into one text block
@@ -280,6 +277,10 @@ class SemanticChunker:
                 book_title,
                 author
             )
+
+            if progress_callback:
+                batch_num = (batch_start // batch_size) + 1
+                progress_callback(batch_num, batch_end)
             
             # Add to results with metadata
             for chunk in batch_chunks:
@@ -324,7 +325,7 @@ class SemanticChunker:
             sentences,
             show_progress_bar=False,
             convert_to_numpy=True,
-            batch_size=64
+            batch_size=16
         )
         
         # Group sentences by similarity

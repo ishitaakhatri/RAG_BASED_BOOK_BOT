@@ -2,64 +2,38 @@
 @import "tailwindcss/components";
 @import "tailwindcss/utilities";
 
-/* ==================== GLOBAL RESET ==================== */
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-html,
-body {
-  height: 100%;
-  overflow: auto;
-}
+/* ==================== CUSTOM SCROLLBAR (PURPLE THEME) ==================== */
 
-/* Prevent zoom on input focus for iOS */
-@media (max-width: 768px) {
-  input,
-  textarea,
-  select {
-    font-size: 16px;
-  }
-}
-
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New",
-    monospace;
-}
-
-/* ==================== CHAT MESSAGES SCROLLBAR ==================== */
-.chat-messages {
-  overflow-y: auto !important;
-  overflow-x: hidden;
-  scroll-behavior: smooth;
-  scrollbar-width: thin;
-  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.2);
-}
-
-/* WebKit browsers (Chrome, Safari, Edge) */
-.chat-messages::-webkit-scrollbar {
+/* Applies only where .custom-scrollbar is used */
+.custom-scrollbar::-webkit-scrollbar {
   width: 8px;
 }
 
-.chat-messages::-webkit-scrollbar-track {
+.custom-scrollbar::-webkit-scrollbar-track {
   background: rgba(255, 255, 255, 0.05);
   border-radius: 10px;
 }
 
-.chat-messages::-webkit-scrollbar-thumb {
+.custom-scrollbar::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
   border-radius: 10px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
 
-.chat-messages::-webkit-scrollbar-thumb:hover {
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
   background-clip: content-box;
 }
 
+/* Firefox */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #a855f7 rgba(255, 255, 255, 0.05);
+}
+
 /* ==================== THIN SCROLLBAR VARIANT ==================== */
+
 .scrollbar-thin::-webkit-scrollbar {
   width: 5px;
   height: 5px;
@@ -84,30 +58,99 @@ code {
   scrollbar-color: #a855f7 transparent;
 }
 
-/* ==================== RESPONSIVE UTILITIES ==================== */
-/* Mobile-first adjustments */
-@media (max-width: 640px) {
-  /* Reduce padding on small devices */
-  .px-4 {
-    padding-left: 0.75rem;
-    padding-right: 0.75rem;
-  }
+/* ==================== CHAT / LOG SCROLL AREA ==================== */
 
-  /* Ensure proper spacing for mobile */
-  gap-3 {
-    gap: 0.75rem !important;
-  }
+.chat-messages {
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.2);
 }
 
-/* Tablet and above */
+.chat-messages::-webkit-scrollbar {
+  width: 8px;
+}
+
+.chat-messages::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+}
+
+.chat-messages::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.chat-messages::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
+}
+
+/* ==================== SAFE GLOBAL LAYOUT ==================== */
+
+/* Let Tailwind Preflight handle margins/padding */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+/* Desktop: app controls scrolling, not body */
 @media (min-width: 768px) {
   html,
   body {
     overflow: hidden;
   }
+
+  #root {
+    height: 100%;
+    overflow: hidden;
+  }
+}
+
+/* ==================== MOBILE SAFETY ==================== */
+
+/* Prevent iOS zoom on input focus */
+@media (max-width: 768px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* Touch-friendly targets */
+@media (max-width: 768px) {
+  button,
+  a {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* ==================== CUSTOM RESPONSIVE HELPERS ==================== */
+/* Use these INSTEAD of overriding Tailwind utilities */
+
+@media (max-width: 640px) {
+  .mobile-px {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  .mobile-gap {
+    gap: 0.75rem;
+  }
 }
 
 /* ==================== INPUT STYLING ==================== */
+
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
@@ -117,12 +160,10 @@ input[type="range"] {
 
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
-  appearance: none;
   width: 16px;
   height: 16px;
   border-radius: 50%;
   background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
-  cursor: pointer;
   box-shadow: 0 2px 8px rgba(168, 85, 247, 0.4);
 }
 
@@ -131,7 +172,6 @@ input[type="range"]::-moz-range-thumb {
   height: 16px;
   border-radius: 50%;
   background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
-  cursor: pointer;
   border: none;
   box-shadow: 0 2px 8px rgba(168, 85, 247, 0.4);
 }
@@ -140,73 +180,14 @@ input[type="checkbox"] {
   cursor: pointer;
 }
 
-/* ==================== ANIMATION ENHANCEMENTS ==================== */
-@keyframes slideInLeft {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(0);
-  }
-}
-
-@keyframes slideOutLeft {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(-100%);
-  }
-}
-
-@keyframes fadeInScale {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-/* ==================== RESPONSIVE GRID ==================== */
-@media (max-width: 1024px) {
-  /* Stack on mobile */
-  .grid-cols-1 {
-    grid-template-columns: 1fr;
-  }
-
-  /* Hide sidebar on mobile, adjust on tablet */
-  .hidden {
-    display: none !important;
-  }
-}
-
-@media (min-width: 1024px) {
-  /* Show sidebar on desktop */
-  .hidden.lg\:flex {
-    display: flex !important;
-  }
-}
-
-/* ==================== TOUCH-FRIENDLY TARGETS ==================== */
-@media (max-width: 768px) {
-  button,
-  a {
-    min-height: 44px;
-    min-width: 44px;
-    padding: 0.5rem;
-  }
-}
-
 /* ==================== ACCESSIBILITY ==================== */
+
 :focus-visible {
   outline: 2px solid #a855f7;
   outline-offset: 2px;
 }
 
-/* Reduce motion for users with motion sensitivity */
+/* Reduce motion if user prefers */
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.01ms !important;
@@ -216,7 +197,6 @@ input[type="checkbox"] {
   }
 }
 
-/* ==================== DARK MODE OPTIMIZATIONS ==================== */
 @media (prefers-color-scheme: dark) {
   body {
     background-color: #0f172a;
