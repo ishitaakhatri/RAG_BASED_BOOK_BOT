@@ -11,7 +11,7 @@ Tracks ingestion progress in real-time and provides:
 
 import logging
 import time
-from typing import Callable, Optional, Dict, Any, Coroutine
+from typing import Callable, Optional, Dict, Any, Coroutine, List
 from dataclasses import dataclass, field, asdict
 from threading import Lock
 from datetime import datetime
@@ -84,7 +84,7 @@ class ProgressTracker:
     def __init__(self):
         self.state = ProgressState()
         self.lock = Lock()
-        self.callbacks: list[Callable[[ProgressState], Coroutine | None]] = []
+        self.callbacks: List[Callable[[ProgressState], Coroutine | None]] = []
         self.log_history: list[Dict[str, Any]] = []
         self._loop = None
         self._main_loop = None  # Reference to the main event loop
@@ -95,20 +95,24 @@ class ProgressTracker:
     
     def on_progress(self, callback: Callable[[ProgressState], Coroutine | None]) -> None:
         """Register a callback to receive progress updates"""
-        self.callbacks.append(callback)
+        with self.lock:
+            self.callbacks.append(callback)
+
+    def remove_callback(self, callback: Callable[[ProgressState], Coroutine | None]) -> None:
+        """Safely remove a callback"""
+        with self.lock:
+            if callback in self.callbacks:
+                self.callbacks.remove(callback)
     
     def _notify_callbacks(self) -> None:
         """Notify all registered callbacks - Thread Safe Version"""
-        if not self.callbacks:
-            return
-        
-        # Snapshot state to prevent race conditions during callback execution
+        # Snapshot callbacks under lock to prevent modification during iteration
         with self.lock:
-            # We create a simple copy logic here if needed, but for now passing self.state 
-            # relies on the fact that callbacks usually serialize it immediately.
-            pass
+            if not self.callbacks:
+                return
+            callbacks_snapshot = self.callbacks[:]
 
-        for callback in self.callbacks:
+        for callback in callbacks_snapshot:
             try:
                 result = callback(self.state)
                 
@@ -315,6 +319,8 @@ class ProgressTracker:
         with self.lock:
             self.state = ProgressState()
             self.log_history = []
+        # Notify listeners that state has been reset (e.g., status changed to 'initializing')
+        self._notify_callbacks()
 
 
 # Global tracker instance (shared across all requests)

@@ -635,7 +635,12 @@ async def websocket_ingestion_progress(websocket: WebSocket):
 
     # ✅ Send initial state immediately (prevents blank UI)
     try:
-        await websocket.send_json(tracker.get_state())
+        # FIX: Do not send "completed" status immediately on connection.
+        # This prevents the frontend from thinking the NEW job is already finished 
+        # based on the OLD job's status.
+        initial_state = tracker.get_state()
+        if initial_state.get("status") != "completed":
+            await websocket.send_json(initial_state)
     except Exception:
         pass
 
@@ -649,10 +654,7 @@ async def websocket_ingestion_progress(websocket: WebSocket):
 
     finally:
         # ✅ IMPORTANT: Remove callback to prevent memory leaks
-        try:
-            tracker.callbacks.remove(send_update)
-        except ValueError:
-            pass
+        tracker.remove_callback(send_update)
 
         try:
             await websocket.close()
