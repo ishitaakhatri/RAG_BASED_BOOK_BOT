@@ -71,6 +71,11 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   const connectWebSocket = () => {
     return new Promise((resolve, reject) => {
       try {
+        // FIX: Close existing connection if it exists to prevent leaks
+        if (wsRef.current) {
+          wsRef.current.close();
+        }
+
         wsRef.current = new WebSocket(WS_URL);
 
         wsRef.current.onopen = () => {
@@ -107,10 +112,10 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                 "success"
               );
 
-              if (wsRef.current) {
-                wsRef.current.close();
-                wsRef.current = null;
-              }
+              // FIX: Do NOT close the WebSocket here. 
+              // Leaving it open allows subsequent ingests to reuse the connection 
+              // or handle rapid-fire updates without race conditions.
+              // Cleanup is handled by the useEffect return or handleReset.
             }
           } catch (error) {
             console.error("Error parsing progress data:", error);
