@@ -328,6 +328,38 @@ def generate_session_title(first_query: str) -> str:
         title += "..."
     return title
 
+def fetch_chunk_details_by_ids(chunk_ids: List[str]) -> List[dict]:
+    """Fetch full chunk details from Pinecone by chunk IDs"""
+    if not chunk_ids:
+        return []
+    
+    try:
+        index = get_pinecone_index()
+        
+        # Fetch vectors by ID from Pinecone
+        fetch_response = index.fetch(ids=chunk_ids, namespace="books_rag")
+        
+        sources = []
+        for chunk_id in chunk_ids:
+            if chunk_id in fetch_response.get('vectors', {}):
+                vector_data = fetch_response['vectors'][chunk_id]
+                metadata = vector_data.get('metadata', {})
+                
+                sources.append({
+                    "chunk_id": chunk_id,
+                    "book_title": metadata.get('book_title', 'Unknown Book'),
+                    "author": metadata.get('author', 'Unknown Author'),
+                    "chapter": metadata.get('chapter', 'Unknown'),
+                    "page": metadata.get('page_number'),
+                    "relevance": metadata.get('relevance', 0),
+                    "type": metadata.get('chunk_type', 'text')
+                })
+        
+        return sources
+    except Exception as e:
+        print(f"⚠️ Error fetching chunk details: {e}")
+        # Return minimal data on error
+        return [{"chunk_id": cid, "book_title": "Unknown", "author": "Unknown"} for cid in chunk_ids]
 
 # ============================================================================
 # API ENDPOINTS
@@ -518,6 +550,7 @@ async def process_query(request: QueryRequest):
         print(f"[ERROR] {traceback.format_exc()}")
         print(f"{'='*80}\n")
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+
 
 
 @app.post("/ingest", response_model=IngestResponse)
@@ -783,6 +816,8 @@ async def health_check():
             "status": "unhealthy",
             "error": str(e)
         }
+    
+
 
 
 if __name__ == "__main__":
