@@ -9,7 +9,7 @@ from sentence_transformers import SentenceTransformer
 import os
 
 # Use same embedding model as document chunks for consistency
-EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-0.6B")
+EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 
 # Lazy load embedding model
 _embedding_model = None

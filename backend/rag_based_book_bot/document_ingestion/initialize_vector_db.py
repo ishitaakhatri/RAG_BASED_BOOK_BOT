@@ -127,10 +127,6 @@ def init_pinecone():
         # Display statistics
         print_index_stats(index)
         
-        # Initialize namespaces by upserting dummy vectors
-        print("\n📦 Initializing namespaces...")
-        initialize_namespaces(index)
-        
         return index
         
     except Exception as e:
@@ -141,50 +137,6 @@ def init_pinecone():
         print("   3. Verify your account has available indexes")
         print("   4. Check: https://app.pinecone.io/")
         sys.exit(1)
-
-
-def initialize_namespaces(index):
-    """Initialize the required namespaces with dummy vectors"""
-    import uuid
-    
-    try:
-        # Initialize main namespace (books_rag)
-        print(f"   Creating namespace: {NAMESPACE}")
-        dummy_vector = {
-            "id": f"init_{uuid.uuid4().hex[:8]}",
-            "values": [0.0] * DIMENSION,
-            "metadata": {
-                "text": "Initialization vector",
-                "book_title": "__init__",
-                "author": "System",
-                "page_start": 0
-            }
-        }
-        index.upsert(vectors=[dummy_vector], namespace=NAMESPACE)
-        print(f"   ✅ Namespace '{NAMESPACE}' initialized")
-        
-        # Initialize metadata namespace (books_metadata)
-        metadata_namespace = "books_metadata"
-        print(f"   Creating namespace: {metadata_namespace}")
-        dummy_metadata = {
-            "id": f"init_{uuid.uuid4().hex[:8]}",
-            "values": [1.0] * DIMENSION,
-            "metadata": {
-                "book_title": "__init__",
-                "author": "System",
-                "total_chunks": 0,
-                "indexed_at": 0
-            }
-        }
-        index.upsert(vectors=[dummy_metadata], namespace=metadata_namespace)
-        print(f"   ✅ Namespace '{metadata_namespace}' initialized")
-        
-        print("✅ All namespaces initialized")
-        
-    except Exception as e:
-        print(f"⚠️  Warning: Could not initialize namespaces: {e}")
-        print("   This is OK - namespaces will be created on first upsert")
-
 
 def print_index_stats(index):
     """Print index statistics"""

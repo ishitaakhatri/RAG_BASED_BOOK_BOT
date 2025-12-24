@@ -11,7 +11,7 @@ Tracks ingestion progress in real-time and provides:
 
 import logging
 import time
-from typing import Callable, Optional, Dict, Any,Coroutine
+from typing import Callable, Optional, Dict, Any, Coroutine
 from dataclasses import dataclass, field, asdict
 from threading import Lock
 from datetime import datetime
@@ -86,36 +86,46 @@ class ProgressTracker:
         self.lock = Lock()
         self.callbacks: list[Callable[[ProgressState], Coroutine | None]] = []
         self.log_history: list[Dict[str, Any]] = []
-        
+        self._loop = None
+    
     def on_progress(self, callback: Callable[[ProgressState], Coroutine | None]) -> None:
         """Register a callback to receive progress updates"""
         self.callbacks.append(callback)
     
-    
-
     def _notify_callbacks(self) -> None:
+        """Notify all registered callbacks - FIXED VERSION"""
+        if not self.callbacks:
+            return
+        
         for callback in self.callbacks:
             try:
                 result = callback(self.state)
-
+                
+                # If it's a coroutine, schedule it but DON'T wait
                 if inspect.iscoroutine(result):
                     try:
-                        asyncio.get_running_loop().create_task(result)
+                        # Try to get existing loop
+                        loop = asyncio.get_running_loop()
+                        # Schedule the coroutine as a task (fire and forget)
+                        asyncio.create_task(result)
                     except RuntimeError:
-                        asyncio.run(result)
-
+                        # No loop running - try to run in new loop (but don't block)
+                        try:
+                            if self._loop is None or self._loop.is_closed():
+                                self._loop = asyncio.new_event_loop()
+                            self._loop.call_soon_threadsafe(lambda: asyncio.ensure_future(result, loop=self._loop))
+                        except Exception as e:
+                            logger.debug(f"Could not schedule async callback: {e}")
+                            # Silently fail - progress tracking shouldn't block ingestion
+                            pass
             except Exception as e:
-                logger.exception("Progress callback failed")
-
-
-
+                logger.exception(f"Progress callback failed: {e}")
 
     def update_total_pages(self, total_pages: int) -> None:
         """Safely update total pages and notify listeners"""
         with self.lock:
             self.state.total_pages = total_pages
         self._notify_callbacks()
-
     
     def _calculate_eta(self) -> None:
         """Calculate estimated time remaining"""
@@ -206,7 +216,6 @@ class ProgressTracker:
             })
 
         self._notify_callbacks()
-
     
     def update_embeddings(self, count: int) -> None:
         with self.lock:
@@ -217,7 +226,6 @@ class ProgressTracker:
             self.state.current_task = f"Generated {count}/{self.state.chunks_created} embeddings"
 
         self._notify_callbacks()
-
     
     def start_upsert(self) -> None:
         """Mark start of Pinecone upsert phase"""
