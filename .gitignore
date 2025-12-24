@@ -26,3 +26,5 @@ Thumbs.db
 # Ignore virtual environment directories
 .venv/  
 *.pdf
+/frontend/node_modules/.bin
+/frontend/node_modules
