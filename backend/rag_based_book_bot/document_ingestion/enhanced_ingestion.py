@@ -135,7 +135,11 @@ class SemanticBookIngestor:
             # Initialize tracker
             tracker = get_progress_tracker()
             tracker.reset()
-            tracker.start_ingestion(pdf_path, total_pages=0, book_title=book_title, author=author)
+            # Get page count first
+            with pdfplumber.open(pdf_path) as pdf:
+                total_pages = len(pdf.pages)
+
+            tracker.start_ingestion(pdf_path, total_pages=total_pages, book_title=book_title, author=author)
             
             chunks = []
             method = "semantic_fallback"
