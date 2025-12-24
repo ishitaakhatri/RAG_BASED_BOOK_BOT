@@ -7,7 +7,6 @@ import {
   CheckCircle,
   Loader,
   Book,
-  FileText,
   Eye,
   EyeOff,
 } from "lucide-react";
@@ -15,7 +14,7 @@ import {
 const API_BASE_URL = "http://localhost:8000";
 const WS_URL = "ws://localhost:8000/ws/ingest";
 
-export default function IngestionPage({ books, onBack, onUploadSuccess }) {
+export default function IngestionPage({ books, onUploadSuccess }) {
   const [uploadFile, setUploadFile] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(null);
   const [liveProgress, setLiveProgress] = useState(null);
@@ -59,6 +58,7 @@ export default function IngestionPage({ books, onBack, onUploadSuccess }) {
           try {
             const data = JSON.parse(event.data);
             setLiveProgress(data);
+            console.log("📊 Live progress update:", data);
 
             if (data.status === "chunking") {
               addLog(
@@ -75,13 +75,18 @@ export default function IngestionPage({ books, onBack, onUploadSuccess }) {
                 `📤 Upserting: ${data.vectors_upserted} vectors to Pinecone`,
                 "info"
               );
+            } else if (data.status === "failed") {
+              addLog(`❌ Ingestion failed: ${data.errors.join(", ")}`, "error");
             } else if (data.status === "completed") {
               addLog(
                 `✅ Ingestion completed! ${data.chunks_created} chunks indexed`,
                 "success"
               );
-            } else if (data.status === "failed") {
-              addLog(`❌ Ingestion failed: ${data.errors.join(", ")}`, "error");
+
+              if (wsRef.current) {
+                wsRef.current.close();
+                wsRef.current = null;
+              }
             }
           } catch (error) {
             console.error("Error parsing progress data:", error);
@@ -216,10 +221,33 @@ export default function IngestionPage({ books, onBack, onUploadSuccess }) {
     }
   };
 
-  const currentPercentage =
-    liveProgress?.percentage || uploadProgress?.percentage || 0;
+  // Enhanced: Map all statuses to a progress percentage
+  const calculatePercentage = () => {
+    if (!liveProgress) {
+      return uploadProgress?.percentage ?? 0;
+    }
+
+    // Use backend-provided percentage FIRST (most accurate)
+    if (typeof liveProgress.percentage === "number") {
+      return Math.round(liveProgress.percentage);
+    }
+
+    // Fallbacks (rarely needed)
+    if (liveProgress.status === "completed") return 100;
+    if (liveProgress.status === "failed") return 0;
+    if (liveProgress.status === "parsing_pdf") return 10;
+
+    return uploadProgress?.percentage ?? 0;
+  };
+
+
+  const currentPercentage = calculatePercentage();
+
   const currentStatus =
     liveProgress?.status || uploadProgress?.status || "idle";
+
+  const radius = 48;
+  const circumference = 2 * Math.PI * radius;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex flex-col">
@@ -256,7 +284,7 @@ export default function IngestionPage({ books, onBack, onUploadSuccess }) {
       </header>
 
       {/* Main Content - Scrollable */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin">
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
         <div className="px-4 sm:px-6 lg:px-8 py-8">
           <div className="max-w-7xl mx-auto">
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -416,16 +444,19 @@ export default function IngestionPage({ books, onBack, onUploadSuccess }) {
                                 <circle
                                   cx="56"
                                   cy="56"
-                                  r="48"
+                                  r={radius}
                                   stroke="url(#grad)"
                                   strokeWidth="6"
                                   fill="none"
-                                  strokeDasharray={`${
-                                    (currentPercentage / 100) * 301.59
-                                  } 301.59`}
+                                  strokeDasharray={circumference}
+                                  strokeDashoffset={
+                                    circumference -
+                                    (currentPercentage / 100) * circumference
+                                  }
                                   strokeLinecap="round"
-                                  className="transition-all duration-300"
+                                  className="transition-all duration-500 ease-out"
                                 />
+
                                 <defs>
                                   <linearGradient
                                     id="grad"
@@ -453,9 +484,9 @@ export default function IngestionPage({ books, onBack, onUploadSuccess }) {
                               currentStatus
                             )}`}
                           >
-                            {liveProgress?.current_task ||
-                              uploadProgress?.message ||
-                              "Ready"}
+                            {liveProgress?.status
+                              ? `Processing: ${liveProgress.status}`
+                              : uploadProgress?.message || "Ready"}
                           </p>
 
                           {/* Progress Details Grid */}

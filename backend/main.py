@@ -174,7 +174,7 @@ def store_book_metadata(book_title: str, author: str, total_chunks: int, code_ch
         index.upsert(
             vectors=[{
                 "id": book_id,
-                "values": [1.0] * 384,
+                "values": [1.0] * 1024,
                 "metadata": {
                     "book_title": book_title,
                     "author": author,
@@ -586,72 +586,49 @@ async def ingest_book(
 async def websocket_ingestion_progress(websocket: WebSocket):
     """
     WebSocket endpoint for real-time ingestion progress updates
-    
-    Frontend connects with: ws://localhost:8000/ws/ingestion-progress
-    Receives progress updates as JSON messages during book ingestion
-    
-    Message format:
-    {
-        "total_pages": int,
-        "current_page": int,
-        "current_batch": int,
-        "total_batches": int,
-        "percentage": float (0-100),
-        "status": str ("initializing", "parsing_pdf", "chunking", "embedding", "upserting", "completed", "failed"),
-        "current_task": str,
-        "chunks_created": int,
-        "embeddings_generated": int,
-        "vectors_upserted": int,
-        "elapsed_time": float,
-        "estimated_time_remaining": float,
-        "speed_pages_per_sec": float,
-        "book_title": str,
-        "author": str,
-        "errors": list
-    }
+
+    Frontend connects with:
+    ws://localhost:8000/ws/ingest
     """
     await websocket.accept()
     tracker = get_progress_tracker()
-    
-    print(f"🔌 WebSocket client connected for progress tracking")
-    
+
+    print("🔌 WebSocket client connected for ingestion progress")
+
     async def send_update(state):
-        """Callback function to send progress updates to WebSocket client"""
+        """Send progress updates to the WebSocket client"""
         try:
-            progress_data = state.to_dict()
-            await websocket.send_json(progress_data)
-            print(f"📤 Sent progress update: {progress_data['percentage']}% - {progress_data['current_task']}")
+            await websocket.send_json(state.to_dict())
         except Exception as e:
-            print(f"⚠️ WebSocket send error: {e}")
-    
-    # Register the callback
+            print(f"⚠️ WebSocket send failed: {e}")
+
+    # ✅ Register callback
     tracker.on_progress(send_update)
-    
+
+    # ✅ Send initial state immediately (prevents blank UI)
     try:
+        await websocket.send_json(tracker.get_state())
+    except Exception:
+        pass
+
+    try:
+        # ✅ Push-only connection (no receive loop needed)
         while True:
-            # Keep connection alive and listen for client messages
-            # This prevents the connection from closing
-            try:
-                # Wait for client to send something (keepalive or close signal)
-                # This will timeout if no message received (adjust as needed)
-                message = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-                
-                # If client sends "ping", respond with "pong"
-                if message.lower() == "ping":
-                    await websocket.send_text("pong")
-                    
-            except asyncio.TimeoutError:
-                # Timeout is fine, just keep connection open
-                pass
-                
+            await asyncio.sleep(1)
+
     except WebSocketDisconnect:
-        print("🔌 WebSocket client disconnected from progress stream")
-    except Exception as e:
-        print(f"❌ WebSocket error: {e}")
+        print("🔌 WebSocket client disconnected")
+
     finally:
+        # ✅ IMPORTANT: Remove callback to prevent memory leaks
+        try:
+            tracker.callbacks.remove(send_update)
+        except ValueError:
+            pass
+
         try:
             await websocket.close()
-        except:
+        except Exception:
             pass
 
 
