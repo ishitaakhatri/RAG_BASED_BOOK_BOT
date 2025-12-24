@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import "tailwindcss/tailwind.css";
+import jsPDF from "jspdf";
 
 
 import {
@@ -28,6 +29,7 @@ import {
   MessageCircle,
   History,
   X,
+  Download,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
@@ -79,6 +81,195 @@ export default function RAGBookBot() {
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  const downloadChat = () => {
+    if (messages.length === 0) {
+      alert("No messages to download!");
+      return;
+    }
+
+    // Create PDF
+    const pdf = new jsPDF();
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 15;
+    const maxWidth = pageWidth - 2 * margin;
+    let yPosition = 20;
+
+    // Helper function to add text with wrapping
+    const addText = (text, size, style = 'normal', color = [0, 0, 0]) => {
+      pdf.setFontSize(size);
+      pdf.setFont('helvetica', style);
+      pdf.setTextColor(...color);
+      const lines = pdf.splitTextToSize(text, maxWidth);
+      
+      lines.forEach(line => {
+        if (yPosition > pageHeight - 20) {
+          pdf.addPage();
+          yPosition = 20;
+        }
+        pdf.text(line, margin, yPosition);
+        yPosition += size * 0.5;
+      });
+      yPosition += 2;
+    };
+
+    // Add header
+    pdf.setFillColor(139, 92, 246); // Purple color
+    pdf.rect(0, 0, pageWidth, 30, 'F');
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(20);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('RAG Book Bot - Chat History', margin, 20);
+    
+    yPosition = 40;
+
+    // Add metadata
+    pdf.setTextColor(100, 100, 100);
+    pdf.setFontSize(10);
+    pdf.setFont('helvetica', 'normal');
+    pdf.text(`Generated: ${new Date().toLocaleString()}`, margin, yPosition);
+    yPosition += 5;
+    pdf.text(`Session ID: ${currentSessionId || "New Session"}`, margin, yPosition);
+    yPosition += 5;
+    pdf.text(`Book Filter: ${selectedBook}`, margin, yPosition);
+    yPosition += 5;
+    pdf.text(`Total Messages: ${messages.length}`, margin, yPosition);
+    yPosition += 10;
+
+    // Add separator line
+    pdf.setDrawColor(200, 200, 200);
+    pdf.line(margin, yPosition, pageWidth - margin, yPosition);
+    yPosition += 10;
+
+    // Add messages
+    messages.forEach((msg, idx) => {
+      // Check if we need a new page
+      if (yPosition > pageHeight - 50) {
+        pdf.addPage();
+        yPosition = 20;
+      }
+
+      if (msg.role === 'user') {
+        // User message
+        pdf.setFillColor(139, 92, 246); // Purple
+        pdf.roundedRect(margin, yPosition - 5, maxWidth, 8, 2, 2, 'F');
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(11);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text(`Question ${Math.floor(idx / 2) + 1}`, margin + 3, yPosition);
+        yPosition += 10;
+
+        // User query content
+        pdf.setTextColor(0, 0, 0);
+        pdf.setFontSize(10);
+        pdf.setFont('helvetica', 'normal');
+        const userLines = pdf.splitTextToSize(msg.content, maxWidth - 6);
+        userLines.forEach(line => {
+          if (yPosition > pageHeight - 20) {
+            pdf.addPage();
+            yPosition = 20;
+          }
+          pdf.text(line, margin + 3, yPosition);
+          yPosition += 5;
+        });
+        yPosition += 5;
+
+      } else {
+        // Assistant message
+        pdf.setFillColor(34, 197, 94); // Green
+        pdf.roundedRect(margin, yPosition - 5, maxWidth, 8, 2, 2, 'F');
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(11);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('Answer', margin + 3, yPosition);
+        yPosition += 10;
+
+        // Assistant response content
+        pdf.setTextColor(0, 0, 0);
+        pdf.setFontSize(10);
+        pdf.setFont('helvetica', 'normal');
+        
+        // Clean markdown formatting from content
+        let cleanContent = msg.content
+          .replace(/\*\*(.*?)\*\*/g, '$1')  // Remove bold
+          .replace(/\*(.*?)\*/g, '$1')      // Remove italic
+          .replace(/`(.*?)`/g, '$1')        // Remove code
+          .replace(/#{1,6}\s/g, '')         // Remove headers
+          .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1'); // Remove links
+        
+        const assistantLines = pdf.splitTextToSize(cleanContent, maxWidth - 6);
+        assistantLines.forEach(line => {
+          if (yPosition > pageHeight - 20) {
+            pdf.addPage();
+            yPosition = 20;
+          }
+          pdf.text(line, margin + 3, yPosition);
+          yPosition += 5;
+        });
+        yPosition += 3;
+
+        // Add sources if available
+        if (msg.sources && msg.sources.length > 0) {
+          pdf.setFontSize(9);
+          pdf.setFont('helvetica', 'bold');
+          pdf.setTextColor(100, 100, 100);
+          pdf.text(`Sources (${msg.sources.length}):`, margin + 3, yPosition);
+          yPosition += 5;
+
+          pdf.setFont('helvetica', 'normal');
+          pdf.setFontSize(8);
+          msg.sources.slice(0, 5).forEach((src, i) => {
+            if (yPosition > pageHeight - 20) {
+              pdf.addPage();
+              yPosition = 20;
+            }
+            let sourceText = `  ${i + 1}. ${src.book_title}`;
+            if (src.chapter) sourceText += ` - ${src.chapter}`;
+            if (src.page) sourceText += ` (Page ${src.page})`;
+            if (src.relevance) sourceText += ` - ${src.relevance.toFixed(0)}% relevant`;
+            
+            const sourceLines = pdf.splitTextToSize(sourceText, maxWidth - 6);
+            sourceLines.forEach(line => {
+              if (yPosition > pageHeight - 20) {
+                pdf.addPage();
+                yPosition = 20;
+              }
+              pdf.text(line, margin + 3, yPosition);
+              yPosition += 4;
+            });
+          });
+          
+          if (msg.sources.length > 5) {
+            pdf.text(`  ... and ${msg.sources.length - 5} more sources`, margin + 3, yPosition);
+            yPosition += 4;
+          }
+          yPosition += 3;
+        }
+        yPosition += 5;
+      }
+
+      // Add separator
+      if (yPosition < pageHeight - 25) {
+        pdf.setDrawColor(230, 230, 230);
+        pdf.line(margin, yPosition, pageWidth - margin, yPosition);
+        yPosition += 10;
+      }
+    });
+
+    // Add footer on last page
+    pdf.setFontSize(8);
+    pdf.setTextColor(150, 150, 150);
+    pdf.text(
+      `Generated by RAG Book Bot - ${new Date().toLocaleDateString()}`,
+      pageWidth / 2,
+      pageHeight - 10,
+      { align: 'center' }
+    );
+
+    // Save the PDF
+    pdf.save(`chat_${currentSessionId || Date.now()}.pdf`);
   };
 
   const fetchBooks = async () => {
@@ -437,6 +628,15 @@ export default function RAGBookBot() {
                 </div>
               </div>
               <div className="flex items-center space-x-3">
+                <button
+                  onClick={downloadChat}
+                  disabled={messages.length === 0}
+                  className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  title="Download chat history"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Download Chat</span>
+                </button>
                 <button
                   onClick={() => navigate("/ingest")}
                   className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all"

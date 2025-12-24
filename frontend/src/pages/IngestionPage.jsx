@@ -25,6 +25,30 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   const logsEndRef = useRef(null);
   const navigate = useNavigate();
 
+  // Add custom scrollbar styles
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      .scrollbar-thin::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      .scrollbar-thin::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 4px;
+      }
+      .scrollbar-thin::-webkit-scrollbar-thumb {
+        background: linear-gradient(180deg, #a855f7, #ec4899);
+        border-radius: 4px;
+      }
+      .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+        background: linear-gradient(180deg, #9333ea, #db2777);
+      }
+    `;
+    document.head.appendChild(style);
+    return () => document.head.removeChild(style);
+  }, []);
+
   useEffect(() => {
     if (logsEndRef.current && showLogs) {
       logsEndRef.current.scrollIntoView({ behavior: "smooth" });

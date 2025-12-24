@@ -118,7 +118,7 @@ def save_conversation_turn(
             "session_id": session_id,
             "turn_number": int(turn_number),
             "timestamp": float(time.time()),
-            "user_query": user_query[:1000],  # Limit length
+            "user_query": user_query,  # Limit length
             "assistant_response": assistant_response[:1000],
             "resolved_query": (resolved_query or user_query)[:1000],
             "needs_retrieval": str(needs_retrieval),  # Convert bool to string
