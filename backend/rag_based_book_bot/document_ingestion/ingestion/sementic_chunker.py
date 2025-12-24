@@ -5,7 +5,7 @@ Enhanced with GROBID structure-aware chunking
 import re
 import tiktoken
 import numpy as np
-from typing import List, Dict, Tuple, Optional,Callable
+from typing import List, Dict, Tuple, Optional, Callable
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from dataclasses import dataclass
@@ -44,7 +44,8 @@ class SemanticChunker:
         similarity_threshold: float = 0.75,
         min_chunk_size: int = 150,
         max_chunk_size: int = 300,
-        encoding_name: str = "cl100k_base"
+        encoding_name: str = "cl100k_base",
+        embedding_model: Optional[SentenceTransformer] = None
     ):
         """
         Args:
@@ -53,8 +54,14 @@ class SemanticChunker:
                                 Lower = more topic splits
             min_chunk_size: Minimum tokens per chunk
             max_chunk_size: Maximum tokens per chunk
+            embedding_model: Optional pre-loaded SentenceTransformer instance
         """
-        self.model = SentenceTransformer(model_name)
+        if embedding_model:
+            self.model = embedding_model
+        else:
+            logger.info(f"Loading embedding model: {model_name}")
+            self.model = SentenceTransformer(model_name)
+            
         self.similarity_threshold = similarity_threshold
         self.min_chunk_size = min_chunk_size
         self.max_chunk_size = max_chunk_size
@@ -490,7 +497,8 @@ class SemanticChunker:
 def create_semantic_chunker(
     similarity_threshold: float = 0.75,
     min_chunk_size: int = 200,
-    max_chunk_size: int = 1500
+    max_chunk_size: int = 1500,
+    embedding_model: Optional[SentenceTransformer] = None
 ) -> SemanticChunker:
     """
     Factory function to create a semantic chunker with custom settings.
@@ -498,5 +506,6 @@ def create_semantic_chunker(
     return SemanticChunker(
         similarity_threshold=similarity_threshold,
         min_chunk_size=min_chunk_size,
-        max_chunk_size=max_chunk_size
+        max_chunk_size=max_chunk_size,
+        embedding_model=embedding_model
     )

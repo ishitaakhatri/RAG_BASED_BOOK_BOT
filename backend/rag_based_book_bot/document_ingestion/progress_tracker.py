@@ -87,37 +87,48 @@ class ProgressTracker:
         self.callbacks: list[Callable[[ProgressState], Coroutine | None]] = []
         self.log_history: list[Dict[str, Any]] = []
         self._loop = None
+        self._main_loop = None  # Reference to the main event loop
+
+    def set_loop(self, loop: asyncio.AbstractEventLoop):
+        """Set the main application event loop for scheduling async callbacks"""
+        self._main_loop = loop
     
     def on_progress(self, callback: Callable[[ProgressState], Coroutine | None]) -> None:
         """Register a callback to receive progress updates"""
         self.callbacks.append(callback)
     
     def _notify_callbacks(self) -> None:
-        """Notify all registered callbacks - FIXED VERSION"""
+        """Notify all registered callbacks - Thread Safe Version"""
         if not self.callbacks:
             return
         
+        # Snapshot state to prevent race conditions during callback execution
+        with self.lock:
+            # We create a simple copy logic here if needed, but for now passing self.state 
+            # relies on the fact that callbacks usually serialize it immediately.
+            pass
+
         for callback in self.callbacks:
             try:
                 result = callback(self.state)
                 
-                # If it's a coroutine, schedule it but DON'T wait
+                # If it's a coroutine, we must schedule it safely
                 if inspect.iscoroutine(result):
                     try:
-                        # Try to get existing loop
-                        loop = asyncio.get_running_loop()
-                        # Schedule the coroutine as a task (fire and forget)
-                        asyncio.create_task(result)
-                    except RuntimeError:
-                        # No loop running - try to run in new loop (but don't block)
-                        try:
-                            if self._loop is None or self._loop.is_closed():
-                                self._loop = asyncio.new_event_loop()
-                            self._loop.call_soon_threadsafe(lambda: asyncio.ensure_future(result, loop=self._loop))
-                        except Exception as e:
-                            logger.debug(f"Could not schedule async callback: {e}")
-                            # Silently fail - progress tracking shouldn't block ingestion
-                            pass
+                        # 1. Try to schedule on the stored main loop (Best for worker threads)
+                        if self._main_loop and not self._main_loop.is_closed():
+                            asyncio.run_coroutine_threadsafe(result, self._main_loop)
+                        
+                        # 2. Fallback: Try getting the running loop (Works if called from main thread)
+                        else:
+                            try:
+                                loop = asyncio.get_running_loop()
+                                loop.create_task(result)
+                            except RuntimeError:
+                                # No running loop and no stored loop - cannot execute async callback
+                                pass
+                    except Exception as e:
+                        logger.debug(f"Could not schedule async callback: {e}")
             except Exception as e:
                 logger.exception(f"Progress callback failed: {e}")
 

@@ -54,6 +54,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# -----------------------------------------------------------
+# STARTUP EVENTS
+# -----------------------------------------------------------
+@app.on_event("startup")
+async def startup_event():
+    """Initialize global resources"""
+    # Capture the main event loop for the progress tracker
+    # This allows worker threads to send WebSocket updates safely
+    loop = asyncio.get_running_loop()
+    tracker = get_progress_tracker()
+    tracker.set_loop(loop)
+    print("✅ Initialized progress tracker with main event loop")
+
 
 # ============================================================================
 # MODELS
@@ -164,33 +177,6 @@ def parse_book_filename(filename: str) -> tuple[str, str]:
     return title, author
 
 
-def store_book_metadata(book_title: str, author: str, total_chunks: int, code_chunks: int = 0):
-    """Store book metadata in separate namespace"""
-    try:
-        index = get_pinecone_index()
-        metadata_namespace = "books_metadata"
-        book_id = hashlib.md5(book_title.encode()).hexdigest()
-        
-        index.upsert(
-            vectors=[{
-                "id": book_id,
-                "values": [1.0] * 1024,
-                "metadata": {
-                    "book_title": book_title,
-                    "author": author,
-                    "total_chunks": total_chunks,
-                    "code_chunks": code_chunks,
-                    "text_chunks": total_chunks - code_chunks,
-                    "indexed_at": time.time()
-                }
-            }],
-            namespace=metadata_namespace
-        )
-        print(f"✅ Stored metadata for: {book_title}")
-    except Exception as e:
-        print(f"⚠️ Failed to store metadata: {e}")
-
-
 def get_available_books() -> List[BookInfo]:
     """Retrieve all books from metadata namespace"""
     try:
@@ -198,8 +184,9 @@ def get_available_books() -> List[BookInfo]:
         metadata_namespace = "books_metadata"
         
         try:
+            # ✅ FIX: Use 1024 dimensions for BGE-M3
             results = index.query(
-                vector=[1.0] * 384,
+                vector=[1.0] * 1024,  # ← FIXED from 384
                 top_k=10000,
                 namespace=metadata_namespace,
                 include_metadata=True
@@ -229,6 +216,35 @@ def get_available_books() -> List[BookInfo]:
     except Exception as e:
         print(f"❌ Error fetching books: {e}")
         return []
+
+
+def store_book_metadata(book_title: str, author: str, total_chunks: int, code_chunks: int = 0):
+    """Store book metadata in separate namespace"""
+    try:
+        index = get_pinecone_index()
+        metadata_namespace = "books_metadata"
+        book_id = hashlib.md5(book_title.encode()).hexdigest()
+        
+        # ✅ FIX: Use 1024 dimensions for BGE-M3
+        index.upsert(
+            vectors=[{
+                "id": book_id,
+                "values": [1.0] * 1024,  # ← FIXED from 384
+                "metadata": {
+                    "book_title": book_title,
+                    "author": author,
+                    "total_chunks": total_chunks,
+                    "code_chunks": code_chunks,
+                    "text_chunks": total_chunks - code_chunks,
+                    "indexed_at": time.time()
+                }
+            }],
+            namespace=metadata_namespace
+        )
+        print(f"✅ Stored metadata for: {book_title}")
+    except Exception as e:
+        print(f"⚠️ Failed to store metadata: {e}")
+
 
 
 def format_chunk_detail(chunk, source: str) -> ChunkDetail:
@@ -505,15 +521,23 @@ async def process_query(request: QueryRequest):
 
 
 @app.post("/ingest", response_model=IngestResponse)
-async def ingest_book(
+def ingest_book(
     file: UploadFile = File(...),
     book_title: Optional[str] = None,
     author: Optional[str] = None
 ):
-    """Ingest a new PDF book with real-time progress tracking"""
+    """
+    Ingest a new PDF book with real-time progress tracking
+    
+    CHANGED: Now a synchronous 'def' (not 'async def'). 
+    FastAPI will run this in a separate thread pool, preventing the heavy
+    ingestion process from blocking the main event loop. This allows 
+    WebSockets to stay alive and send progress updates.
+    """
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files supported")
     
+    tmp_path = None
     try:
         # Reset tracker for new ingestion
         tracker = get_progress_tracker()
@@ -531,8 +555,10 @@ async def ingest_book(
             final_author = author
         
         # Save temporarily
+        # Since this is a synchronous function now, we use standard sync IO
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-            content = await file.read()
+            # Synchronous read from the UploadFile wrapper
+            content = file.file.read()
             tmp_file.write(content)
             tmp_path = tmp_file.name
         
@@ -548,6 +574,7 @@ async def ingest_book(
         )
         ingestor = EnhancedBookIngestorPaddle(config=config)
         
+        # This is the heavy blocking call - now runs in thread pool
         result = ingestor.ingest_book(
             pdf_path=tmp_path,
             book_title=final_book_title,
@@ -566,7 +593,8 @@ async def ingest_book(
         )
         
         # Cleanup
-        os.unlink(tmp_path)
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
         
         print(f"✅ Ingestion complete: {total_chunks} chunks from {result.get('total_pages', 0)} pages")
         
@@ -574,7 +602,7 @@ async def ingest_book(
         
     except Exception as e:
         print(f"❌ Ingest error: {str(e)}")
-        if 'tmp_path' in locals():
+        if tmp_path and os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)
             except:

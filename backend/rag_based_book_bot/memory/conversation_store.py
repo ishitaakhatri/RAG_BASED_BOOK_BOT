@@ -181,7 +181,7 @@ def load_conversation(session_id: str, max_turns: int = 10) -> List[Dict]:
         index = get_pinecone_index()
         
         # Query with session filter
-        dummy_vector = [0.0] * 384
+        dummy_vector = [0.0] * 1024
         
         results = index.query(
             vector=dummy_vector,
@@ -296,7 +296,7 @@ def list_all_sessions(user_id: Optional[str] = None, limit: int = 50) -> List[Di
         index = get_pinecone_index()
         
         # Query session metadata namespace
-        dummy_vector = [1.0] * 384
+        dummy_vector = [1.0] * 1024
         
         filter_dict = {}
         if user_id:
@@ -434,7 +434,7 @@ def update_session_metadata(
         index.upsert(
             vectors=[{
                 "id": f"session_{session_id}",
-                "values": [1.0] * 384,  # Dummy vector
+                "values": [1.0] * 1024,  # Dummy vector
                 "metadata": metadata
             }],
             namespace=NAMESPACE_SESSION_META
@@ -466,7 +466,7 @@ def delete_session(session_id: str) -> Dict:
         index = get_pinecone_index()
         
         # Delete conversation turns
-        dummy_vector = [0.0] * 384
+        dummy_vector = [0.0] * 1024
         results = index.query(
             vector=dummy_vector,
             filter={"session_id": session_id},

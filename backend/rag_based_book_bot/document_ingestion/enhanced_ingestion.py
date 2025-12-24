@@ -35,6 +35,9 @@ from rag_based_book_bot.document_ingestion.ingestion.grobid_parser import (
     GrobidTEIParser
 )
 
+# Import shared model getter
+from rag_based_book_bot.memory.embedding_utils import get_embedding_model
+
 # Config
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX = os.getenv("PINECONE_INDEX_NAME", "coding-books-2")
@@ -62,6 +65,10 @@ class SemanticBookIngestor:
     def __init__(self, config: Optional[IngestorConfig] = None):
         self.config = config or IngestorConfig()
         
+        # Initialize or get the shared embedding model
+        # This prevents loading the model twice (once here, once in chunker)
+        self.embedding_model = get_embedding_model()
+        
         self.hierarchical_chunker = HierarchicalChunker(
             max_chunk_tokens=self.config.max_chunk_size,
             overlap=100
@@ -69,10 +76,10 @@ class SemanticBookIngestor:
         self.semantic_chunker = create_semantic_chunker(
             similarity_threshold=self.config.similarity_threshold,
             min_chunk_size=self.config.min_chunk_size,
-            max_chunk_size=self.config.max_chunk_size
+            max_chunk_size=self.config.max_chunk_size,
+            embedding_model=self.embedding_model  # Pass shared model
         )
         
-        self.embedding_model = SentenceTransformer(EMBEDDING_MODEL)
         self.grobid_parser = GrobidTEIParser()
         self.pinecone_index = self._init_pinecone()
         self.grobid_available = self._check_grobid_health() if (GROBID_ENABLED and self.config.use_grobid) else False
