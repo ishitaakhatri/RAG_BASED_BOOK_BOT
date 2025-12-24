@@ -13,9 +13,6 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 import os
 
-from langchain_ollama import ChatOllama
-
-
 class MultiHopExpander:
     """
     Performs multi-hop retrieval to find related information
@@ -29,9 +26,12 @@ class MultiHopExpander:
         Args:
             api_key: Google API key (defaults to env var)
         """
-        self.llm = ChatOllama(
-            model="llama3.2:3b",
-            temperature=0.7
+        self.llm = ChatGoogleGenerativeAI(
+            model="models/gemma-3-27b-it",
+            google_api_key=os.getenv("GOOGLE_API_KEY"),
+            temperature=0.7,
+            max_retries=0, # FIX: Prevents passing the unexpected keyword argument
+            convert_system_message_to_human=True # Keep this for Gemma models
         )
     
     def extract_concepts(

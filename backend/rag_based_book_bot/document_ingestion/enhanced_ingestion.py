@@ -1,3 +1,4 @@
+# enhanced_ingestion.py
 """
 ENHANCED Ingestor with GROBID + Hierarchical Chunking
 """
@@ -36,7 +37,7 @@ from rag_based_book_bot.document_ingestion.ingestion.grobid_parser import (
 
 # Config
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_INDEX = os.getenv("PINECONE_INDEX_NAME", "coding-books")
+PINECONE_INDEX = os.getenv("PINECONE_INDEX_NAME", "coding-books-2")
 PINECONE_NAMESPACE = os.getenv("PINECONE_NAMESPACE", "books_rag")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-0.6B")
 BATCH_SIZE = 100
@@ -133,6 +134,7 @@ class SemanticBookIngestor:
             
             # Initialize tracker
             tracker = get_progress_tracker()
+            tracker.reset()
             tracker.start_ingestion(pdf_path, total_pages=0, book_title=book_title, author=author)
             
             chunks = []
@@ -164,11 +166,13 @@ class SemanticBookIngestor:
                         total_batches = (total_pages + 19) // 20  # Batch size = 20 pages
                         
                         # Update tracker with total pages
-                        tracker.state.total_pages = total_pages
+                        tracker.update_total_pages(total_pages)
                         
                         # Define progress callback for batch processing
                         def chunking_progress(batch_num: int, current_page: int):
                             tracker.update_batch(batch_num, total_batches, current_page)
+
+                        tracker.start_chunking()    
                         
                         # Process pages with progress tracking
                         chunks = self.semantic_chunker.chunk_pages_batched(
@@ -179,27 +183,22 @@ class SemanticBookIngestor:
                         )
                     
                     # Update tracker after chunking complete
-                    tracker.start_chunking()
+                    
                     tracker.update_chunks(len(chunks))
                     
                 except Exception as e:
                     error_msg = f"Semantic chunking failed: {str(e)}"
                     logger.error(error_msg)
                     tracker.add_error(error_msg)
-                    tracker.finish(success=False)
                     raise
 
             if not chunks:
                 error_msg = "No chunks generated from PDF"
                 logger.error(error_msg)
                 tracker.add_error(error_msg)
-                tracker.finish(success=False)
                 raise ValueError(error_msg)
 
             logger.info(f"✅ Generated {len(chunks)} chunks using {method}")
-            
-            # Start embedding phase
-            tracker.start_embedding()
             
             # Embed and upsert with progress tracking
             try:
@@ -208,7 +207,6 @@ class SemanticBookIngestor:
                 error_msg = f"Embedding/upsert failed: {str(e)}"
                 logger.error(error_msg)
                 tracker.add_error(error_msg)
-                tracker.finish(success=False)
                 raise
             
             # Success
@@ -227,7 +225,6 @@ class SemanticBookIngestor:
             logger.error(f"❌ Ingestion failed for '{book_title}': {str(e)}")
             if 'tracker' in locals():
                 tracker.add_error(str(e))
-                tracker.finish(success=False)
             raise
         
     def _embed_and_upsert(
@@ -256,6 +253,8 @@ class SemanticBookIngestor:
             # Extract texts and generate embeddings
             texts = [c[0] for c in chunks]
             logger.info(f"Generating embeddings for {len(texts)} chunks...")
+            
+            tracker.start_embedding()
             
             embeddings = self.embedding_model.encode(
                 texts, 

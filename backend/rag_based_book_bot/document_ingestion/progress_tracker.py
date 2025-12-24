@@ -1,3 +1,4 @@
+#   progress_tracker.py
 """
 Progress Tracker for Document Ingestion
 
@@ -10,12 +11,13 @@ Tracks ingestion progress in real-time and provides:
 
 import logging
 import time
-from typing import Callable, Optional, Dict, Any
+from typing import Callable, Optional, Dict, Any,Coroutine
 from dataclasses import dataclass, field, asdict
 from threading import Lock
 from datetime import datetime
 import asyncio
 import inspect
+
 
 logger = logging.getLogger("progress_tracker")
 
@@ -82,35 +84,37 @@ class ProgressTracker:
     def __init__(self):
         self.state = ProgressState()
         self.lock = Lock()
-        self.callbacks: list[Callable[[ProgressState], None]] = []
+        self.callbacks: list[Callable[[ProgressState], Coroutine | None]] = []
         self.log_history: list[Dict[str, Any]] = []
         
-    def on_progress(self, callback: Callable[[ProgressState], None]) -> None:
+    def on_progress(self, callback: Callable[[ProgressState], Coroutine | None]) -> None:
         """Register a callback to receive progress updates"""
         self.callbacks.append(callback)
     
     
 
     def _notify_callbacks(self) -> None:
-        """Notify all registered callbacks (supports both sync and async)"""
         for callback in self.callbacks:
             try:
-                if inspect.iscoroutinefunction(callback):
-                    # Schedule async callback in event loop
+                result = callback(self.state)
+
+                if inspect.iscoroutine(result):
                     try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            asyncio.create_task(callback(self.state))
-                        else:
-                            loop.run_until_complete(callback(self.state))
+                        asyncio.get_running_loop().create_task(result)
                     except RuntimeError:
-                        # No event loop running, create new one
-                        asyncio.run(callback(self.state))
-                else:
-                    # Regular sync callback
-                    callback(self.state)
+                        asyncio.run(result)
+
             except Exception as e:
-                logger.error(f"Error in progress callback: {e}")
+                logger.exception("Progress callback failed")
+
+
+
+
+    def update_total_pages(self, total_pages: int) -> None:
+        """Safely update total pages and notify listeners"""
+        with self.lock:
+            self.state.total_pages = total_pages
+        self._notify_callbacks()
 
     
     def _calculate_eta(self) -> None:
@@ -150,7 +154,7 @@ class ProgressTracker:
                 "book_title": book_title,
                 "pdf_path": pdf_path
             })
-            self._notify_callbacks()
+        self._notify_callbacks()
     
     def update_batch(
         self, 
@@ -171,7 +175,7 @@ class ProgressTracker:
                 self.state.percentage = (self.state.current_page / self.state.total_pages) * 100
             
             self._calculate_eta()
-            self._notify_callbacks()
+        self._notify_callbacks()
     
     def start_chunking(self) -> None:
         """Mark start of chunking phase"""
@@ -180,7 +184,8 @@ class ProgressTracker:
             self.state.current_task = "Applying semantic chunking..."
             self.state.percentage = 45.0
             self._log_event("chunking_started", {})
-            self._notify_callbacks()
+
+        self._notify_callbacks()
     
     def update_chunks(self, chunks_count: int) -> None:
         """Update number of chunks created"""
@@ -188,10 +193,10 @@ class ProgressTracker:
             self.state.chunks_created = chunks_count
             self.state.current_task = f"Created {chunks_count} semantic chunks"
             self.state.percentage = 50.0
-            self._notify_callbacks()
+
+        self._notify_callbacks()
     
     def start_embedding(self) -> None:
-        """Mark start of embedding phase"""
         with self.lock:
             self.state.status = "embedding"
             self.state.current_task = "Generating embeddings..."
@@ -199,17 +204,20 @@ class ProgressTracker:
             self._log_event("embedding_started", {
                 "chunks_count": self.state.chunks_created
             })
-            self._notify_callbacks()
+
+        self._notify_callbacks()
+
     
     def update_embeddings(self, count: int) -> None:
-        """Update number of embeddings generated"""
         with self.lock:
             self.state.embeddings_generated = count
             if self.state.chunks_created > 0:
-                embed_progress = (count / self.state.chunks_created) * 30  # 30% of total
+                embed_progress = (count / self.state.chunks_created) * 30
                 self.state.percentage = 55.0 + embed_progress
             self.state.current_task = f"Generated {count}/{self.state.chunks_created} embeddings"
-            self._notify_callbacks()
+
+        self._notify_callbacks()
+
     
     def start_upsert(self) -> None:
         """Mark start of Pinecone upsert phase"""
@@ -220,7 +228,8 @@ class ProgressTracker:
             self._log_event("upsert_started", {
                 "embeddings_count": self.state.embeddings_generated
             })
-            self._notify_callbacks()
+
+        self._notify_callbacks()
     
     def update_upsert(self, count: int) -> None:
         """Update number of vectors upserted"""
@@ -230,7 +239,7 @@ class ProgressTracker:
                 upsert_progress = (count / self.state.embeddings_generated) * 10  # 10% of total
                 self.state.percentage = 85.0 + upsert_progress
             self.state.current_task = f"Upserted {count}/{self.state.embeddings_generated} vectors"
-            self._notify_callbacks()
+        self._notify_callbacks()
     
     def add_error(self, error_msg: str) -> None:
         """Log an error during ingestion"""
@@ -238,7 +247,7 @@ class ProgressTracker:
             self.state.errors.append(error_msg)
             logger.error(f"Ingestion error: {error_msg}")
             self._log_event("error_occurred", {"error": error_msg})
-            self._notify_callbacks()
+        self._notify_callbacks()
     
     def finish(self, success: bool = True) -> None:
         """Mark ingestion as complete"""
@@ -261,7 +270,7 @@ class ProgressTracker:
                 })
             
             self.state.elapsed_time = time.time() - self.state.start_time
-            self._notify_callbacks()
+        self._notify_callbacks()
     
     def get_state(self) -> Dict[str, Any]:
         """Get current progress state as dictionary"""

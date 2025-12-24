@@ -13,7 +13,6 @@ import os
 import json
 from typing import List
 from dotenv import load_dotenv
-from langchain_ollama import ChatOllama
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
 load_dotenv()
@@ -36,7 +35,7 @@ from rag_based_book_bot.retrieval.context_compressor import EnhancedContextCompr
 
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "coding-books")
+INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "coding-books-2")
 NAMESPACE = os.getenv("PINECONE_NAMESPACE", "books_rag")
 EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 
@@ -45,9 +44,12 @@ EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 # ============================================================================
 
 # Initialize Ollama LLM at module level
-llm = ChatOllama(
-    model="llama3.2:3b",
-    temperature=0.7
+llm = ChatGoogleGenerativeAI(
+    model="models/gemma-3-27b-it", # Use the official model string (Gemma 3 might require models/ prefix)
+    google_api_key=os.getenv("GOOGLE_API_KEY"),
+    temperature=0.7,
+    max_retries=0, # FIX: Prevents passing the unexpected keyword argument
+    convert_system_message_to_human=True # Keep this for Gemma models
 )
 
 # Global instances (lazy loading)

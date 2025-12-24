@@ -22,7 +22,7 @@ from rag_based_book_bot.retrieval.context_compressor import EnhancedContextCompr
 logger = logging.getLogger("hierarchical_retriever")
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_INDEX = os.getenv("PINECONE_INDEX_NAME", "coding-books")
+PINECONE_INDEX = os.getenv("PINECONE_INDEX_NAME", "coding-books-2")
 PINECONE_NAMESPACE = os.getenv("PINECONE_NAMESPACE", "books_rag")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-0.6B")
 

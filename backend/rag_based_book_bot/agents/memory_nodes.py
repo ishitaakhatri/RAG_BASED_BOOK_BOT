@@ -13,19 +13,19 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 import os
 from dotenv import load_dotenv
-from langchain_ollama import ChatOllama
 
 from rag_based_book_bot.agents.states import AgentState, ConversationTurn, LLMResponse
 from rag_based_book_bot.memory.conversation_store import search_conversation_context
 
 load_dotenv()
 
-# Initialize Ollama LLM
-llm = ChatOllama(
-    model="llama3.2:3b",
-    temperature=0.7
+llm = ChatGoogleGenerativeAI(
+    model="models/gemma-3-27b-it", # Use the official model string (Gemma 3 might require models/ prefix)
+    google_api_key=os.getenv("GOOGLE_API_KEY"),
+    temperature=0.7,
+    max_retries=0, # FIX: Prevents passing the unexpected keyword argument
+    convert_system_message_to_human=True # Keep this for Gemma models
 )
-
 
 def query_context_resolution_node(state: AgentState) -> AgentState:
     """
