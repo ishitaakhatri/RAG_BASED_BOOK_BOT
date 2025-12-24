@@ -28,6 +28,7 @@ import {
   MessageCircle,
   History,
   X,
+  Download,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
@@ -273,6 +274,41 @@ export default function RAGBookBot() {
     return date.toLocaleDateString();
   };
 
+  const downloadChat = () => {
+    if (messages.length === 0) {
+      alert("No messages to download!");
+      return;
+    }
+
+    const chatData = {
+      session_id: currentSessionId,
+      timestamp: new Date().toISOString(),
+      messages: messages.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+        sources: msg.sources || [],
+        timestamp: new Date().toISOString(),
+      })),
+      stats: {
+        total_messages: messages.length,
+        user_queries: messages.filter((m) => m.role === "user").length,
+        assistant_responses: messages.filter((m) => m.role === "assistant")
+          .length,
+      },
+    };
+
+    const jsonString = JSON.stringify(chatData, null, 2);
+    const blob = new Blob([jsonString], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `chat-${new Date().getTime()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   // Show Chat View
   return (
     <div className="h-screen  bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex">
@@ -443,6 +479,15 @@ export default function RAGBookBot() {
                 >
                   <Upload className="w-4 h-4" />
                   <span>Upload Book</span>
+                </button>
+                <button
+                  onClick={downloadChat}
+                  disabled={messages.length === 0}
+                  className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-lg hover:from-blue-700 hover:to-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  title="Download conversation as JSON"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Download Chat</span>
                 </button>
                 <button
                   onClick={() => setShowSettings(!showSettings)}
