@@ -222,9 +222,9 @@ export default function IngestionPage({ books, onBack, onUploadSuccess }) {
     liveProgress?.status || uploadProgress?.status || "idle";
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex flex-col">
+    <div className="h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="bg-black/20 backdrop-blur-lg border-b border-white/10 sticky top-0 z-10">
+      <header className="bg-black/20 backdrop-blur-lg border-b border-white/10 sticky top-0 z-10 flex-shrink-0">
         <div className="px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
@@ -256,7 +256,7 @@ export default function IngestionPage({ books, onBack, onUploadSuccess }) {
       </header>
 
       {/* Main Content - Scrollable */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden ingest-scroll">
         <div className="px-4 sm:px-6 lg:px-8 py-8">
           <div className="max-w-7xl mx-auto">
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
