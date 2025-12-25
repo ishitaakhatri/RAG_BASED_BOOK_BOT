@@ -13,9 +13,10 @@ from dotenv import load_dotenv
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
 
 # Import State definitions
@@ -86,8 +87,7 @@ def get_llm():
         model="models/gemma-3-27b-it",
         google_api_key=os.getenv("GOOGLE_API_KEY"),
         temperature=0.7,
-        max_retries=2,
-        convert_system_message_to_human=True
+        max_retries=2
     )
 
 # ============================================================================
@@ -116,14 +116,15 @@ class RewrittenQueries(BaseModel):
 # ============================================================================
 
 def query_parser_node(state: AgentState) -> dict:
-    """Parses the user query using structured output."""
+    """Parses the user query using PydanticOutputParser."""
     print(f"\n[Query Parsing] Analyzing: '{state.user_query[:60]}...'")
     
     llm = get_llm()
-    structured_llm = llm.with_structured_output(QueryAnalysis)
+    parser = PydanticOutputParser(pydantic_object=QueryAnalysis)
     
+    # NOTE: Gemma 3 does not support 'system' role. Merged instructions into 'human'.
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are an expert query analyzer for a coding book learning assistant.
+        ("human", """You are an expert query analyzer for a coding book learning assistant.
         Analyze the user query to help retrieve relevant content.
         
         Intents:
@@ -132,13 +133,20 @@ def query_parser_node(state: AgentState) -> dict:
         - debugging: Troubleshooting, "why isn't this working?"
         - comparison: "difference between X and Y"
         - tutorial: Step-by-step guides
-        """),
-        ("human", "{query}")
+
+        Return the result in strict JSON format matching the schema below.
+        {format_instructions}
+        
+        User Query: {query}
+        """)
     ])
     
     try:
-        chain = prompt | structured_llm
-        result = chain.invoke({"query": state.user_query})
+        chain = prompt | llm | parser
+        result = chain.invoke({
+            "query": state.user_query,
+            "format_instructions": parser.get_format_instructions()
+        })
         
         parsed_query = ParsedQuery(
             raw_query=state.user_query,
@@ -177,25 +185,37 @@ def context_resolution_node(state: AgentState) -> dict:
     print(f"\n[Context Resolution] Analyzing history for: '{current_query}'")
     
     llm = get_llm()
-    structured_llm = llm.with_structured_output(ContextAnalysis)
+    parser = PydanticOutputParser(pydantic_object=ContextAnalysis)
     
     history_str = "\n".join([
         f"Turn {i+1}: Q: {t.user_query} A: {t.assistant_response[:100]}..." 
         for i, t in enumerate(state.conversation_history[-5:])
     ])
     
+    # NOTE: Merged instructions into 'human' message
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """Analyze the current query given the conversation history.
+        ("human", """Analyze the current query given the conversation history.
         Determine if the query refers to previous context.
         If the answer exists in history, set can_answer_from_history=True.
         Always provide a standalone_query.
-        """),
-        ("human", f"History:\n{history_str}\n\nCurrent Query: {current_query}")
+
+        Return strict JSON.
+        {format_instructions}
+        
+        History:
+        {history}
+
+        Current Query: {query}
+        """)
     ])
     
     try:
-        chain = prompt | structured_llm
-        result = chain.invoke({})
+        chain = prompt | llm | parser
+        result = chain.invoke({
+            "history": history_str,
+            "query": current_query,
+            "format_instructions": parser.get_format_instructions()
+        })
         
         print(f"  → Resolved: {result.standalone_query}")
         print(f"  → Needs Retrieval: {not result.can_answer_from_history}")
@@ -224,14 +244,22 @@ def answer_from_history_node(state: AgentState) -> dict:
         
     history_context = "\n\n".join([f"Q: {t.user_query}\nA: {t.assistant_response}" for t in turns_to_use])
     
+    # NOTE: Merged instructions into 'human' message
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Answer the user's question solely based on the conversation history provided below."),
-        ("human", f"History:\n{history_context}\n\nQuestion: {state.resolved_query or state.user_query}")
+        ("human", """Answer the user's question solely based on the conversation history provided below.
+        
+        History:
+        {history}
+        
+        Question: {question}""")
     ])
     
     try:
         chain = prompt | llm
-        response = chain.invoke({})
+        response = chain.invoke({
+            "history": history_context,
+            "question": state.resolved_query or state.user_query
+        })
         
         return {
             "response": LLMResponse(
@@ -254,18 +282,23 @@ def query_rewriter_node(state: AgentState) -> dict:
     print(f"\n[Query Rewriting] Expanding: '{query_to_expand}'")
     
     llm = get_llm()
-    structured_llm = llm.with_structured_output(RewrittenQueries)
+    parser = PydanticOutputParser(pydantic_object=RewrittenQueries)
     
+    # NOTE: Merged instructions into 'human' message
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Generate 3 alternative search queries for the user's request, preserving intent."),
-        ("human", "{query}")
+        ("human", """Generate 3 alternative search queries for the user's request, preserving intent.
+        Return strict JSON.
+        {format_instructions}
+        
+        Original Query: {query}""")
     ])
     
     try:
-        chain = prompt | structured_llm
+        chain = prompt | llm | parser
         result = chain.invoke({
             "query": query_to_expand, 
-            "intent": state.parsed_query.intent.value if state.parsed_query else "conceptual"
+            "intent": state.parsed_query.intent.value if state.parsed_query else "conceptual",
+            "format_instructions": parser.get_format_instructions()
         })
         return {"rewritten_queries": result.variations}
     except Exception as e:
