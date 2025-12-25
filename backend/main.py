@@ -693,46 +693,78 @@ async def websocket_ingestion_progress(websocket: WebSocket):
     logger.info("🔌 WebSocket client connected for ingestion progress")
     print("🔌 WebSocket client connected for ingestion progress")
 
+    # Track connection state
+    is_connected = True
+    send_failures = 0
+    max_send_failures = 3  # Stop trying after 3 consecutive failures
+
     async def send_update(state):
         """Send progress updates to the WebSocket client"""
+        nonlocal is_connected, send_failures
+        
+        # Stop trying if disconnected or too many failures
+        if not is_connected or send_failures >= max_send_failures:
+            return
+        
         try:
-            await websocket.send_json(state.to_dict())
+            # Check if WebSocket is still open
+            if websocket.client_state.name == "CONNECTED":
+                await websocket.send_json(state.to_dict())
+                send_failures = 0  # Reset failure count on success
+            else:
+                is_connected = False
+                logger.info("WebSocket no longer connected, stopping updates")
         except Exception as e:
-            logger.warning(f"⚠️ WebSocket send failed: {e}")
-            print(f"⚠️ WebSocket send failed: {e}")
+            send_failures += 1
+            if send_failures == 1:  # Only log first failure
+                logger.warning(f"⚠️ WebSocket send failed: {e}")
+            if send_failures >= max_send_failures:
+                is_connected = False
+                logger.info(f"WebSocket disconnected after {max_send_failures} failed attempts")
 
     # ✅ Register callback
     tracker.on_progress(send_update)
 
     # ✅ Send initial state immediately (prevents blank UI)
     try:
-        # FIX: Do not send "completed" status immediately on connection.
-        # This prevents the frontend from thinking the NEW job is already finished 
-        # based on the OLD job's status.
         initial_state = tracker.get_state()
         if initial_state.get("status") != "completed":
             await websocket.send_json(initial_state)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to send initial state: {e}")
 
     try:
-        # ✅ Push-only connection (no receive loop needed)
-        while True:
-            await asyncio.sleep(1)
+        # ✅ Keep connection alive and monitor for disconnection
+        while is_connected:
+            try:
+                # Try to receive ping/pong to detect disconnection
+                await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
+            except asyncio.TimeoutError:
+                # No message received, that's fine - just checking connection
+                continue
+            except WebSocketDisconnect:
+                logger.info("🔌 WebSocket client disconnected")
+                is_connected = False
+                break
+            except Exception as e:
+                logger.warning(f"WebSocket error: {e}")
+                is_connected = False
+                break
 
-    except WebSocketDisconnect:
-        logger.info("🔌 WebSocket client disconnected")
-        print("🔌 WebSocket client disconnected")
+    except Exception as e:
+        logger.warning(f"WebSocket connection error: {e}")
+        is_connected = False
 
     finally:
         # ✅ IMPORTANT: Remove callback to prevent memory leaks
+        is_connected = False
         logger.info("🧹 Removing WebSocket callback")
         tracker.remove_callback(send_update)
 
         try:
             await websocket.close()
         except Exception as e:
-            logger.warning(f"Error closing WebSocket: {e}")
+            logger.debug(f"Error closing WebSocket: {e}")
 
 
 

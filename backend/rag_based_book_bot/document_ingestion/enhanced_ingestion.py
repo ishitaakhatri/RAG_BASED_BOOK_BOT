@@ -40,7 +40,7 @@ from rag_based_book_bot.memory.embedding_utils import get_embedding_model
 
 # Config
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_INDEX = os.getenv("PINECONE_INDEX_NAME", "coding-books-2")
+PINECONE_INDEX = os.getenv("PINECONE_INDEX_NAME", "coding-books")
 PINECONE_NAMESPACE = os.getenv("PINECONE_NAMESPACE", "books_rag")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 BATCH_SIZE = 100
