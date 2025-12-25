@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 # Pinecone configuration
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "coding-books-2")
+INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "coding-books")
 NAMESPACE_CONVERSATIONS = "conversations"
 NAMESPACE_SESSION_META = "session_metadata"
 

@@ -41,20 +41,32 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         height: 8px;
       }
       .scrollbar-thin::-webkit-scrollbar-track {
-        background: rgba(255, 255, 255, 0.05);
+        background: rgba(139, 92, 246, 0.1);
         border-radius: 4px;
       }
       .scrollbar-thin::-webkit-scrollbar-thumb {
-        background: linear-gradient(180deg, #a855f7, #ec4899);
+        background: linear-gradient(180deg, #8b5cf6, #ec4899);
         border-radius: 4px;
+        transition: all 0.3s ease;
       }
       .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-        background: linear-gradient(180deg, #9333ea, #db2777);
+        background: linear-gradient(180deg, #7c3aed, #db2777);
+        box-shadow: 0 0 10px rgba(168, 85, 247, 0.5);
       }
       
       /* ✅ Smooth progress bar animation */
       .progress-circle {
         transition: stroke-dashoffset 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      
+      /* ✅ Glow effect */
+      @keyframes glow {
+        0%, 100% { box-shadow: 0 0 20px rgba(168, 85, 247, 0.4); }
+        50% { box-shadow: 0 0 30px rgba(236, 72, 153, 0.6); }
+      }
+      
+      .terminal-glow {
+        animation: glow 3s ease-in-out infinite;
       }
     `;
     document.head.appendChild(style);
@@ -71,8 +83,8 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   // ✅ Cleanup WebSocket on unmount
   useEffect(() => {
     return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.close(1000, "Component unmounting");
       }
     };
   }, []);
@@ -152,6 +164,12 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   const connectWebSocket = () => {
     return new Promise((resolve, reject) => {
       try {
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          console.log("WebSocket already connected");
+          resolve();
+          return;
+        }
+
         if (wsRef.current) {
           wsRef.current.close();
         }
@@ -214,8 +232,11 @@ export default function IngestionPage({ books, onUploadSuccess }) {
           reject(error);
         };
 
-        wsRef.current.onclose = () => {
-          addLog("⚠️ Disconnected from progress stream", "warning");
+        wsRef.current.onclose = (event) => {
+          console.log("WebSocket closed:", event.code, event.reason);
+          if (event.code !== 1000 && event.code !== 1001) {
+            addLog("⚠️ Disconnected from progress stream", "warning");
+          }
         };
       } catch (error) {
         reject(error);
@@ -229,7 +250,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
 
     setIsIngesting(true);
     setLogs([]);
-    setShowLogs(true);
+    setShowLogs(true); // ✅ Auto-show logs when ingestion starts
     setAnimatedPercentage(0);
     processedLogsRef.current.clear(); // ✅ Reset processed logs
     
@@ -281,6 +302,10 @@ export default function IngestionPage({ books, onUploadSuccess }) {
             setIsIngesting(false);
             setAnimatedPercentage(0);
             processedLogsRef.current.clear();
+            // Close WebSocket after successful ingestion
+            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+              wsRef.current.close(1000, "Ingestion complete");
+            }
           }, 2000);
         }
       } else {
@@ -304,8 +329,8 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   };
 
   const handleReset = () => {
-    if (wsRef.current) {
-      wsRef.current.close();
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.close(1000, "User cancelled");
     }
     setUploadFile(null);
     setUploadProgress(null);
@@ -494,7 +519,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                       </span>
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-purple-200 text-sm">
+                      <span className="text-blue-200 text-sm">
                         Total Chunks:
                       </span>
                       <span className="font-bold text-white text-lg">
@@ -520,147 +545,142 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                   </p>
 
                   <div className="space-y-6">
-                    {/* File Input */}
-                    <div>
-                      <label className="block text-sm font-semibold text-purple-200 mb-3">
-                        Select PDF File
-                      </label>
-                      <label 
-                        className={`flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-xl cursor-pointer transition-all ${
-                          isDragging 
-                            ? 'border-pink-400 bg-pink-500/20 scale-105' 
-                            : 'border-purple-400 bg-white/5 hover:bg-white/10'
-                        }`}
-                        onDragEnter={handleDragEnter}
-                        onDragLeave={handleDragLeave}
-                        onDragOver={handleDragOver}
-                        onDrop={handleDrop}
-                      >
-                        <div className="flex flex-col items-center justify-center pt-8 pb-6">
-                          <Upload className={`w-12 h-12 mb-2 transition-all ${
-                            isDragging ? 'text-pink-300 scale-110' : 'text-purple-300'
-                          }`} />
-                          <p className="text-sm font-semibold text-white">
-                            {isDragging ? 'Drop your PDF here' : 'Click to upload or drag and drop'}
-                          </p>
-                          <p className="text-xs text-purple-300">
-                            PDF files only
-                          </p>
-                        </div>
-                        <input
-                          type="file"
-                          accept=".pdf"
-                          onChange={(e) => {
-                            const file = e.target.files[0];
-                            if (file) {
-                              setUploadFile(file);
-                              addLog(`📎 File selected: ${file.name}`, "info");
-                            }
-                          }}
-                          className="hidden"
-                          disabled={isIngesting}
-                        />
-                      </label>
-                      {uploadFile && (
-                        <div className="mt-4 p-4 bg-green-500/20 border border-green-400/50 rounded-lg">
-                          <div className="flex items-center space-x-3">
-                            <CheckCircle className="w-5 h-5 text-green-400" />
-                            <div>
-                              <p className="text-sm font-semibold text-green-300">
-                                {uploadFile.name}
+                    {/* File Input - Hidden when ingesting */}
+                    {!isIngesting && (
+                      <>
+                        <div>
+                          <label className="block text-sm font-semibold text-purple-200 mb-3">
+                            Select PDF File
+                          </label>
+                          <label 
+                            className={`flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-xl cursor-pointer transition-all duration-300 ${
+                              isDragging 
+                                ? 'border-pink-400 bg-gradient-to-br from-pink-500/30 to-purple-500/30 scale-[1.02] shadow-lg shadow-pink-500/50' 
+                                : 'border-purple-400/70 bg-gradient-to-br from-purple-500/10 to-pink-500/10 hover:from-purple-500/20 hover:to-pink-500/20 hover:border-purple-300'
+                            }`}
+                            onDragEnter={handleDragEnter}
+                            onDragLeave={handleDragLeave}
+                            onDragOver={handleDragOver}
+                            onDrop={handleDrop}
+                          >
+                            <div className="flex flex-col items-center justify-center pt-8 pb-6">
+                              <Upload className={`w-12 h-12 mb-2 transition-all duration-300 ${
+                                isDragging ? 'text-pink-300 scale-125 rotate-12' : 'text-purple-300'
+                              }`} />
+                              <p className="text-sm font-semibold text-white">
+                                {isDragging ? '🚀 Drop your PDF here' : 'Click to upload or drag and drop'}
                               </p>
-                              <p className="text-xs text-green-200">
-                                {(uploadFile.size / 1024 / 1024).toFixed(2)} MB
+                              <p className="text-xs text-purple-300 mt-1">
+                                PDF files only
                               </p>
                             </div>
-                          </div>
+                            <input
+                              type="file"
+                              accept=".pdf"
+                              onChange={(e) => {
+                                const file = e.target.files[0];
+                                if (file) {
+                                  setUploadFile(file);
+                                  addLog(`📎 File selected: ${file.name}`, "info");
+                                }
+                              }}
+                              className="hidden"
+                              disabled={isIngesting}
+                            />
+                          </label>
+                          {uploadFile && (
+                            <div className="mt-4 p-4 bg-gradient-to-r from-green-500/20 to-emerald-500/20 border border-green-400/50 rounded-lg shadow-lg">
+                              <div className="flex items-center space-x-3">
+                                <CheckCircle className="w-5 h-5 text-green-400" />
+                                <div>
+                                  <p className="text-sm font-semibold text-green-300">
+                                    {uploadFile.name}
+                                  </p>
+                                  <p className="text-xs text-green-200">
+                                    {(uploadFile.size / 1024 / 1024).toFixed(2)} MB
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
 
-                    {/* File Requirements */}
-                    <div className="bg-blue-500/10 border border-blue-400/30 rounded-lg p-4">
-                      <h4 className="text-sm font-semibold text-blue-300 mb-2 flex items-center">
-                        <AlertCircle className="w-4 h-4 mr-2" />
-                        File Requirements
-                      </h4>
-                      <ul className="text-xs text-blue-200 space-y-1">
-                        <li>• File format: PDF (.pdf)</li>
-                        <li>• Recommended file size: Less than 50 MB</li>
-                        <li>
-                          • Filename format: "Book Title - Author Name.pdf"
-                        </li>
-                        <li>• System will auto-extract and chunk content</li>
-                      </ul>
-                    </div>
+                        {/* File Requirements */}
+                        <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-400/30 rounded-lg p-4">
+                          <h4 className="text-sm font-semibold text-purple-300 mb-2 flex items-center">
+                            <AlertCircle className="w-4 h-4 mr-2" />
+                            File Requirements
+                          </h4>
+                          <ul className="text-xs text-purple-200 space-y-1">
+                            <li>• File format: PDF (.pdf)</li>
+                            <li>• Recommended file size: Less than 50 MB</li>
+                            <li>
+                              • Filename format: "Book Title - Author Name.pdf"
+                            </li>
+                            <li>• System will auto-extract and chunk content</li>
+                          </ul>
+                        </div>
+                      </>
+                    )}
 
                     {/* Progress Section */}
                     {(uploadProgress || liveProgress || isIngesting) && (
-                      <div className="bg-white/5 rounded-lg p-6 border border-white/10">
-                        <h3 className="text-lg font-bold text-white mb-4">
+                      <div className="bg-gradient-to-br from-purple-900/30 via-pink-900/20 to-purple-900/30 rounded-xl p-6 border border-purple-400/30 shadow-2xl">
+                        <h3 className="text-xl font-bold text-white mb-6 flex items-center">
+                          <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse mr-3"></div>
                           Ingestion Progress
                         </h3>
 
-                        <div className="space-y-4">
+                        <div className="space-y-6">
                           {/* ✅ Smooth Circular Progress */}
                           <div className="flex items-center justify-center">
-                            <div className="relative w-28 h-28">
+                            <div className="relative w-32 h-32">
                               <svg className="w-full h-full transform -rotate-90">
                                 <circle
-                                  cx="56"
-                                  cy="56"
-                                  r="48"
-                                  stroke="rgba(255,255,255,0.1)"
-                                  strokeWidth="6"
+                                  cx="64"
+                                  cy="64"
+                                  r="56"
+                                  stroke="rgba(139, 92, 246, 0.2)"
+                                  strokeWidth="8"
                                   fill="none"
                                 />
                                 <circle
-                                  cx="56"
-                                  cy="56"
-                                  r={radius}
+                                  cx="64"
+                                  cy="64"
+                                  r="56"
                                   stroke="url(#grad)"
-                                  strokeWidth="6"
+                                  strokeWidth="8"
                                   fill="none"
                                   strokeDasharray={circumference}
-                                  strokeDashoffset={
-                                    circumference -
-                                    (animatedPercentage / 100) * circumference
-                                  }
+                                  strokeDashoffset={circumference - (animatedPercentage / 100) * circumference}
                                   strokeLinecap="round"
                                   className="progress-circle"
+                                  style={{ filter: 'drop-shadow(0 0 8px rgba(168, 85, 247, 0.6))' }}
                                 />
 
                                 <defs>
-                                  <linearGradient
-                                    id="grad"
-                                    x1="0%"
-                                    y1="0%"
-                                    x2="100%"
-                                    y2="100%"
-                                  >
-                                    <stop offset="0%" stopColor="#a855f7" />
+                                  <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                    <stop offset="0%" stopColor="#8b5cf6" />
+                                    <stop offset="50%" stopColor="#a855f7" />
                                     <stop offset="100%" stopColor="#ec4899" />
                                   </linearGradient>
                                 </defs>
                               </svg>
-                              <div className="absolute inset-0 flex items-center justify-center">
-                                <p className="text-2xl font-bold text-white">
+                              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                <p className="text-3xl font-bold bg-gradient-to-r from-purple-300 to-pink-300 bg-clip-text text-transparent">
                                   {currentPercentage}%
                                 </p>
+                                <p className="text-xs text-purple-300 mt-1">{currentStatus}</p>
                               </div>
                             </div>
                           </div>
 
                           {/* Status */}
-                          <p
-                            className={`text-center text-sm font-semibold ${getStatusColor(
-                              currentStatus
-                            )}`}
-                          >
-                            {liveProgress?.current_task || 
-                             uploadProgress?.message || 
-                             "Ready"}
-                          </p>
+                          <div className="bg-black/30 rounded-lg p-4 border border-purple-500/30">
+                            <p className={`text-center text-sm font-semibold ${getStatusColor(currentStatus)}`}>
+                              {liveProgress?.current_task || uploadProgress?.message || "Ready"}
+                            </p>
+                          </div>
 
                           {/* Progress Details Grid
                           {liveProgress && (
@@ -730,107 +750,81 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                             </div>
                           )}
 
-                          {/* ✅ ENHANCED: Terminal-style Live Logs */}
+                          {/* ✅ ENHANCED: Terminal-style Live Logs - Auto-visible */}
                           {isIngesting && (
-                            <div className="mt-4 pt-4 border-t border-white/10">
-                              <button
-                                onClick={() => setShowLogs(!showLogs)}
-                                className="w-full flex items-center justify-center space-x-2 px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all text-sm relative"
-                              >
-                                {showLogs ? (
-                                  <EyeOff className="w-4 h-4" />
-                                ) : (
-                                  <Eye className="w-4 h-4" />
-                                )}
-                                <Terminal className="w-4 h-4" />
-                                <span className="font-medium">
-                                  {showLogs ? "Hide" : "View"} Live Terminal ({logs.length})
-                                </span>
-                                {logs.length > 0 && (
-                                  <span className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center space-x-1">
-                                    <span className="relative flex h-2 w-2">
-                                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                            <div className="mt-6">
+                              <div className="bg-black/90 rounded-xl border-2 border-purple-500/50 shadow-2xl terminal-glow overflow-hidden">
+                                {/* Terminal Header */}
+                                <div className="bg-gradient-to-r from-purple-900/80 via-pink-900/80 to-purple-900/80 px-4 py-3 border-b border-purple-500/50 flex items-center justify-between">
+                                  <div className="flex items-center space-x-3">
+                                    <div className="flex space-x-2">
+                                      <div className="w-3 h-3 rounded-full bg-gradient-to-br from-red-400 to-red-600 shadow-lg"></div>
+                                      <div className="w-3 h-3 rounded-full bg-gradient-to-br from-yellow-400 to-yellow-600 shadow-lg"></div>
+                                      <div className="w-3 h-3 rounded-full bg-gradient-to-br from-green-400 to-green-600 shadow-lg animate-pulse"></div>
+                                    </div>
+                                    <span className="text-sm text-purple-300 font-mono font-semibold">
+                                      🔧 backend@rag-bot:~$
                                     </span>
-                                    <span className="text-xs text-green-400 font-semibold">LIVE</span>
-                                  </span>
-                                )}
-                              </button>
-
-                              {showLogs && (
-                                <div className="mt-3 bg-black/90 rounded-lg border border-green-500/30 shadow-2xl">
-                                  {/* Terminal Header */}
-                                  <div className="bg-gradient-to-r from-gray-800 to-gray-900 px-4 py-2 rounded-t-lg border-b border-green-500/30 flex items-center justify-between">
-                                    <div className="flex items-center space-x-2">
-                                      <div className="flex space-x-1.5">
-                                        <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
-                                        <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
-                                        <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
-                                      </div>
-                                      <span className="text-xs text-gray-400 font-mono">
-                                        backend@rag-bot:~$
-                                      </span>
-                                    </div>
-                                    <div className="flex items-center space-x-2">
-                                      {logs.length > 0 && (
-                                        <span className="text-xs text-green-400 font-mono flex items-center space-x-1">
-                                          <span className="relative flex h-1.5 w-1.5">
-                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500"></span>
-                                          </span>
-                                          <span>STREAMING</span>
-                                        </span>
-                                      )}
-                                      <span className="text-xs text-gray-500 font-mono">
-                                        {logs.length} lines
-                                      </span>
-                                    </div>
                                   </div>
-                                  
-                                  {/* Terminal Content */}
-                                  <div className="p-4 h-80 overflow-y-auto scrollbar-thin font-mono text-xs">
-                                    {logs.length === 0 ? (
-                                      <div className="flex items-center justify-center h-full">
-                                        <div className="text-center space-y-3">
-                                          <Loader className="w-8 h-8 animate-spin text-purple-400 mx-auto" />
-                                          <p className="text-purple-300 font-semibold">
-                                            📡 Connecting to backend logger...
-                                          </p>
-                                          <p className="text-xs text-gray-500">
-                                            Waiting for ingestion logs to stream
-                                          </p>
-                                        </div>
-                                      </div>
-                                    ) : (
-                                      <div className="space-y-0.5">
-                                        {logs.map((log, idx) => (
-                                          <div
-                                            key={idx}
-                                            className={`${getLogColor(log.type)} leading-relaxed flex items-start hover:bg-white/5 px-2 py-0.5 rounded transition-colors`}
-                                          >
-                                            <span className="text-gray-600 text-xs mr-2 flex-shrink-0 select-none">
-                                              [{log.timestamp}]
-                                            </span>
-                                            <span className={`mr-2 flex-shrink-0 font-bold text-xs select-none ${
-                                              log.type === 'error' ? 'text-red-400' :
-                                              log.type === 'warning' ? 'text-yellow-400' :
-                                              log.type === 'success' ? 'text-green-400' :
-                                              'text-blue-400'
-                                            }`}>
-                                              {log.type === 'error' ? 'ERR' :
-                                               log.type === 'warning' ? 'WRN' :
-                                               log.type === 'success' ? 'OK ' :
-                                               'INF'}
-                                            </span>
-                                            <span className="flex-1 break-all">{log.message}</span>
-                                          </div>
-                                        ))}
-                                        <div ref={logsEndRef} />
-                                      </div>
+                                  <div className="flex items-center space-x-3">
+                                    {logs.length > 0 && (
+                                      <span className="text-xs text-green-400 font-mono flex items-center space-x-2 bg-green-500/10 px-3 py-1 rounded-full border border-green-500/30">
+                                        <span className="relative flex h-2 w-2">
+                                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                          <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                                        </span>
+                                        <span className="font-bold">LIVE</span>
+                                      </span>
                                     )}
+                                    <span className="text-xs text-gray-400 font-mono bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/30">
+                                      {logs.length} lines
+                                    </span>
                                   </div>
                                 </div>
-                              )}
+                                
+                                {/* Terminal Content */}
+                                <div className="p-5 h-96 overflow-y-auto scrollbar-thin font-mono text-xs bg-gradient-to-b from-black/95 to-gray-900/95">
+                                  {logs.length === 0 ? (
+                                    <div className="flex items-center justify-center h-full">
+                                      <div className="text-center space-y-4">
+                                        <Loader className="w-10 h-10 animate-spin text-purple-400 mx-auto" />
+                                        <p className="text-purple-300 font-semibold text-base">
+                                          📡 Connecting to backend logger...
+                                        </p>
+                                        <p className="text-sm text-gray-500">
+                                          Waiting for ingestion logs to stream
+                                        </p>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="space-y-1">
+                                      {logs.map((log, idx) => (
+                                        <div
+                                          key={idx}
+                                          className={`${getLogColor(log.type)} leading-relaxed flex items-start hover:bg-purple-500/10 px-3 py-1.5 rounded-md transition-all duration-200`}
+                                        >
+                                          <span className="text-gray-500 text-xs mr-3 flex-shrink-0 select-none font-semibold">
+                                            [{log.timestamp}]
+                                          </span>
+                                          <span className={`mr-3 flex-shrink-0 font-bold text-xs select-none px-2 py-0.5 rounded ${
+                                            log.type === 'error' ? 'bg-red-500/20 text-red-300 border border-red-500/30' :
+                                            log.type === 'warning' ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30' :
+                                            log.type === 'success' ? 'bg-green-500/20 text-green-300 border border-green-500/30' :
+                                            'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                                          }`}>
+                                            {log.type === 'error' ? 'ERR' :
+                                             log.type === 'warning' ? 'WRN' :
+                                             log.type === 'success' ? 'OK' :
+                                             'INF'}
+                                          </span>
+                                          <span className="flex-1 break-all text-gray-200">{log.message}</span>
+                                        </div>
+                                      ))}
+                                      <div ref={logsEndRef} />
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
                             </div>
                           )}
                         </div>
