@@ -303,13 +303,16 @@ export default function RAGBookBot() {
           role: "user",
           content: turn.user_query,
         });
+        
         loadedMessages.push({
           role: "assistant",
           content: turn.assistant_response,
-          sources: turn.sources_used
-            ? turn.sources_used.map((id) => ({ chunk_id: id }))
-            : [],
-          stats: {},
+          sources: [], // Don't show sources in memory chats
+          stats: turn.stats || {},
+          pipeline_stages: turn.pipeline_stages || [],
+          rewritten_queries: turn.rewritten_queries || [],
+          answered_from_history: turn.answered_from_history || false,
+          resolved_query: turn.resolved_query || null,
         });
       }
 

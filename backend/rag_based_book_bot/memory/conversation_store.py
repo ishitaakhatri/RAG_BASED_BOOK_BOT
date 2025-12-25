@@ -84,7 +84,7 @@ def save_conversation_turn(
     resolved_query: Optional[str] = None,
     needs_retrieval: bool = True,
     referenced_turn: Optional[int] = None,
-    sources_used: Optional[List[str]] = None,
+    sources_used: Optional[List[Dict]] = None,
     user_id: Optional[str] = None
 ) -> Dict:
     """
