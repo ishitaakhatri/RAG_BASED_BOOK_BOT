@@ -9,6 +9,7 @@ import {
   Book,
   Eye,
   EyeOff,
+  Terminal,
 } from "lucide-react";
 
 const API_BASE_URL = "http://localhost:8000";
@@ -18,11 +19,17 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   const [uploadFile, setUploadFile] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(null);
   const [liveProgress, setLiveProgress] = useState(null);
-  const [showLogs, setShowLogs] = useState(false);
+  const [showLogs, setShowLogs] = useState(true);
   const [logs, setLogs] = useState([]);
   const [isIngesting, setIsIngesting] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  
+  // ✅ NEW: Smooth animation state
+  const [animatedPercentage, setAnimatedPercentage] = useState(0);
+  
   const wsRef = useRef(null);
   const logsEndRef = useRef(null);
+  const processedLogsRef = useRef(new Set()); // ✅ Track processed logs to prevent duplicates
   const navigate = useNavigate();
 
   // Add custom scrollbar styles
@@ -44,17 +51,24 @@ export default function IngestionPage({ books, onUploadSuccess }) {
       .scrollbar-thin::-webkit-scrollbar-thumb:hover {
         background: linear-gradient(180deg, #9333ea, #db2777);
       }
+      
+      /* ✅ Smooth progress bar animation */
+      .progress-circle {
+        transition: stroke-dashoffset 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+      }
     `;
     document.head.appendChild(style);
     return () => document.head.removeChild(style);
   }, []);
 
+  // ✅ Auto-scroll logs
   useEffect(() => {
     if (logsEndRef.current && showLogs) {
       logsEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [logs, showLogs]);
 
+  // ✅ Cleanup WebSocket on unmount
   useEffect(() => {
     return () => {
       if (wsRef.current) {
@@ -63,15 +77,81 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     };
   }, []);
 
+  // ✅ NEW: Smooth percentage animation
+  useEffect(() => {
+    const targetPercentage = calculatePercentage();
+    
+    // Smooth animation using requestAnimationFrame
+    const animateProgress = () => {
+      setAnimatedPercentage((prev) => {
+        const diff = targetPercentage - prev;
+        if (Math.abs(diff) < 0.5) return targetPercentage;
+        return prev + diff * 0.15; // Smooth easing
+      });
+    };
+
+    const animationFrame = requestAnimationFrame(animateProgress);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [liveProgress, uploadProgress]);
+
   const addLog = (message, type = "info") => {
     const timestamp = new Date().toLocaleTimeString();
+    const logKey = `${timestamp}-${message}`; // Create unique key
+    
+    // ✅ Prevent duplicate logs
+    if (processedLogsRef.current.has(logKey)) {
+      return;
+    }
+    
+    processedLogsRef.current.add(logKey);
     setLogs((prev) => [...prev, { message, type, timestamp }]);
+  };
+
+  // ✅ Drag and Drop Handlers
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isIngesting) {
+      setIsDragging(true);
+    }
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only set dragging to false if we're leaving the drop zone entirely
+    if (e.currentTarget === e.target) {
+      setIsDragging(false);
+    }
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    if (isIngesting) return;
+
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
+        setUploadFile(file);
+        addLog(`📎 File selected: ${file.name}`, "info");
+      } else {
+        addLog("❌ Please drop a PDF file", "error");
+      }
+    }
   };
 
   const connectWebSocket = () => {
     return new Promise((resolve, reject) => {
       try {
-        // FIX: Close existing connection if it exists to prevent leaks
         if (wsRef.current) {
           wsRef.current.close();
         }
@@ -89,36 +169,42 @@ export default function IngestionPage({ books, onUploadSuccess }) {
             setLiveProgress(data);
             console.log("📊 Live progress update:", data);
 
-            if (data.status === "chunking") {
-              addLog(
-                `📊 Chunking: ${data.chunks_created} chunks created`,
-                "info"
-              );
-            } else if (data.status === "embedding") {
-              addLog(
-                `🧠 Embedding: ${data.embeddings_generated}/${data.chunks_created} embeddings`,
-                "info"
-              );
-            } else if (data.status === "upserting") {
-              addLog(
-                `📤 Upserting: ${data.vectors_upserted} vectors to Pinecone`,
-                "info"
-              );
-            } else if (data.status === "failed") {
-              addLog(`❌ Ingestion failed: ${data.errors.join(", ")}`, "error");
-            } else if (data.status === "completed") {
-              addLog(
-                `✅ Ingestion completed! ${data.chunks_created} chunks indexed`,
-                "success"
-              );
-
-              // FIX: Do NOT close the WebSocket here. 
-              // Leaving it open allows subsequent ingests to reuse the connection 
-              // or handle rapid-fire updates without race conditions.
-              // Cleanup is handled by the useEffect return or handleReset.
+            // ✅ ENHANCED: Process backend logs from WebSocket
+            if (data.logs && Array.isArray(data.logs) && data.logs.length > 0) {
+              // Process all logs from backend
+              data.logs.forEach((logLine) => {
+                // Parse log format: "[HH:MM:SS] LEVEL: message"
+                const match = logLine.match(/\[(\d{2}:\d{2}:\d{2})\] (\w+): (.+)/);
+                if (match) {
+                  const [, timestamp, level, message] = match;
+                  const type = level.toLowerCase();
+                  const logKey = `${timestamp}-${message}`;
+                  
+                  // ✅ Only add if not already processed
+                  if (!processedLogsRef.current.has(logKey)) {
+                    processedLogsRef.current.add(logKey);
+                    setLogs((prev) => [...prev, { message, type, timestamp }]);
+                  }
+                } else {
+                  // Fallback for unformatted logs (raw messages from backend)
+                  const logKey = `${Date.now()}-${logLine}`;
+                  if (!processedLogsRef.current.has(logKey)) {
+                    processedLogsRef.current.add(logKey);
+                    const timestamp = new Date().toLocaleTimeString();
+                    setLogs((prev) => [...prev, { 
+                      message: logLine, 
+                      type: "info", 
+                      timestamp 
+                    }]);
+                  }
+                }
+              });
             }
+            // ✅ IMPORTANT: No fallback status logging if we have logs array
+            // This prevents duplicate messages
           } catch (error) {
             console.error("Error parsing progress data:", error);
+            addLog(`⚠️ Error parsing update: ${error.message}`, "warning");
           }
         };
 
@@ -144,15 +230,15 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     setIsIngesting(true);
     setLogs([]);
     setShowLogs(true);
+    setAnimatedPercentage(0);
+    processedLogsRef.current.clear(); // ✅ Reset processed logs
+    
     addLog("📋 Starting ingestion process...", "info");
 
     try {
       await connectWebSocket();
     } catch (error) {
-      addLog(
-        "⚠️ Could not connect to live progress (will still work)",
-        "warning"
-      );
+      addLog("⚠️ Could not connect to live progress (will still work)", "warning");
     }
 
     const formData = new FormData();
@@ -161,7 +247,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     setUploadProgress({
       status: "uploading",
       message: "Uploading and processing PDF...",
-      percentage: 10,
+      percentage: 5,
     });
 
     addLog(`📁 Uploading: ${uploadFile.name}`, "info");
@@ -178,17 +264,12 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         const result = data.result;
         setUploadProgress({
           status: "success",
-          message: `Successfully ingested "${
-            result.title || uploadFile.name
-          }"! Created ${result.chunks} chunks.`,
+          message: `Successfully ingested "${result.title || uploadFile.name}"! Created ${result.chunks} chunks.`,
           percentage: 100,
           result,
         });
 
-        addLog(
-          `✅ Ingestion complete: ${result.chunks} chunks from ${result.total_pages} pages`,
-          "success"
-        );
+        addLog(`✅ Ingestion complete: ${result.chunks} chunks from ${result.total_pages} pages`, "success");
         addLog(`📚 Method used: ${result.method}`, "success");
 
         if (onUploadSuccess) {
@@ -198,6 +279,8 @@ export default function IngestionPage({ books, onUploadSuccess }) {
             setUploadProgress(null);
             setLiveProgress(null);
             setIsIngesting(false);
+            setAnimatedPercentage(0);
+            processedLogsRef.current.clear();
           }, 2000);
         }
       } else {
@@ -230,6 +313,8 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     setLogs([]);
     setShowLogs(false);
     setIsIngesting(false);
+    setAnimatedPercentage(0);
+    processedLogsRef.current.clear();
     navigate("/");
   };
 
@@ -250,31 +335,73 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     }
   };
 
-  // Enhanced: Map all statuses to a progress percentage
+  const getLogColor = (type) => {
+    switch (type) {
+      case "success":
+        return "text-green-400";
+      case "error":
+        return "text-red-400";
+      case "warning":
+        return "text-yellow-400";
+      case "info":
+      default:
+        return "text-purple-300";
+    }
+  };
+
+  // ✅ ENHANCED: Dynamic multi-stage percentage calculation
   const calculatePercentage = () => {
     if (!liveProgress) {
       return uploadProgress?.percentage ?? 0;
     }
 
-    // Use backend-provided percentage FIRST (most accurate)
+    // If backend provides percentage directly, use it
     if (typeof liveProgress.percentage === "number") {
-      return Math.round(liveProgress.percentage);
+      return Math.min(Math.max(liveProgress.percentage, 0), 100);
     }
 
-    // Fallbacks (rarely needed)
-    if (liveProgress.status === "completed") return 100;
-    if (liveProgress.status === "failed") return 0;
-    if (liveProgress.status === "parsing_pdf") return 10;
+    const status = liveProgress.status;
+    
+    // Final states
+    if (status === "completed") return 100;
+    if (status === "failed") return 0;
 
+    // ✅ Multi-stage progress calculation
+    // Stage 1: PDF Parsing (0-10%)
+    if (status === "parsing_pdf") {
+      return 10;
+    }
+
+    // Stage 2: Chunking (10-40%)
+    if (status === "chunking") {
+      const currentPage = liveProgress.current_page || 0;
+      const totalPages = liveProgress.total_pages || 1;
+      const chunkingProgress = (currentPage / totalPages) * 30; // 30% of total
+      return 10 + chunkingProgress;
+    }
+
+    // Stage 3: Embedding (40-70%)
+    if (status === "embedding") {
+      const embeddingsGenerated = liveProgress.embeddings_generated || 0;
+      const totalChunks = liveProgress.chunks_created || 1;
+      const embeddingProgress = (embeddingsGenerated / totalChunks) * 30; // 30% of total
+      return 40 + embeddingProgress;
+    }
+
+    // Stage 4: Upserting (70-95%)
+    if (status === "upserting") {
+      const vectorsUpserted = liveProgress.vectors_upserted || 0;
+      const totalChunks = liveProgress.chunks_created || 1;
+      const upsertProgress = (vectorsUpserted / totalChunks) * 25; // 25% of total
+      return 70 + upsertProgress;
+    }
+
+    // Default fallback
     return uploadProgress?.percentage ?? 0;
   };
 
-
-  const currentPercentage = calculatePercentage();
-
-  const currentStatus =
-    liveProgress?.status || uploadProgress?.status || "idle";
-
+  const currentPercentage = Math.round(animatedPercentage);
+  const currentStatus = liveProgress?.status || uploadProgress?.status || "idle";
   const radius = 48;
   const circumference = 2 * Math.PI * radius;
 
@@ -326,7 +453,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                     Available Books
                   </h3>
 
-                  {/* Books Vault - Scrollable */}
                   <div className="space-y-2 max-h-96 overflow-y-auto scrollbar-thin">
                     <button className="w-full text-left px-3 py-2 rounded-lg transition-all bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold">
                       All Books
@@ -399,11 +525,23 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                       <label className="block text-sm font-semibold text-purple-200 mb-3">
                         Select PDF File
                       </label>
-                      <label className="flex flex-col items-center justify-center w-full h-48 border-2 border-dashed border-purple-400 rounded-xl cursor-pointer bg-white/5 hover:bg-white/10 transition-all">
+                      <label 
+                        className={`flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-xl cursor-pointer transition-all ${
+                          isDragging 
+                            ? 'border-pink-400 bg-pink-500/20 scale-105' 
+                            : 'border-purple-400 bg-white/5 hover:bg-white/10'
+                        }`}
+                        onDragEnter={handleDragEnter}
+                        onDragLeave={handleDragLeave}
+                        onDragOver={handleDragOver}
+                        onDrop={handleDrop}
+                      >
                         <div className="flex flex-col items-center justify-center pt-8 pb-6">
-                          <Upload className="w-12 h-12 text-purple-300 mb-2" />
+                          <Upload className={`w-12 h-12 mb-2 transition-all ${
+                            isDragging ? 'text-pink-300 scale-110' : 'text-purple-300'
+                          }`} />
                           <p className="text-sm font-semibold text-white">
-                            Click to upload or drag and drop
+                            {isDragging ? 'Drop your PDF here' : 'Click to upload or drag and drop'}
                           </p>
                           <p className="text-xs text-purple-300">
                             PDF files only
@@ -412,7 +550,13 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                         <input
                           type="file"
                           accept=".pdf"
-                          onChange={(e) => setUploadFile(e.target.files[0])}
+                          onChange={(e) => {
+                            const file = e.target.files[0];
+                            if (file) {
+                              setUploadFile(file);
+                              addLog(`📎 File selected: ${file.name}`, "info");
+                            }
+                          }}
                           className="hidden"
                           disabled={isIngesting}
                         />
@@ -458,7 +602,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                         </h3>
 
                         <div className="space-y-4">
-                          {/* Circular Progress */}
+                          {/* ✅ Smooth Circular Progress */}
                           <div className="flex items-center justify-center">
                             <div className="relative w-28 h-28">
                               <svg className="w-full h-full transform -rotate-90">
@@ -480,10 +624,10 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                                   strokeDasharray={circumference}
                                   strokeDashoffset={
                                     circumference -
-                                    (currentPercentage / 100) * circumference
+                                    (animatedPercentage / 100) * circumference
                                   }
                                   strokeLinecap="round"
-                                  className="transition-all duration-500 ease-out"
+                                  className="progress-circle"
                                 />
 
                                 <defs>
@@ -501,7 +645,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                               </svg>
                               <div className="absolute inset-0 flex items-center justify-center">
                                 <p className="text-2xl font-bold text-white">
-                                  {Math.round(currentPercentage)}%
+                                  {currentPercentage}%
                                 </p>
                               </div>
                             </div>
@@ -513,12 +657,12 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                               currentStatus
                             )}`}
                           >
-                            {liveProgress?.status
-                              ? `Processing: ${liveProgress.status}`
-                              : uploadProgress?.message || "Ready"}
+                            {liveProgress?.current_task || 
+                             uploadProgress?.message || 
+                             "Ready"}
                           </p>
 
-                          {/* Progress Details Grid */}
+                          {/* Progress Details Grid
                           {liveProgress && (
                             <div className="grid grid-cols-2 gap-3">
                               <div className="bg-white/5 rounded p-3 border border-white/10">
@@ -526,8 +670,8 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                                   Pages
                                 </p>
                                 <p className="text-lg font-bold text-white">
-                                  {liveProgress.current_page}/
-                                  {liveProgress.total_pages}
+                                  {liveProgress.current_page || 0}/
+                                  {liveProgress.total_pages || 0}
                                 </p>
                               </div>
                               <div className="bg-white/5 rounded p-3 border border-white/10">
@@ -535,11 +679,27 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                                   Chunks
                                 </p>
                                 <p className="text-lg font-bold text-white">
-                                  {liveProgress.chunks_created}
+                                  {liveProgress.chunks_created || 0}
+                                </p>
+                              </div>
+                              <div className="bg-white/5 rounded p-3 border border-white/10">
+                                <p className="text-xs text-purple-300 mb-1">
+                                  Embeddings
+                                </p>
+                                <p className="text-lg font-bold text-white">
+                                  {liveProgress.embeddings_generated || 0}
+                                </p>
+                              </div>
+                              <div className="bg-white/5 rounded p-3 border border-white/10">
+                                <p className="text-xs text-purple-300 mb-1">
+                                  Vectors
+                                </p>
+                                <p className="text-lg font-bold text-white">
+                                  {liveProgress.vectors_upserted || 0}
                                 </p>
                               </div>
                             </div>
-                          )}
+                          )} */}
 
                           {/* Success/Error Message */}
                           {uploadProgress?.status === "success" && (
@@ -570,51 +730,105 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                             </div>
                           )}
 
-                          {/* Logs */}
+                          {/* ✅ ENHANCED: Terminal-style Live Logs */}
                           {isIngesting && (
                             <div className="mt-4 pt-4 border-t border-white/10">
                               <button
                                 onClick={() => setShowLogs(!showLogs)}
-                                className="w-full flex items-center justify-center space-x-2 px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all text-sm"
+                                className="w-full flex items-center justify-center space-x-2 px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all text-sm relative"
                               >
                                 {showLogs ? (
                                   <EyeOff className="w-4 h-4" />
                                 ) : (
                                   <Eye className="w-4 h-4" />
                                 )}
+                                <Terminal className="w-4 h-4" />
                                 <span className="font-medium">
-                                  {showLogs ? "Hide" : "View"} Logs
+                                  {showLogs ? "Hide" : "View"} Live Terminal ({logs.length})
                                 </span>
+                                {logs.length > 0 && (
+                                  <span className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center space-x-1">
+                                    <span className="relative flex h-2 w-2">
+                                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                                    </span>
+                                    <span className="text-xs text-green-400 font-semibold">LIVE</span>
+                                  </span>
+                                )}
                               </button>
 
                               {showLogs && (
-                                <div className="mt-3 bg-black/40 rounded-lg border border-white/10 p-3 h-40 overflow-y-auto scrollbar-thin font-mono text-xs">
-                                  {logs.length === 0 ? (
-                                    <p className="text-purple-300">
-                                      Waiting for logs...
-                                    </p>
-                                  ) : (
-                                    logs.map((log, idx) => (
-                                      <div
-                                        key={idx}
-                                        className={`${
-                                          log.type === "success"
-                                            ? "text-green-400"
-                                            : log.type === "error"
-                                            ? "text-red-400"
-                                            : log.type === "warning"
-                                            ? "text-yellow-400"
-                                            : "text-purple-300"
-                                        }`}
-                                      >
-                                        <span className="text-gray-500">
-                                          [{log.timestamp}]
-                                        </span>{" "}
-                                        {log.message}
+                                <div className="mt-3 bg-black/90 rounded-lg border border-green-500/30 shadow-2xl">
+                                  {/* Terminal Header */}
+                                  <div className="bg-gradient-to-r from-gray-800 to-gray-900 px-4 py-2 rounded-t-lg border-b border-green-500/30 flex items-center justify-between">
+                                    <div className="flex items-center space-x-2">
+                                      <div className="flex space-x-1.5">
+                                        <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
+                                        <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
+                                        <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
                                       </div>
-                                    ))
-                                  )}
-                                  <div ref={logsEndRef} />
+                                      <span className="text-xs text-gray-400 font-mono">
+                                        backend@rag-bot:~$
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center space-x-2">
+                                      {logs.length > 0 && (
+                                        <span className="text-xs text-green-400 font-mono flex items-center space-x-1">
+                                          <span className="relative flex h-1.5 w-1.5">
+                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500"></span>
+                                          </span>
+                                          <span>STREAMING</span>
+                                        </span>
+                                      )}
+                                      <span className="text-xs text-gray-500 font-mono">
+                                        {logs.length} lines
+                                      </span>
+                                    </div>
+                                  </div>
+                                  
+                                  {/* Terminal Content */}
+                                  <div className="p-4 h-80 overflow-y-auto scrollbar-thin font-mono text-xs">
+                                    {logs.length === 0 ? (
+                                      <div className="flex items-center justify-center h-full">
+                                        <div className="text-center space-y-3">
+                                          <Loader className="w-8 h-8 animate-spin text-purple-400 mx-auto" />
+                                          <p className="text-purple-300 font-semibold">
+                                            📡 Connecting to backend logger...
+                                          </p>
+                                          <p className="text-xs text-gray-500">
+                                            Waiting for ingestion logs to stream
+                                          </p>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="space-y-0.5">
+                                        {logs.map((log, idx) => (
+                                          <div
+                                            key={idx}
+                                            className={`${getLogColor(log.type)} leading-relaxed flex items-start hover:bg-white/5 px-2 py-0.5 rounded transition-colors`}
+                                          >
+                                            <span className="text-gray-600 text-xs mr-2 flex-shrink-0 select-none">
+                                              [{log.timestamp}]
+                                            </span>
+                                            <span className={`mr-2 flex-shrink-0 font-bold text-xs select-none ${
+                                              log.type === 'error' ? 'text-red-400' :
+                                              log.type === 'warning' ? 'text-yellow-400' :
+                                              log.type === 'success' ? 'text-green-400' :
+                                              'text-blue-400'
+                                            }`}>
+                                              {log.type === 'error' ? 'ERR' :
+                                               log.type === 'warning' ? 'WRN' :
+                                               log.type === 'success' ? 'OK ' :
+                                               'INF'}
+                                            </span>
+                                            <span className="flex-1 break-all">{log.message}</span>
+                                          </div>
+                                        ))}
+                                        <div ref={logsEndRef} />
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               )}
                             </div>

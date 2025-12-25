@@ -16,6 +16,7 @@ from typing import Optional, List, Dict
 from fastapi import WebSocket, WebSocketDisconnect
 import asyncio
 import json
+import logging
 from rag_based_book_bot.document_ingestion.progress_tracker import get_progress_tracker
 import os
 import tempfile
@@ -26,6 +27,11 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Configure logging for main application
+logger = logging.getLogger("main")
+logger.setLevel(logging.INFO)
+logger.propagate = True
 
 from rag_based_book_bot.document_ingestion.enhanced_ingestion import (
     EnhancedBookIngestorPaddle,
@@ -65,6 +71,8 @@ async def startup_event():
     loop = asyncio.get_running_loop()
     tracker = get_progress_tracker()
     tracker.set_loop(loop)
+    logger.info("✅ Initialized progress tracker with main event loop")
+    logger.info("🚀 RAG Book Bot API started successfully")
     print("✅ Initialized progress tracker with main event loop")
 
 
@@ -568,13 +576,17 @@ def ingest_book(
     WebSockets to stay alive and send progress updates.
     """
     if not file.filename.endswith('.pdf'):
+        logger.warning(f"❌ Rejected non-PDF file: {file.filename}")
         raise HTTPException(status_code=400, detail="Only PDF files supported")
     
     tmp_path = None
     try:
+        logger.info(f"📥 Received upload request: {file.filename}")
+        
         # Reset tracker for new ingestion
         tracker = get_progress_tracker()
         tracker.reset()
+        logger.info("🔄 Progress tracker reset for new ingestion")
         
         # Auto-extract from filename
         if not book_title or not author:
@@ -582,23 +594,28 @@ def ingest_book(
             final_book_title = book_title or extracted_title
             final_author = author or extracted_author
             
+            logger.info(f"📖 Auto-extracted: '{final_book_title}' by {final_author}")
             print(f"📖 Auto-extracted: '{final_book_title}' by {final_author}")
         else:
             final_book_title = book_title
             final_author = author
+            logger.info(f"📖 Using provided metadata: '{final_book_title}' by {final_author}")
         
         # Save temporarily
         # Since this is a synchronous function now, we use standard sync IO
+        logger.info("💾 Saving uploaded file to temporary location...")
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
             # Synchronous read from the UploadFile wrapper
             content = file.file.read()
             tmp_file.write(content)
             tmp_path = tmp_file.name
         
+        logger.info(f"✅ File saved: {tmp_path}")
         print(f"📥 Received file: {file.filename}")
         print(f"📊 Starting ingestion for '{final_book_title}'")
         
         # Ingest
+        logger.info("⚙️ Initializing ingestor with configuration...")
         config = IngestorConfig(
             similarity_threshold=0.75,
             min_chunk_size=200,
@@ -606,14 +623,17 @@ def ingest_book(
             debug=False
         )
         ingestor = EnhancedBookIngestorPaddle(config=config)
+        logger.info("✅ Ingestor initialized")
         
         # This is the heavy blocking call - now runs in thread pool
+        logger.info("🔨 Starting book ingestion process...")
         result = ingestor.ingest_book(
             pdf_path=tmp_path,
             book_title=final_book_title,
             author=final_author
         )
         
+        logger.info("💾 Storing book metadata...")
         # Store metadata
         code_chunks = result.get('code_chunks', 0)
         total_chunks = result.get('chunks', 0)
@@ -625,21 +645,37 @@ def ingest_book(
             code_chunks=code_chunks
         )
         
+        logger.info("✅ Metadata stored successfully")
+        
         # Cleanup
+        logger.info("🧹 Cleaning up temporary files...")
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         
+        logger.info(f"✅ Ingestion complete: {total_chunks} chunks from {result.get('total_pages', 0)} pages")
         print(f"✅ Ingestion complete: {total_chunks} chunks from {result.get('total_pages', 0)} pages")
         
         return IngestResponse(success=True, result=result)
         
     except Exception as e:
+        logger.error(f"❌ Ingestion failed: {str(e)}")
+        logger.exception("Full error traceback:")
         print(f"❌ Ingest error: {str(e)}")
+        
+        # Notify tracker of failure
+        try:
+            tracker = get_progress_tracker()
+            tracker.add_error(str(e))
+            tracker.finish(success=False)
+        except:
+            pass
+        
         if tmp_path and os.path.exists(tmp_path):
             try:
+                logger.info("🧹 Cleaning up temporary file after error...")
                 os.unlink(tmp_path)
-            except:
-                pass
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
         
         return IngestResponse(success=False, error=str(e))
 
@@ -654,6 +690,7 @@ async def websocket_ingestion_progress(websocket: WebSocket):
     await websocket.accept()
     tracker = get_progress_tracker()
 
+    logger.info("🔌 WebSocket client connected for ingestion progress")
     print("🔌 WebSocket client connected for ingestion progress")
 
     async def send_update(state):
@@ -661,6 +698,7 @@ async def websocket_ingestion_progress(websocket: WebSocket):
         try:
             await websocket.send_json(state.to_dict())
         except Exception as e:
+            logger.warning(f"⚠️ WebSocket send failed: {e}")
             print(f"⚠️ WebSocket send failed: {e}")
 
     # ✅ Register callback
@@ -683,16 +721,18 @@ async def websocket_ingestion_progress(websocket: WebSocket):
             await asyncio.sleep(1)
 
     except WebSocketDisconnect:
+        logger.info("🔌 WebSocket client disconnected")
         print("🔌 WebSocket client disconnected")
 
     finally:
         # ✅ IMPORTANT: Remove callback to prevent memory leaks
+        logger.info("🧹 Removing WebSocket callback")
         tracker.remove_callback(send_update)
 
         try:
             await websocket.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Error closing WebSocket: {e}")
 
 
 

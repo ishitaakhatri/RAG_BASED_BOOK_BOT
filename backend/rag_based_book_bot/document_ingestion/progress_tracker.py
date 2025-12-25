@@ -7,12 +7,13 @@ Tracks ingestion progress in real-time and provides:
 - Percentage calculation
 - Real-time progress updates via callback
 - Progress state management for WebSocket streaming
+- Live log capture from Python logging
 """
 
 import logging
 import time
 from typing import Callable, Optional, Dict, Any, Coroutine, List
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from threading import Lock
 from datetime import datetime
 import asyncio
@@ -42,6 +43,7 @@ class ProgressState:
     book_title: str = ""
     author: str = ""
     errors: list = field(default_factory=list)
+    logs: List[str] = field(default_factory=list)  # NEW: Live logs
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
@@ -61,8 +63,30 @@ class ProgressState:
             "speed_pages_per_sec": round(self.speed_pages_per_sec, 2),
             "book_title": self.book_title,
             "author": self.author,
-            "errors": self.errors
+            "errors": self.errors,
+            "logs": self.logs  # NEW: Include logs in state
         }
+
+
+class ProgressLogHandler(logging.Handler):
+    """
+    Custom logging handler that forwards logs to ProgressTracker
+    
+    This captures Python logging output and sends it to the frontend
+    via WebSocket in real-time.
+    """
+    
+    def __init__(self, tracker: 'ProgressTracker'):
+        super().__init__()
+        self.tracker = tracker
+        self.setFormatter(logging.Formatter('%(name)s: %(message)s'))
+    
+    def emit(self, record: logging.LogRecord):
+        try:
+            msg = self.format(record)
+            self.tracker.add_log(msg, record.levelname)
+        except Exception:
+            self.handleError(record)
 
 
 class ProgressTracker:
@@ -88,6 +112,7 @@ class ProgressTracker:
         self.log_history: list[Dict[str, Any]] = []
         self._loop = None
         self._main_loop = None  # Reference to the main event loop
+        self._log_handlers: List[ProgressLogHandler] = []  # Track handlers for cleanup
 
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         """Set the main application event loop for scheduling async callbacks"""
@@ -135,6 +160,25 @@ class ProgressTracker:
                         logger.debug(f"Could not schedule async callback: {e}")
             except Exception as e:
                 logger.exception(f"Progress callback failed: {e}")
+
+    def add_log(self, message: str, level: str = "INFO") -> None:
+        """
+        Add a log message to the progress state
+        
+        Args:
+            message: Log message
+            level: Log level (INFO, WARNING, ERROR, DEBUG)
+        """
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        formatted_log = f"[{timestamp}] {level}: {message}"
+        
+        with self.lock:
+            self.state.logs.append(formatted_log)
+            # Keep only last 200 logs to prevent memory issues
+            if len(self.state.logs) > 200:
+                self.state.logs = self.state.logs[-200:]
+        
+        self._notify_callbacks()
 
     def update_total_pages(self, total_pages: int) -> None:
         """Safely update total pages and notify listeners"""
@@ -314,6 +358,47 @@ class ProgressTracker:
         }
         self.log_history.append(event)
     
+    def setup_logging_handlers(self) -> None:
+        """
+        Setup custom logging handlers to capture logs from various loggers
+        
+        Call this once during initialization to start capturing logs
+        """
+        # Remove old handlers if they exist
+        self.cleanup_logging_handlers()
+        
+        # Create new handler
+        handler = ProgressLogHandler(self)
+        handler.setLevel(logging.INFO)
+        
+        # Attach to relevant loggers
+        loggers_to_track = [
+            "enhanced_ingestion",
+            "semantic_chunker",
+            "grobid_parser",
+            "hierarchical_chunker",
+            "sentence_transformers",
+        ]
+        
+        for logger_name in loggers_to_track:
+            target_logger = logging.getLogger(logger_name)
+            target_logger.addHandler(handler)
+            target_logger.setLevel(logging.INFO)
+        
+        self._log_handlers.append(handler)
+        logger.info("✅ Logging handlers attached to progress tracker")
+    
+    def cleanup_logging_handlers(self) -> None:
+        """Remove all logging handlers"""
+        for handler in self._log_handlers:
+            # Remove from all loggers
+            for logger_name in logging.Logger.manager.loggerDict:
+                target_logger = logging.getLogger(logger_name)
+                if handler in target_logger.handlers:
+                    target_logger.removeHandler(handler)
+        
+        self._log_handlers.clear()
+    
     def reset(self) -> None:
         """Reset tracker for new ingestion"""
         with self.lock:
@@ -328,7 +413,10 @@ _global_tracker = ProgressTracker()
 
 
 def get_progress_tracker() -> ProgressTracker:
-    """Get the global progress tracker instance"""
+    """Get the global progress tracker instance and ensure logging is set up"""
+    # Set up logging handlers on first access
+    if not _global_tracker._log_handlers:
+        _global_tracker.setup_logging_handlers()
     return _global_tracker
 
 
