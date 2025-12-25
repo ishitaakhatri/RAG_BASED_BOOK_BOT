@@ -93,18 +93,35 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   useEffect(() => {
     const targetPercentage = calculatePercentage();
     
+    let animationFrameId;
+    
     // Smooth animation using requestAnimationFrame
     const animateProgress = () => {
       setAnimatedPercentage((prev) => {
         const diff = targetPercentage - prev;
-        if (Math.abs(diff) < 0.5) return targetPercentage;
-        return prev + diff * 0.15; // Smooth easing
+        if (Math.abs(diff) < 0.1) {
+          return targetPercentage;
+        }
+        const newValue = prev + diff * 0.15;
+        
+        // Continue animation if not at target
+        if (Math.abs(targetPercentage - newValue) > 0.1) {
+          animationFrameId = requestAnimationFrame(animateProgress);
+        }
+        
+        return newValue;
       });
     };
 
-    const animationFrame = requestAnimationFrame(animateProgress);
-    return () => cancelAnimationFrame(animationFrame);
-  }, [liveProgress, uploadProgress]);
+    // Start animation
+    animationFrameId = requestAnimationFrame(animateProgress);
+    
+    return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
+  }, [liveProgress, uploadProgress, isIngesting]);
 
   const addLog = (message, type = "info") => {
     const timestamp = new Date().toLocaleTimeString();
@@ -392,37 +409,37 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     if (status === "failed") return 0;
 
     // ✅ Multi-stage progress calculation
-    // Stage 1: PDF Parsing (0-10%)
-    if (status === "parsing_pdf") {
-      return 10;
+    // Stage 1: PDF Parsing (0-20%)
+    if (status === "parsing_pdf" || status === "loading") {
+      return 15;
     }
 
-    // Stage 2: Chunking (10-40%)
+    // Stage 2: Chunking (20-50%)
     if (status === "chunking") {
       const currentPage = liveProgress.current_page || 0;
       const totalPages = liveProgress.total_pages || 1;
       const chunkingProgress = (currentPage / totalPages) * 30; // 30% of total
-      return 10 + chunkingProgress;
+      return 20 + chunkingProgress;
     }
 
-    // Stage 3: Embedding (40-70%)
+    // Stage 3: Embedding (50-80%)
     if (status === "embedding") {
       const embeddingsGenerated = liveProgress.embeddings_generated || 0;
       const totalChunks = liveProgress.chunks_created || 1;
       const embeddingProgress = (embeddingsGenerated / totalChunks) * 30; // 30% of total
-      return 40 + embeddingProgress;
+      return 50 + embeddingProgress;
     }
 
-    // Stage 4: Upserting (70-95%)
+    // Stage 4: Upserting (80-98%)
     if (status === "upserting") {
       const vectorsUpserted = liveProgress.vectors_upserted || 0;
       const totalChunks = liveProgress.chunks_created || 1;
-      const upsertProgress = (vectorsUpserted / totalChunks) * 25; // 25% of total
-      return 70 + upsertProgress;
+      const upsertProgress = (vectorsUpserted / totalChunks) * 18; // 18% of total
+      return 80 + upsertProgress;
     }
 
-    // Default fallback
-    return uploadProgress?.percentage ?? 0;
+    // Default: return current percentage or show some progress
+    return Math.max(uploadProgress?.percentage ?? 0, 5);
   };
 
   const currentPercentage = Math.round(animatedPercentage);
