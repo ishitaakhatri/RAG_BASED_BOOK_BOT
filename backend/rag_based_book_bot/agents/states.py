@@ -1,80 +1,70 @@
-from typing import List, Dict, Any, Optional
-from dataclasses import dataclass, field
+"""
+State definitions for the LangGraph RAG pipeline.
+Uses Pydantic v2 for robust typing and LangGraph state management.
+"""
+import operator
+from typing import List, Dict, Any, Optional, Annotated
+from pydantic import BaseModel, Field
 from enum import Enum
 
-class QueryIntent(Enum):
+class QueryIntent(str, Enum):
     CONCEPTUAL = "conceptual"
     CODE_REQUEST = "code_request"
     DEBUGGING = "debugging"
     COMPARISON = "comparison"
     TUTORIAL = "tutorial"
 
-@dataclass
-class ParsedQuery:
+class ParsedQuery(BaseModel):
     raw_query: str
     intent: QueryIntent
-    topics: List[str]
-    keywords: List[str]
+    topics: List[str] = Field(default_factory=list)
+    keywords: List[str] = Field(default_factory=list)
     code_language: Optional[str] = None
     complexity_hint: str = "intermediate"
 
-@dataclass
-class ConversationTurn:
+class ConversationTurn(BaseModel):
     """Represents a single turn in the conversation history"""
     user_query: str
     assistant_response: str
     timestamp: float = 0.0
-    sources_used: List[str] = field(default_factory=list)
+    sources_used: List[str] = Field(default_factory=list)
     resolved_query: Optional[str] = None
     needs_retrieval: bool = True
     referenced_turn: Optional[int] = None
 
-@dataclass
-class DocumentChunk:
-    """Represents a chunk of text/code from a document"""
+class DocumentChunk(BaseModel):
     chunk_id: str
     content: str
     chapter: str
-    section: str
-    page_number: int
-    chunk_type: str
-    book_title: str
-    author: str
-    # NEW FIELDS for frontend preview and hierarchy
+    section: str = ""
+    page_number: int = 0
+    chunk_type: str = "text"
+    book_title: str = "Unknown Book"
+    author: str = "Unknown Author"
     chapter_title: str = ""
-    chapter_number: str = ""
     preview: str = ""
 
-@dataclass
-class RetrievedChunk:
-    """A chunk retrieved from vector DB with similarity scores"""
+class RetrievedChunk(BaseModel):
     chunk: DocumentChunk
     similarity_score: float = 0.0
     rerank_score: float = 0.0
     relevance_percentage: float = 0.0
 
-@dataclass
-class LLMResponse:
+class LLMResponse(BaseModel):
     answer: str
-    code_snippets: List[str]
-    sources: List[str]
-    confidence: float
+    code_snippets: List[str] = Field(default_factory=list)
+    sources: List[str] = Field(default_factory=list)
+    confidence: float = 0.0
 
-@dataclass
-class AgentState:
+class AgentState(BaseModel):
     """
-    Shared state object passed through the LangGraph pipeline.
-    Contains input, configuration, processing state, and output.
+    LangGraph State Schema using Pydantic v2.
+    Focused purely on the Query/RAG lifecycle.
     """
     # Input
     user_query: str
     session_id: str = "default"
     user_id: Optional[str] = None
-    
-    # History (Required by memory_nodes.py and main.py)
-    conversation_history: List[ConversationTurn] = field(default_factory=list)
-    chat_history: List[Dict[str, str]] = field(default_factory=list) # Kept for backward compatibility if needed
-    max_history_turns: int = 5
     
     # Configuration
     pass1_k: int = 50
@@ -84,24 +74,26 @@ class AgentState:
     book_filter: Optional[str] = None
     chapter_filter: Optional[str] = None
     
+    # History (Context)
+    conversation_history: List[ConversationTurn] = Field(default_factory=list)
+    
     # Processing State
     parsed_query: Optional[ParsedQuery] = None
-    rewritten_queries: List[str] = field(default_factory=list)
+    rewritten_queries: List[str] = Field(default_factory=list)
     resolved_query: Optional[str] = None
     needs_retrieval: bool = True
     referenced_turn: Optional[int] = None
-    relevant_past_turns: List[ConversationTurn] = field(default_factory=list)
+    relevant_past_turns: List[ConversationTurn] = Field(default_factory=list)
     
-    # Retrieval State
-    retrieved_chunks: List[RetrievedChunk] = field(default_factory=list)
-    reranked_chunks: List[RetrievedChunk] = field(default_factory=list)
+    # Retrieval Data
+    retrieved_chunks: List[RetrievedChunk] = Field(default_factory=list)
+    reranked_chunks: List[RetrievedChunk] = Field(default_factory=list)
     assembled_context: str = ""
     system_prompt: str = ""
     
-    # Output
+    # Output & Diagnostics
     response: Optional[LLMResponse] = None
-    errors: List[str] = field(default_factory=list)
-    current_node: str = "start"
     
-    # Debugging / Visualization
-    pipeline_snapshots: List[Dict[str, Any]] = field(default_factory=list)
+    # Annotated[list, operator.add] appends new items to the list instead of overwriting
+    errors: Annotated[List[str], operator.add] = Field(default_factory=list)
+    pipeline_snapshots: Annotated[List[Dict[str, Any]], operator.add] = Field(default_factory=list)
