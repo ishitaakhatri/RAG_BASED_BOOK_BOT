@@ -66,7 +66,7 @@ class RAGAgent:
                 for rc in state.get("reranked_chunks", [])
             ],
             "confidence": confidence,
-            "intent": state["parsed_query"].get("intent") if state.get("parsed_query") else "unknown",
+            "intent": state["parsed_query"].intent if state.get("parsed_query") else "unknown",
             "stats": {
                  "steps": len(state.get("pipeline_snapshots", [])),
                  "snapshots": state.get("pipeline_snapshots", [])
