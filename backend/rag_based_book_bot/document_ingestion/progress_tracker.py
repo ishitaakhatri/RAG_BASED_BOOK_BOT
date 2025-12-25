@@ -113,6 +113,10 @@ class ProgressTracker:
         self._loop = None
         self._main_loop = None  # Reference to the main event loop
         self._log_handlers: List[ProgressLogHandler] = []  # Track handlers for cleanup
+        
+        # ✅ FIX: Throttling variables to prevent WebSocket flooding
+        self.last_emit_time = 0.0
+        self.emit_interval = 0.1  # Max 10 updates per second
 
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         """Set the main application event loop for scheduling async callbacks"""
@@ -130,12 +134,23 @@ class ProgressTracker:
                 self.callbacks.remove(callback)
     
     def _notify_callbacks(self) -> None:
-        """Notify all registered callbacks - Thread Safe Version"""
+        """Notify all registered callbacks - Thread Safe Version with Throttling"""
+        
+        # ✅ FIX: Throttling Logic
+        # Always emit if status is 'completed' or 'failed' to ensure final state reaches client
+        current_time = time.time()
+        is_critical_update = self.state.status in ["completed", "failed"]
+        
+        # If not critical and too soon since last update, skip this notification
+        if not is_critical_update and (current_time - self.last_emit_time < self.emit_interval):
+            return
+
         # Snapshot callbacks under lock to prevent modification during iteration
         with self.lock:
             if not self.callbacks:
                 return
             callbacks_snapshot = self.callbacks[:]
+            self.last_emit_time = current_time  # Update last emit time
 
         for callback in callbacks_snapshot:
             try:

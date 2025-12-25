@@ -321,7 +321,10 @@ class SemanticBookIngestor:
             
             for batch_idx in range(0, len(vectors), BATCH_SIZE):
                 batch = vectors[batch_idx:batch_idx + BATCH_SIZE]
-                logger.info(f"📦 Upserting batch {(batch_idx // BATCH_SIZE) + 1}/{(len(vectors) + BATCH_SIZE - 1) // BATCH_SIZE}")
+                
+                # ✅ FIX: Log this less frequently to avoid flooding the websocket channel
+                # logger.info(f"📦 Upserting batch {(batch_idx // BATCH_SIZE) + 1}/{(len(vectors) + BATCH_SIZE - 1) // BATCH_SIZE}")
+                
                 self.pinecone_index.upsert(
                     vectors=batch, 
                     namespace=PINECONE_NAMESPACE

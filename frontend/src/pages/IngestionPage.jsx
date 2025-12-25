@@ -7,9 +7,6 @@ import {
   CheckCircle,
   Loader,
   Book,
-  Eye,
-  EyeOff,
-  Terminal,
 } from "lucide-react";
 
 const API_BASE_URL = "http://localhost:8000";
@@ -24,15 +21,15 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   const [isIngesting, setIsIngesting] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   
-  // ✅ NEW: Smooth animation state
+  // Smooth animation state
   const [animatedPercentage, setAnimatedPercentage] = useState(0);
   
   const wsRef = useRef(null);
   const logsEndRef = useRef(null);
-  const processedLogsRef = useRef(new Set()); // ✅ Track processed logs to prevent duplicates
+  const processedLogsRef = useRef(new Set()); // Track processed logs to prevent duplicates
   const navigate = useNavigate();
 
-  // Add custom scrollbar styles
+  // Add custom scrollbar and animation styles
   useEffect(() => {
     const style = document.createElement('style');
     style.textContent = `
@@ -54,12 +51,12 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         box-shadow: 0 0 10px rgba(168, 85, 247, 0.5);
       }
       
-      /* ✅ Smooth progress bar animation */
+      /* Smooth progress bar animation */
       .progress-circle {
         transition: stroke-dashoffset 0.5s cubic-bezier(0.4, 0, 0.2, 1);
       }
       
-      /* ✅ Glow effect */
+      /* Glow effect */
       @keyframes glow {
         0%, 100% { box-shadow: 0 0 20px rgba(168, 85, 247, 0.4); }
         50% { box-shadow: 0 0 30px rgba(236, 72, 153, 0.6); }
@@ -73,14 +70,14 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     return () => document.head.removeChild(style);
   }, []);
 
-  // ✅ Auto-scroll logs
+  // Auto-scroll logs
   useEffect(() => {
     if (logsEndRef.current && showLogs) {
       logsEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [logs, showLogs]);
 
-  // ✅ Cleanup WebSocket on unmount
+  // Cleanup WebSocket on unmount
   useEffect(() => {
     return () => {
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -89,7 +86,59 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     };
   }, []);
 
-  // ✅ NEW: Smooth percentage animation
+  // ✅ NEW: Auto-finish Failsafe
+  // This watches the logs for the success message to override any stuck state
+  useEffect(() => {
+    if (!isIngesting) return;
+
+    // Check if logs contain the specific success message from backend
+    const isFinishedInLogs = logs.some(l => l.message.includes("Ingestion completed successfully"));
+    const isFinishedStatus = liveProgress?.status === "completed" || liveProgress?.status === "success";
+
+    if (isFinishedInLogs || isFinishedStatus) {
+      // Force visual 100%
+      if (animatedPercentage < 100) setAnimatedPercentage(100);
+
+      // Set a failsafe timer to unlock the UI if the HTTP response hangs
+      const timer = setTimeout(() => {
+        if (isIngesting) {
+          console.log("⚠️ Failsafe triggered: forcing completion state");
+          
+          const mockResult = {
+            chunks: liveProgress?.chunks_created || 0,
+            total_pages: liveProgress?.total_pages || 0,
+            title: uploadFile?.name,
+            method: "stream_verified"
+          };
+
+          setUploadProgress({
+            status: "success",
+            message: "Ingestion completed successfully!",
+            percentage: 100,
+            result: mockResult,
+          });
+
+          // Trigger cleanup and parent callback
+          if (onUploadSuccess) {
+             onUploadSuccess();
+             setTimeout(() => {
+                setUploadFile(null);
+                setUploadProgress(null);
+                setLiveProgress(null);
+                setIsIngesting(false);
+                setAnimatedPercentage(0);
+                processedLogsRef.current.clear();
+                if (wsRef.current) wsRef.current.close(1000, "Ingestion complete");
+             }, 2000);
+          }
+        }
+      }, 1500); // Wait 1.5s after completion log before forcing
+
+      return () => clearTimeout(timer);
+    }
+  }, [logs, liveProgress, isIngesting, animatedPercentage, onUploadSuccess, uploadFile]);
+
+  // Smooth percentage animation
   useEffect(() => {
     const targetPercentage = calculatePercentage();
     
@@ -121,13 +170,13 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         cancelAnimationFrame(animationFrameId);
       }
     };
-  }, [liveProgress, uploadProgress, isIngesting]);
+  }, [liveProgress, uploadProgress, isIngesting, logs]); // Added logs to dependency
 
   const addLog = (message, type = "info") => {
     const timestamp = new Date().toLocaleTimeString();
     const logKey = `${timestamp}-${message}`; // Create unique key
     
-    // ✅ Prevent duplicate logs
+    // Prevent duplicate logs
     if (processedLogsRef.current.has(logKey)) {
       return;
     }
@@ -136,7 +185,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     setLogs((prev) => [...prev, { message, type, timestamp }]);
   };
 
-  // ✅ Drag and Drop Handlers
+  // Drag and Drop Handlers
   const handleDragEnter = (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -202,26 +251,23 @@ export default function IngestionPage({ books, onUploadSuccess }) {
           try {
             const data = JSON.parse(event.data);
             setLiveProgress(data);
-            console.log("📊 Live progress update:", data);
+            // console.log("📊 Live progress update:", data);
 
-            // ✅ ENHANCED: Process backend logs from WebSocket
+            // Process backend logs from WebSocket
             if (data.logs && Array.isArray(data.logs) && data.logs.length > 0) {
-              // Process all logs from backend
               data.logs.forEach((logLine) => {
-                // Parse log format: "[HH:MM:SS] LEVEL: message"
                 const match = logLine.match(/\[(\d{2}:\d{2}:\d{2})\] (\w+): (.+)/);
                 if (match) {
                   const [, timestamp, level, message] = match;
                   const type = level.toLowerCase();
                   const logKey = `${timestamp}-${message}`;
                   
-                  // ✅ Only add if not already processed
                   if (!processedLogsRef.current.has(logKey)) {
                     processedLogsRef.current.add(logKey);
                     setLogs((prev) => [...prev, { message, type, timestamp }]);
                   }
                 } else {
-                  // Fallback for unformatted logs (raw messages from backend)
+                  // Fallback for unformatted logs
                   const logKey = `${Date.now()}-${logLine}`;
                   if (!processedLogsRef.current.has(logKey)) {
                     processedLogsRef.current.add(logKey);
@@ -235,8 +281,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                 }
               });
             }
-            // ✅ IMPORTANT: No fallback status logging if we have logs array
-            // This prevents duplicate messages
           } catch (error) {
             console.error("Error parsing progress data:", error);
             addLog(`⚠️ Error parsing update: ${error.message}`, "warning");
@@ -267,9 +311,9 @@ export default function IngestionPage({ books, onUploadSuccess }) {
 
     setIsIngesting(true);
     setLogs([]);
-    setShowLogs(true); // ✅ Auto-show logs when ingestion starts
+    setShowLogs(true); // Auto-show logs when ingestion starts
     setAnimatedPercentage(0);
-    processedLogsRef.current.clear(); // ✅ Reset processed logs
+    processedLogsRef.current.clear(); // Reset processed logs
     
     addLog("📋 Starting ingestion process...", "info");
 
@@ -335,13 +379,16 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         setIsIngesting(false);
       }
     } catch (error) {
-      setUploadProgress({
-        status: "error",
-        message: `Upload failed: ${error.message}`,
-        percentage: 0,
-      });
-      addLog(`❌ Upload failed: ${error.message}`, "error");
-      setIsIngesting(false);
+      // Only show error if we haven't already succeeded via the failsafe
+      if (isIngesting && animatedPercentage < 100) {
+        setUploadProgress({
+            status: "error",
+            message: `Upload failed: ${error.message}`,
+            percentage: 0,
+        });
+        addLog(`❌ Upload failed: ${error.message}`, "error");
+        setIsIngesting(false);
+      }
     }
   };
 
@@ -363,8 +410,10 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   const getStatusColor = (status) => {
     switch (status) {
       case "completed":
+      case "success":
         return "text-green-400";
       case "failed":
+      case "error":
         return "text-red-400";
       case "upserting":
       case "embedding":
@@ -391,24 +440,41 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     }
   };
 
-  // ✅ ENHANCED: Dynamic multi-stage percentage calculation
+  // ✅ FIXED: Percentage Calculation with Log Check
   const calculatePercentage = () => {
+    // 1. Priority: If we have a success/completed status from ANY source, force 100%
+    if (
+      uploadProgress?.status === "success" || 
+      liveProgress?.status === "completed" || 
+      liveProgress?.status === "success"
+    ) {
+      return 100;
+    }
+    
+    // 2. Check logs for explicit completion message
+    if (logs.some(l => l.message.includes("Ingestion completed successfully"))) {
+      return 100;
+    }
+    
+    if (liveProgress?.status === "failed") return 0;
+
+    // 3. If no live progress, use upload progress
     if (!liveProgress) {
       return uploadProgress?.percentage ?? 0;
     }
 
-    // If backend provides percentage directly, use it
-    if (typeof liveProgress.percentage === "number") {
-      return Math.min(Math.max(liveProgress.percentage, 0), 100);
+    // 4. Use backend percentage if valid number
+    if (
+      liveProgress.percentage !== undefined && 
+      liveProgress.percentage !== null && 
+      !isNaN(liveProgress.percentage)
+    ) {
+      return Math.min(Math.max(Number(liveProgress.percentage), 0), 100);
     }
 
+    // 5. Fallback calculation based on status (only used if backend percentage is missing)
     const status = liveProgress.status;
     
-    // Final states
-    if (status === "completed") return 100;
-    if (status === "failed") return 0;
-
-    // ✅ Multi-stage progress calculation
     // Stage 1: PDF Parsing (0-20%)
     if (status === "parsing_pdf" || status === "loading") {
       return 15;
@@ -644,12 +710,12 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                     {(uploadProgress || liveProgress || isIngesting) && (
                       <div className="bg-gradient-to-br from-purple-900/30 via-pink-900/20 to-purple-900/30 rounded-xl p-6 border border-purple-400/30 shadow-2xl">
                         <h3 className="text-xl font-bold text-white mb-6 flex items-center">
-                          <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse mr-3"></div>
+                          <div className={`w-2 h-2 rounded-full mr-3 ${currentPercentage === 100 ? 'bg-green-400' : 'bg-green-400 animate-pulse'}`}></div>
                           Ingestion Progress
                         </h3>
 
                         <div className="space-y-6">
-                          {/* ✅ Smooth Circular Progress */}
+                          {/* Smooth Circular Progress */}
                           <div className="flex items-center justify-center">
                             <div className="relative w-32 h-32">
                               <svg className="w-full h-full transform -rotate-90">
@@ -699,45 +765,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                             </p>
                           </div>
 
-                          {/* Progress Details Grid
-                          {liveProgress && (
-                            <div className="grid grid-cols-2 gap-3">
-                              <div className="bg-white/5 rounded p-3 border border-white/10">
-                                <p className="text-xs text-purple-300 mb-1">
-                                  Pages
-                                </p>
-                                <p className="text-lg font-bold text-white">
-                                  {liveProgress.current_page || 0}/
-                                  {liveProgress.total_pages || 0}
-                                </p>
-                              </div>
-                              <div className="bg-white/5 rounded p-3 border border-white/10">
-                                <p className="text-xs text-purple-300 mb-1">
-                                  Chunks
-                                </p>
-                                <p className="text-lg font-bold text-white">
-                                  {liveProgress.chunks_created || 0}
-                                </p>
-                              </div>
-                              <div className="bg-white/5 rounded p-3 border border-white/10">
-                                <p className="text-xs text-purple-300 mb-1">
-                                  Embeddings
-                                </p>
-                                <p className="text-lg font-bold text-white">
-                                  {liveProgress.embeddings_generated || 0}
-                                </p>
-                              </div>
-                              <div className="bg-white/5 rounded p-3 border border-white/10">
-                                <p className="text-xs text-purple-300 mb-1">
-                                  Vectors
-                                </p>
-                                <p className="text-lg font-bold text-white">
-                                  {liveProgress.vectors_upserted || 0}
-                                </p>
-                              </div>
-                            </div>
-                          )} */}
-
                           {/* Success/Error Message */}
                           {uploadProgress?.status === "success" && (
                             <div className="p-4 rounded-lg bg-green-500/20 border border-green-400/50">
@@ -767,7 +794,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                             </div>
                           )}
 
-                          {/* ✅ ENHANCED: Terminal-style Live Logs - Auto-visible */}
+                          {/* Terminal-style Live Logs */}
                           {isIngesting && (
                             <div className="mt-6">
                               <div className="bg-black/90 rounded-xl border-2 border-purple-500/50 shadow-2xl terminal-glow overflow-hidden">
