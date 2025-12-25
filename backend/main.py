@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from fastapi import WebSocket, WebSocketDisconnect
 import asyncio
 import logging
@@ -17,13 +17,15 @@ import hashlib
 from uuid import uuid4
 from dotenv import load_dotenv
 
+# --- Internal Imports ---
 from rag_based_book_bot.document_ingestion.progress_tracker import get_progress_tracker
 from rag_based_book_bot.document_ingestion.enhanced_ingestion import (
     EnhancedBookIngestorPaddle,
     IngestorConfig
 )
-from rag_based_book_bot.agents.states import AgentState, ConversationTurn
-from rag_based_book_bot.agents.agent import RAGAgent
+# Import State and Graph directly
+from rag_based_book_bot.agents.states import AgentState, ConversationTurn, LLMResponse
+from rag_based_book_bot.agents.graph import build_query_graph
 from rag_based_book_bot.agents.nodes import get_pinecone_index
 
 from rag_based_book_bot.memory.conversation_store import (
@@ -40,8 +42,11 @@ logger = logging.getLogger("main")
 logger.setLevel(logging.INFO)
 
 # ============================================================================
-# LIFESPAN
+# GLOBALS & LIFESPAN
 # ============================================================================
+
+# Initialize Graph
+rag_graph = build_query_graph()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -49,13 +54,14 @@ async def lifespan(app: FastAPI):
     tracker = get_progress_tracker()
     tracker.set_loop(loop)
     logger.info("✅ Initialized progress tracker")
+    logger.info("✅ LangGraph Workflow Compiled")
     yield
 
-app = FastAPI(title="RAG Book Bot API", version="4.0.0", lifespan=lifespan)
+app = FastAPI(title="RAG Book Bot API", version="4.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=["http://localhost:3000", "http://localhost:5173", "*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -96,7 +102,7 @@ class PipelineStage(BaseModel):
 
 class QueryResponse(BaseModel):
     answer: str
-    sources: List[dict]
+    sources: List[dict] # Detailed source info
     confidence: float
     stats: dict
     pipeline_stages: List[PipelineStage]
@@ -123,11 +129,6 @@ class BookInfo(BaseModel):
 class BooksResponse(BaseModel):
     books: List[BookInfo]
 
-class ConversationHistoryResponse(BaseModel):
-    session_id: str
-    total_turns: int
-    turns: List[dict]
-
 class SessionListResponse(BaseModel):
     sessions: List[dict]
     total: int
@@ -151,20 +152,28 @@ def convert_pinecone_to_conversation_turns(pinecone_turns: List[dict]) -> List[C
     ]
 
 def extract_pipeline_stages(snapshots: List[dict]) -> List[PipelineStage]:
+    """Converts internal graph snapshots to frontend pipeline stages."""
     stages = []
     for snap in snapshots:
         chunks = []
-        for c in snap.get("chunks", []):
-            if isinstance(c, dict):
-                chunk_data = c.get("chunk", {})
-                chunks.append(ChunkDetail(
-                    chunk_id=chunk_data.get("chunk_id", ""),
-                    chapter=chunk_data.get("chapter", ""),
-                    page=chunk_data.get("page_number", 0),
-                    relevance=c.get("relevance_percentage", 0),
-                    type=chunk_data.get("chunk_type", "text"),
-                    book_title=chunk_data.get("book_title", "Unknown")
-                ))
+        raw_chunks = snap.get("chunks", [])
+        
+        # Handle both list of dicts or list of objects if necessary
+        for c in raw_chunks:
+            # Check if it's a RetrievedChunk object or dict
+            chunk_data = c.get("chunk", {}) if isinstance(c, dict) else getattr(c, "chunk", {})
+            if hasattr(chunk_data, "dict"): chunk_data = chunk_data.dict()
+            if hasattr(c, "dict"): c = c.dict()
+            
+            chunks.append(ChunkDetail(
+                chunk_id=chunk_data.get("chunk_id", ""),
+                chapter=chunk_data.get("chapter", ""),
+                page=chunk_data.get("page_number", 0),
+                relevance=c.get("relevance_percentage", 0),
+                type=chunk_data.get("chunk_type", "text"),
+                book_title=chunk_data.get("book_title", "Unknown"),
+                content_preview=chunk_data.get("preview", "") or chunk_data.get("content", "")[:100]
+            ))
             
         stages.append(PipelineStage(
             stage_name=snap.get("stage", "Unknown"),
@@ -190,9 +199,9 @@ def get_available_books() -> List[BookInfo]:
                 books_info.append(BookInfo(
                     title=metadata.get("book_title", "Unknown"),
                     author=metadata.get("author", "Unknown"),
-                    total_chunks=metadata.get("total_chunks", 0),
-                    code_chunks=metadata.get("code_chunks", 0),
-                    text_chunks=metadata.get("text_chunks", 0),
+                    total_chunks=int(metadata.get("total_chunks", 0)),
+                    code_chunks=int(metadata.get("code_chunks", 0)),
+                    text_chunks=int(metadata.get("text_chunks", 0)),
                     indexed_at=metadata.get("indexed_at")
                 ))
         return books_info
@@ -232,14 +241,14 @@ async def process_query(request: QueryRequest):
         print(f"\n{'='*80}\n[NEW QUERY] {request.query}")
         
         session_id = request.session_id or str(uuid4())
+        
+        # 1. Load History
         pinecone_turns = load_conversation(session_id, max_turns=10)
         conversation_history = convert_pinecone_to_conversation_turns(pinecone_turns)
         
-        agent = RAGAgent()
-        
-        response_data = agent.query(
+        # 2. Prepare Graph Input (AgentState)
+        initial_state = AgentState(
             user_query=request.query,
-            history=conversation_history,
             session_id=session_id,
             user_id=request.user_id,
             pass1_k=request.pass1_k,
@@ -247,46 +256,107 @@ async def process_query(request: QueryRequest):
             pass3_enabled=request.pass3_enabled,
             max_tokens=request.max_tokens,
             book_filter=request.book_filter,
-            chapter_filter=request.chapter_filter
+            chapter_filter=request.chapter_filter,
+            conversation_history=conversation_history
         )
         
-        if "error" in response_data:
-             raise HTTPException(status_code=500, detail=str(response_data.get("error")))
-             
+        # 3. Invoke LangGraph
+        # Use ainvoke for async execution
+        final_state_dict = await rag_graph.ainvoke(initial_state)
+        
+        # 4. Extract Results from State
+        # Note: LangGraph returns a dict representation of the state
+        response_obj = final_state_dict.get("response")
+        
+        if not response_obj:
+            # Fallback if no response generated
+            answer = "I'm sorry, I encountered an error processing your request."
+            confidence = 0.0
+            sources_ids = []
+            code_snippets = []
+        else:
+            # response_obj might be a dict or Pydantic model depending on how LangGraph serialization works
+            if isinstance(response_obj, dict):
+                answer = response_obj.get("answer", "")
+                confidence = response_obj.get("confidence", 0.0)
+                sources_ids = response_obj.get("sources", [])
+                code_snippets = response_obj.get("code_snippets", [])
+            else:
+                answer = response_obj.answer
+                confidence = response_obj.confidence
+                sources_ids = response_obj.sources
+                code_snippets = response_obj.code_snippets
+
+        # 5. Reconstruct Source Details
+        # We need to map source IDs back to the chunk details found in retrieval
+        full_sources = []
+        reranked = final_state_dict.get("reranked_chunks", [])
+        
+        for rc in reranked:
+            # Handle if rc is dict or object
+            rc_data = rc if isinstance(rc, dict) else rc.dict()
+            chunk_data = rc_data.get("chunk", {})
+            
+            if chunk_data.get("chunk_id") in sources_ids:
+                full_sources.append({
+                    "chunk_id": chunk_data.get("chunk_id"),
+                    "book_title": chunk_data.get("book_title"),
+                    "page": chunk_data.get("page_number"),
+                    "content": chunk_data.get("content"),
+                    "relevance": rc_data.get("relevance_percentage", 0)
+                })
+
+        # 6. Save Turn
         turn_number = len(conversation_history) + 1
         save_conversation_turn(
             session_id=session_id,
             turn_number=turn_number,
             user_query=request.query,
-            assistant_response=response_data["answer"],
-            resolved_query=request.query, 
-            needs_retrieval=True, 
-            referenced_turn=None,
-            sources_used=[s["chunk_id"] for s in response_data["sources"][:5]],
+            assistant_response=answer,
+            resolved_query=final_state_dict.get("resolved_query", request.query),
+            needs_retrieval=final_state_dict.get("needs_retrieval", True),
+            referenced_turn=final_state_dict.get("referenced_turn"),
+            sources_used=sources_ids,
             user_id=request.user_id
         )
         
-        pipeline_stages = extract_pipeline_stages(response_data["stats"].get("snapshots", []))
+        # 7. Format Output
+        pipeline_stages = extract_pipeline_stages(final_state_dict.get("pipeline_snapshots", []))
         
+        stats = {
+            "snapshots": final_state_dict.get("pipeline_snapshots", []),
+            "total_chunks_found": len(final_state_dict.get("retrieved_chunks", [])),
+            "final_context_chunks": len(final_state_dict.get("reranked_chunks", []))
+        }
+
         return QueryResponse(
-            answer=response_data["answer"],
-            sources=response_data["sources"],
-            confidence=response_data["confidence"],
-            stats=response_data["stats"],
+            answer=answer,
+            sources=full_sources[:5], # Return top 5 full source objects
+            confidence=confidence,
+            stats=stats,
             pipeline_stages=pipeline_stages,
+            rewritten_queries=final_state_dict.get("rewritten_queries", []),
             session_id=session_id,
             conversation_turn=turn_number,
-            resolved_query=request.query,
-            answered_from_history=False, 
+            resolved_query=final_state_dict.get("resolved_query"),
+            answered_from_history=not final_state_dict.get("needs_retrieval", True),
             needs_context=False
         )
         
-    except HTTPException:
-        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+
+@app.get("/sessions", response_model=SessionListResponse)
+async def get_sessions(limit: int = 50):
+    """Fetch recent chat sessions."""
+    try:
+        sessions = list_all_sessions(limit=limit)
+        return SessionListResponse(sessions=sessions, total=len(sessions))
+    except Exception as e:
+        print(f"Error fetching sessions: {e}")
+        return SessionListResponse(sessions=[], total=0)
 
 @app.get("/books", response_model=BooksResponse)
 async def list_books():
@@ -329,7 +399,7 @@ def ingest_book(
 
 @app.get("/health")
 async def health_check():
-    return {"status": "online", "mode": "langgraph-single"}
+    return {"status": "online", "mode": "langgraph-prod"}
 
 @app.websocket("/ws/ingest")
 async def websocket_ingestion_progress(websocket: WebSocket):

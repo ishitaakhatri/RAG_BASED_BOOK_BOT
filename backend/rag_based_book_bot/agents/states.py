@@ -1,7 +1,3 @@
-"""
-State definitions for the LangGraph RAG pipeline.
-Uses Pydantic v2 for robust typing and LangGraph state management.
-"""
 import operator
 from typing import List, Dict, Any, Optional, Annotated
 from pydantic import BaseModel, Field
@@ -23,7 +19,6 @@ class ParsedQuery(BaseModel):
     complexity_hint: str = "intermediate"
 
 class ConversationTurn(BaseModel):
-    """Represents a single turn in the conversation history"""
     user_query: str
     assistant_response: str
     timestamp: float = 0.0
@@ -57,10 +52,6 @@ class LLMResponse(BaseModel):
     confidence: float = 0.0
 
 class AgentState(BaseModel):
-    """
-    LangGraph State Schema using Pydantic v2.
-    Focused purely on the Query/RAG lifecycle.
-    """
     # Input
     user_query: str
     session_id: str = "default"
@@ -74,26 +65,24 @@ class AgentState(BaseModel):
     book_filter: Optional[str] = None
     chapter_filter: Optional[str] = None
     
-    # History (Context)
+    # History
     conversation_history: List[ConversationTurn] = Field(default_factory=list)
     
-    # Processing State
+    # Processing
     parsed_query: Optional[ParsedQuery] = None
     rewritten_queries: List[str] = Field(default_factory=list)
     resolved_query: Optional[str] = None
     needs_retrieval: bool = True
     referenced_turn: Optional[int] = None
-    relevant_past_turns: List[ConversationTurn] = Field(default_factory=list)
     
-    # Retrieval Data
+    # Retrieval
     retrieved_chunks: List[RetrievedChunk] = Field(default_factory=list)
     reranked_chunks: List[RetrievedChunk] = Field(default_factory=list)
     assembled_context: str = ""
-    system_prompt: str = ""
     
-    # Output & Diagnostics
+    # Output
     response: Optional[LLMResponse] = None
     
-    # Annotated[list, operator.add] appends new items to the list instead of overwriting
+    # Appenders
     errors: Annotated[List[str], operator.add] = Field(default_factory=list)
     pipeline_snapshots: Annotated[List[Dict[str, Any]], operator.add] = Field(default_factory=list)

@@ -1,11 +1,5 @@
-"""
-Graph definition for the RAG pipeline using LangGraph.
-Contains only the Query Graph.
-"""
 from typing import Literal
-
 from langgraph.graph import StateGraph, START, END
-
 from rag_based_book_bot.agents.states import AgentState
 from rag_based_book_bot.agents.nodes import (
     query_parser_node,
@@ -19,18 +13,13 @@ from rag_based_book_bot.agents.nodes import (
 )
 
 def check_retrieval_needed(state: AgentState) -> Literal["retrieve", "history"]:
-    """Conditional edge: retrieval vs memory"""
     if state.needs_retrieval:
         return "retrieve"
     return "history"
 
 def build_query_graph():
-    """
-    Builds the main RAG query pipeline.
-    """
     workflow = StateGraph(AgentState)
     
-    # Add Nodes
     workflow.add_node("query_parser", query_parser_node)
     workflow.add_node("context_resolution", context_resolution_node)
     workflow.add_node("answer_from_history", answer_from_history_node)
@@ -40,7 +29,6 @@ def build_query_graph():
     workflow.add_node("context_assembly", context_assembly_node)
     workflow.add_node("llm_reasoning", llm_reasoning_node)
     
-    # Define Edges
     workflow.add_edge(START, "query_parser")
     workflow.add_edge("query_parser", "context_resolution")
     
