@@ -490,7 +490,8 @@ class SemanticChunker:
     
     def _count_tokens(self, text: str) -> int:
         """Count tokens in text"""
-        return len(self.tokenizer.encode(text))
+        # ✅ FIX: Allow special tokens
+        return len(self.tokenizer.encode(text, disallowed_special=()))
 
 
 # Convenience function for quick usage

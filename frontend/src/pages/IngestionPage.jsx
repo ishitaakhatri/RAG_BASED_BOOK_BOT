@@ -47,8 +47,13 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   
   const wsRef = useRef(null);
   const logsEndRef = useRef(null);
-  const processedLogsRef = useRef(new Set()); // Track processed logs to prevent duplicates
-  const finishSequenceStarted = useRef(false); // ✅ NEW: Prevents timer reset loops
+  const processedLogsRef = useRef(new Set()); 
+  const finishSequenceStarted = useRef(false); 
+  const successTimerRef = useRef(null);
+  
+  // ✅ NEW: Ref to track ingestion state instantly inside event listeners
+  const isIngestingRef = useRef(false);
+  
   const navigate = useNavigate();
 
   // Add custom scrollbar and animation styles
@@ -72,18 +77,13 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         background: linear-gradient(180deg, #7c3aed, #db2777);
         box-shadow: 0 0 10px rgba(168, 85, 247, 0.5);
       }
-      
-      /* Smooth progress bar animation */
       .progress-circle {
         transition: stroke-dashoffset 0.5s cubic-bezier(0.4, 0, 0.2, 1);
       }
-      
-      /* Glow effect */
       @keyframes glow {
         0%, 100% { box-shadow: 0 0 20px rgba(168, 85, 247, 0.4); }
         50% { box-shadow: 0 0 30px rgba(236, 72, 153, 0.6); }
       }
-      
       .terminal-glow {
         animation: glow 3s ease-in-out infinite;
       }
@@ -99,179 +99,134 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     }
   }, [logs, showLogs]);
 
-  // Cleanup WebSocket on unmount
+  // Cleanup Timer on unmount
   useEffect(() => {
     return () => {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.close(1000, "Component unmounting");
+      if (successTimerRef.current) {
+        clearTimeout(successTimerRef.current);
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
       }
     };
   }, []);
 
-  // ✅ FIXED: Auto-finish Failsafe with "Once-Only" Lock
+  // ✅ FIXED: Robust Completion Logic
   useEffect(() => {
     if (!isIngesting) return;
-    if (finishSequenceStarted.current) return; // Stop if already finishing
+    
+    // Prevent re-entry if finish sequence is already running
+    if (successTimerRef.current) return;
 
-    // Check if logs contain the specific success message from backend
-    // Note: checking 'logs' dependency is fine here as long as we have the lock above
+    // Check completion conditions
     const isFinishedInLogs = logs.some(l => l.message.includes("Ingestion completed successfully"));
     const isFinishedStatus = liveProgress?.status === "completed" || liveProgress?.status === "success";
 
     if (isFinishedInLogs || isFinishedStatus) {
-      finishSequenceStarted.current = true; // LOCK the sequence
+      console.log("✅ Success detected, starting cleanup sequence...");
+      finishSequenceStarted.current = true;
       
       // Force visual 100%
       if (animatedPercentage < 100) setAnimatedPercentage(100);
 
-      console.log("✅ Success detected, starting cleanup timer...");
+      // Start the timer
+      successTimerRef.current = setTimeout(() => {
+        if (!isIngestingRef.current) return; // Guard clause
 
-      // Set a failsafe timer to unlock the UI
-      const timer = setTimeout(() => {
-        if (isIngesting) {
-          console.log("🎉 Cleanup timer triggered");
+        console.log("🎉 Cleanup timer triggered");
+        
+        const mockResult = {
+          chunks: liveProgress?.chunks_created || 0,
+          total_pages: liveProgress?.total_pages || 0,
+          title: uploadFile?.name,
+          method: "stream_verified"
+        };
+
+        // 1. Show Success Message
+        setUploadProgress({
+          status: "success",
+          message: "Ingestion completed successfully!",
+          percentage: 100,
+          result: mockResult,
+        });
+
+        // 2. Wait a moment, then Reset UI & Fetch Books
+        setTimeout(() => {
+          console.log("🧹 Resetting UI state...");
           
-          const mockResult = {
-            chunks: liveProgress?.chunks_created || 0,
-            total_pages: liveProgress?.total_pages || 0,
-            title: uploadFile?.name,
-            method: "stream_verified"
-          };
-
-          setUploadProgress({
-            status: "success",
-            message: "Ingestion completed successfully!",
-            percentage: 100,
-            result: mockResult,
-          });
-
-          // Trigger cleanup and parent callback
-          if (onUploadSuccess) {
-             onUploadSuccess();
-             setTimeout(() => {
-                setUploadFile(null);
-                setUploadProgress(null);
-                setLiveProgress(null);
-                setIsIngesting(false);
-                setAnimatedPercentage(0);
-                processedLogsRef.current.clear();
-                finishSequenceStarted.current = false; // Unlock for next time
-                if (wsRef.current) wsRef.current.close(1000, "Ingestion complete");
-             }, 2000);
+          // A. Stop Ingestion Ref first (Blocks new WS messages)
+          isIngestingRef.current = false;
+          
+          // B. Close WebSocket immediately
+          if (wsRef.current) {
+            wsRef.current.close(1000, "Ingestion complete");
+            wsRef.current = null;
           }
-        }
-      }, 1500); // Wait 1.5s after completion log before forcing
 
-      return () => clearTimeout(timer);
+          // C. Reset State (Enables buttons/inputs)
+          setUploadFile(null);
+          setUploadProgress(null);
+          setLiveProgress(null);
+          setIsIngesting(false); 
+          setAnimatedPercentage(0);
+          setLogs([]);
+          
+          // D. Reset Refs
+          processedLogsRef.current.clear();
+          finishSequenceStarted.current = false;
+          successTimerRef.current = null;
+          
+          // E. Fetch Books (Delayed to ensure Pinecone indexing)
+          if (onUploadSuccess) {
+             console.log("📚 Refreshing book list...");
+             onUploadSuccess();
+          }
+        }, 2000); // 2s delay for user to see green success message
+      }, 1500); // 1.5s delay after completion detection
     }
   }, [logs, liveProgress, isIngesting, animatedPercentage, onUploadSuccess, uploadFile]);
 
-  // ✅ FIXED: Smooth percentage animation (Removed 'logs' from dependency)
+  // Smooth percentage animation
   useEffect(() => {
     const targetPercentage = calculatePercentage();
-    
     let animationFrameId;
-    
-    // Smooth animation using requestAnimationFrame
     const animateProgress = () => {
       setAnimatedPercentage((prev) => {
         const diff = targetPercentage - prev;
-        if (Math.abs(diff) < 0.1) {
-          return targetPercentage;
-        }
-        const newValue = prev + diff * 0.15;
-        
-        // Continue animation if not at target
-        if (Math.abs(targetPercentage - newValue) > 0.1) {
-          animationFrameId = requestAnimationFrame(animateProgress);
-        }
-        
-        return newValue;
+        if (Math.abs(diff) < 0.1) return targetPercentage;
+        return prev + diff * 0.15;
       });
-    };
-
-    // Start animation
-    animationFrameId = requestAnimationFrame(animateProgress);
-    
-    return () => {
-      if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
+      if (Math.abs(targetPercentage - animatedPercentage) > 0.1) {
+        animationFrameId = requestAnimationFrame(animateProgress);
       }
     };
-  }, [liveProgress, uploadProgress, isIngesting]); // Removed 'logs' to prevent thrashing
+    animationFrameId = requestAnimationFrame(animateProgress);
+    return () => {
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    };
+  }, [liveProgress, uploadProgress, isIngesting]);
 
   const addLog = (message, type = "info") => {
     const timestamp = new Date().toLocaleTimeString();
-    const logKey = `${timestamp}-${message}`; // Create unique key
+    const logKey = `${timestamp}-${message}`;
     
-    // Prevent duplicate logs
-    if (processedLogsRef.current.has(logKey)) {
-      return;
-    }
+    if (processedLogsRef.current.has(logKey)) return;
     
     processedLogsRef.current.add(logKey);
-    // ✅ FIXED: Cap logs at 100 items to prevent rendering lag
     setLogs((prev) => {
       const newLogs = [...prev, { message, type, timestamp }];
-      if (newLogs.length > 100) return newLogs.slice(-100);
-      return newLogs;
+      return newLogs.length > 100 ? newLogs.slice(-100) : newLogs;
     });
-  };
-
-  // Drag and Drop Handlers
-  const handleDragEnter = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!isIngesting) {
-      setIsDragging(true);
-    }
-  };
-
-  const handleDragLeave = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    // Only set dragging to false if we're leaving the drop zone entirely
-    if (e.currentTarget === e.target) {
-      setIsDragging(false);
-    }
-  };
-
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-
-    if (isIngesting) return;
-
-    const files = e.dataTransfer.files;
-    if (files && files.length > 0) {
-      const file = files[0];
-      if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
-        setUploadFile(file);
-        addLog(`📎 File selected: ${file.name}`, "info");
-      } else {
-        addLog("❌ Please drop a PDF file", "error");
-      }
-    }
   };
 
   const connectWebSocket = () => {
     return new Promise((resolve, reject) => {
       try {
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          console.log("WebSocket already connected");
           resolve();
           return;
         }
-
-        if (wsRef.current) {
-          wsRef.current.close();
-        }
+        if (wsRef.current) wsRef.current.close();
 
         wsRef.current = new WebSocket(WS_URL);
 
@@ -281,59 +236,33 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         };
 
         wsRef.current.onmessage = (event) => {
+          // ✅ GUARD: Block updates if we are done
+          if (!isIngestingRef.current) return;
+
           try {
             const data = JSON.parse(event.data);
             setLiveProgress(data);
-            // console.log("📊 Live progress update:", data);
 
-            // Process backend logs from WebSocket
-            if (data.logs && Array.isArray(data.logs) && data.logs.length > 0) {
+            if (data.logs && Array.isArray(data.logs)) {
               data.logs.forEach((logLine) => {
                 const match = logLine.match(/\[(\d{2}:\d{2}:\d{2})\] (\w+): (.+)/);
                 if (match) {
                   const [, timestamp, level, message] = match;
-                  const type = level.toLowerCase();
-                  const logKey = `${timestamp}-${message}`;
-                  
-                  if (!processedLogsRef.current.has(logKey)) {
-                    processedLogsRef.current.add(logKey);
-                    // ✅ FIXED: Cap logs in websocket handler too
-                    setLogs((prev) => {
-                        const newLogs = [...prev, { message, type, timestamp }];
-                        return newLogs.length > 100 ? newLogs.slice(-100) : newLogs;
-                    });
-                  }
-                } else {
-                  // Fallback for unformatted logs
-                  const logKey = `${Date.now()}-${logLine}`;
-                  if (!processedLogsRef.current.has(logKey)) {
-                    processedLogsRef.current.add(logKey);
-                    const timestamp = new Date().toLocaleTimeString();
-                    setLogs((prev) => {
-                        const newLogs = [...prev, { message: logLine, type: "info", timestamp }];
-                        return newLogs.length > 100 ? newLogs.slice(-100) : newLogs;
-                    });
+                  // Only add if we are still ingesting
+                  if (isIngestingRef.current) {
+                      addLog(message, level.toLowerCase());
                   }
                 }
               });
             }
           } catch (error) {
             console.error("Error parsing progress data:", error);
-            addLog(`⚠️ Error parsing update: ${error.message}`, "warning");
           }
         };
 
         wsRef.current.onerror = (error) => {
           console.error("WebSocket error:", error);
-          addLog("❌ WebSocket connection error", "error");
           reject(error);
-        };
-
-        wsRef.current.onclose = (event) => {
-          console.log("WebSocket closed:", event.code, event.reason);
-          if (event.code !== 1000 && event.code !== 1001) {
-            addLog("⚠️ Disconnected from progress stream", "warning");
-          }
         };
       } catch (error) {
         reject(error);
@@ -345,12 +274,15 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     e.preventDefault();
     if (!uploadFile) return;
 
+    // Reset everything
     setIsIngesting(true);
+    isIngestingRef.current = true; // Sync Ref
     setLogs([]);
-    setShowLogs(true); // Auto-show logs when ingestion starts
+    setShowLogs(true);
     setAnimatedPercentage(0);
-    processedLogsRef.current.clear(); // Reset processed logs
-    finishSequenceStarted.current = false; // Reset lock
+    processedLogsRef.current.clear();
+    finishSequenceStarted.current = false;
+    successTimerRef.current = null;
     
     addLog("📋 Starting ingestion process...", "info");
 
@@ -369,8 +301,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
       percentage: 5,
     });
 
-    addLog(`📁 Uploading: ${uploadFile.name}`, "info");
-
     try {
       const response = await fetch(`${API_BASE_URL}/ingest`, {
         method: "POST",
@@ -380,46 +310,20 @@ export default function IngestionPage({ books, onUploadSuccess }) {
       const data = await response.json();
 
       if (data.success) {
-        const result = data.result;
+        // We rely on the WebSocket/Log completion detector to handle success UI
+        // But we update this state just in case WS failed
         setUploadProgress({
-          status: "success",
-          message: `Successfully ingested "${result.title || uploadFile.name}"! Created ${result.chunks} chunks.`,
-          percentage: 100,
-          result,
+            status: "success",
+            message: "Ingestion verified. Finalizing...",
+            percentage: 95,
+            result: data.result
         });
-
-        addLog(`✅ Ingestion complete: ${result.chunks} chunks from ${result.total_pages} pages`, "success");
-        addLog(`📚 Method used: ${result.method}`, "success");
-
-        if (onUploadSuccess) {
-          setTimeout(() => {
-            onUploadSuccess();
-            setUploadFile(null);
-            setUploadProgress(null);
-            setLiveProgress(null);
-            setIsIngesting(false);
-            setAnimatedPercentage(0);
-            processedLogsRef.current.clear();
-            finishSequenceStarted.current = false;
-            // Close WebSocket after successful ingestion
-            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-              wsRef.current.close(1000, "Ingestion complete");
-            }
-          }, 2000);
-        }
       } else {
-        setUploadProgress({
-          status: "error",
-          message: data.error || "Upload failed",
-          percentage: 0,
-        });
-        addLog(`❌ Upload error: ${data.error}`, "error");
-        setIsIngesting(false);
-        finishSequenceStarted.current = false;
+        throw new Error(data.error || "Unknown error");
       }
     } catch (error) {
       // Only show error if we haven't already succeeded via the failsafe
-      if (isIngesting && animatedPercentage < 100 && !finishSequenceStarted.current) {
+      if (isIngestingRef.current && !finishSequenceStarted.current) {
         setUploadProgress({
             status: "error",
             message: `Upload failed: ${error.message}`,
@@ -427,13 +331,13 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         });
         addLog(`❌ Upload failed: ${error.message}`, "error");
         setIsIngesting(false);
-        finishSequenceStarted.current = false;
+        isIngestingRef.current = false;
       }
     }
   };
 
   const handleReset = () => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+    if (wsRef.current) {
       wsRef.current.close(1000, "User cancelled");
     }
     setUploadFile(null);
@@ -442,105 +346,54 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     setLogs([]);
     setShowLogs(false);
     setIsIngesting(false);
-    setAnimatedPercentage(0);
-    processedLogsRef.current.clear();
-    finishSequenceStarted.current = false;
+    isIngestingRef.current = false;
     navigate("/");
   };
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case "completed":
-      case "success":
-        return "text-green-400";
-      case "failed":
-      case "error":
-        return "text-red-400";
-      case "upserting":
-      case "embedding":
-      case "chunking":
-        return "text-blue-400";
-      case "parsing_pdf":
-        return "text-yellow-400";
-      default:
-        return "text-purple-400";
+  // Drag and Drop Handlers
+  const handleDragEnter = (e) => { e.preventDefault(); e.stopPropagation(); if (!isIngesting) setIsDragging(true); };
+  const handleDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); if (e.currentTarget === e.target) setIsDragging(false); };
+  const handleDragOver = (e) => { e.preventDefault(); e.stopPropagation(); };
+  const handleDrop = (e) => {
+    e.preventDefault(); e.stopPropagation(); setIsDragging(false);
+    if (isIngesting) return;
+    const file = e.dataTransfer.files[0];
+    if (file && (file.type === "application/pdf" || file.name.endsWith(".pdf"))) {
+      setUploadFile(file);
+      addLog(`📎 File selected: ${file.name}`, "info");
     }
+  };
+
+  const getStatusColor = (status) => {
+    if (status === "completed" || status === "success") return "text-green-400";
+    if (status === "failed" || status === "error") return "text-red-400";
+    return "text-blue-400";
   };
 
   const getLogColor = (type) => {
-    switch (type) {
-      case "success":
-        return "text-green-400";
-      case "error":
-        return "text-red-400";
-      case "warning":
-        return "text-yellow-400";
-      case "info":
-      default:
-        return "text-purple-300";
-    }
+    if (type === "success") return "text-green-400";
+    if (type === "error") return "text-red-400";
+    if (type === "warning") return "text-yellow-400";
+    return "text-purple-300";
   };
 
   const calculatePercentage = () => {
-    // 1. Priority: If we have a success/completed status from ANY source, force 100%
-    if (
-      uploadProgress?.status === "success" || 
-      liveProgress?.status === "completed" || 
-      liveProgress?.status === "success"
-    ) {
-      return 100;
-    }
-    
-    // 2. Check logs for explicit completion message
-    // Note: We use the existing logs state here, which is fine
-    if (logs.some(l => l.message.includes("Ingestion completed successfully"))) {
-      return 100;
-    }
-    
+    if (uploadProgress?.status === "success" || liveProgress?.status === "completed") return 100;
     if (liveProgress?.status === "failed") return 0;
-
-    // 3. If no live progress, use upload progress
-    if (!liveProgress) {
-      return uploadProgress?.percentage ?? 0;
-    }
-
-    // 4. Use backend percentage if valid number
-    if (
-      liveProgress.percentage !== undefined && 
-      liveProgress.percentage !== null && 
-      !isNaN(liveProgress.percentage)
-    ) {
+    if (!liveProgress) return uploadProgress?.percentage ?? 0;
+    
+    // Explicit percentage from backend
+    if (liveProgress.percentage !== undefined && liveProgress.percentage !== null) {
       return Math.min(Math.max(Number(liveProgress.percentage), 0), 100);
     }
-
-    // 5. Fallback calculation based on status
-    const status = liveProgress.status;
     
-    if (status === "parsing_pdf" || status === "loading") {
-      return 15;
-    }
-
-    if (status === "chunking") {
-      const currentPage = liveProgress.current_page || 0;
-      const totalPages = liveProgress.total_pages || 1;
-      const chunkingProgress = (currentPage / totalPages) * 30;
-      return 20 + chunkingProgress;
-    }
-
-    if (status === "embedding") {
-      const embeddingsGenerated = liveProgress.embeddings_generated || 0;
-      const totalChunks = liveProgress.chunks_created || 1;
-      const embeddingProgress = (embeddingsGenerated / totalChunks) * 30;
-      return 50 + embeddingProgress;
-    }
-
-    if (status === "upserting") {
-      const vectorsUpserted = liveProgress.vectors_upserted || 0;
-      const totalChunks = liveProgress.chunks_created || 1;
-      const upsertProgress = (vectorsUpserted / totalChunks) * 18;
-      return 80 + upsertProgress;
-    }
-
+    // Heuristic fallback
+    const status = liveProgress.status;
+    if (status === "parsing_pdf") return 15;
+    if (status === "chunking") return 20 + ((liveProgress.current_page || 0) / (liveProgress.total_pages || 1)) * 30;
+    if (status === "embedding") return 50 + ((liveProgress.embeddings_generated || 0) / (liveProgress.chunks_created || 1)) * 30;
+    if (status === "upserting") return 80 + ((liveProgress.vectors_upserted || 0) / (liveProgress.chunks_created || 1)) * 18;
+    
     return Math.max(uploadProgress?.percentage ?? 0, 5);
   };
 
@@ -548,13 +401,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   const currentStatus = liveProgress?.status || uploadProgress?.status || "idle";
   const radius = 48;
   const circumference = 2 * Math.PI * radius;
-
-  // Optimize log rendering with useMemo
-  const renderedLogs = useMemo(() => {
-    return logs.map((log, idx) => (
-        <LogItem key={idx} log={log} getLogColor={getLogColor} />
-    ));
-  }, [logs]);
+  const renderedLogs = useMemo(() => logs.map((log, idx) => <LogItem key={idx} log={log} getLogColor={getLogColor} />), [logs]);
 
   return (
     <div className="h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex flex-col overflow-hidden">
@@ -590,94 +437,53 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         </div>
       </header>
 
-      {/* Main Content - Scrollable */}
+      {/* Main Content */}
       <div className="flex-1 overflow-y-auto scrollbar-thin">
         <div className="px-4 sm:px-6 lg:px-8 py-8">
           <div className="max-w-7xl mx-auto">
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-              {/* LEFT SIDEBAR - Books & Stats */}
+              {/* LEFT SIDEBAR */}
               <div className="lg:col-span-1 space-y-6">
-                {/* Books List */}
                 <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
                   <h3 className="text-lg font-semibold text-white mb-4 flex items-center">
                     <Book className="w-5 h-5 mr-2" />
                     Available Books
                   </h3>
-
                   <div className="space-y-2 max-h-96 overflow-y-auto scrollbar-thin">
                     <button className="w-full text-left px-3 py-2 rounded-lg transition-all bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold">
                       All Books
                     </button>
-
                     {books.map((book, idx) => (
-                      <button
-                        key={idx}
-                        className="w-full text-left px-3 py-2 rounded-lg transition-all bg-white/5 hover:bg-white/10 text-purple-200 hover:text-white"
-                      >
-                        <div className="text-sm font-semibold truncate">
-                          {book.title}
-                        </div>
-                        <div className="text-xs opacity-75 truncate">
-                          by {book.author}
-                        </div>
-                        {book.total_chunks > 0 && (
-                          <div className="text-xs opacity-60 mt-1">
-                            {book.total_chunks} chunks
-                          </div>
-                        )}
+                      <button key={idx} className="w-full text-left px-3 py-2 rounded-lg transition-all bg-white/5 hover:bg-white/10 text-purple-200 hover:text-white">
+                        <div className="text-sm font-semibold truncate">{book.title}</div>
+                        <div className="text-xs opacity-75 truncate">by {book.author}</div>
+                        {book.total_chunks > 0 && <div className="text-xs opacity-60 mt-1">{book.total_chunks} chunks</div>}
                       </button>
                     ))}
                   </div>
                 </div>
-
-                {/* Stats Card */}
+                {/* Stats */}
                 <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-                  <h3 className="text-lg font-semibold text-white mb-4">
-                    Stats
-                  </h3>
+                  <h3 className="text-lg font-semibold text-white mb-4">Stats</h3>
                   <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="text-purple-200 text-sm">
-                        Total Books:
-                      </span>
-                      <span className="font-bold text-white text-lg">
-                        {books.length}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-blue-200 text-sm">
-                        Total Chunks:
-                      </span>
-                      <span className="font-bold text-white text-lg">
-                        {books.reduce(
-                          (sum, b) => sum + (b.total_chunks || 0),
-                          0
-                        )}
-                      </span>
-                    </div>
+                    <div className="flex justify-between items-center"><span className="text-purple-200 text-sm">Total Books:</span><span className="font-bold text-white text-lg">{books.length}</span></div>
+                    <div className="flex justify-between items-center"><span className="text-blue-200 text-sm">Total Chunks:</span><span className="font-bold text-white text-lg">{books.reduce((sum, b) => sum + (b.total_chunks || 0), 0)}</span></div>
                   </div>
                 </div>
               </div>
 
-              {/* RIGHT SIDE - Upload Form & Progress */}
+              {/* RIGHT SIDE - Upload Form */}
               <div className="lg:col-span-3 space-y-6">
-                {/* Upload Form Card */}
                 <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20">
-                  <h2 className="text-2xl font-bold text-white mb-2">
-                    Upload PDF Books
-                  </h2>
-                  <p className="text-purple-200 mb-6">
-                    Upload PDF files to ingest them into your knowledge base.
-                  </p>
+                  <h2 className="text-2xl font-bold text-white mb-2">Upload PDF Books</h2>
+                  <p className="text-purple-200 mb-6">Upload PDF files to ingest them into your knowledge base.</p>
 
                   <div className="space-y-6">
-                    {/* File Input - Hidden when ingesting */}
+                    {/* File Input Zone */}
                     {!isIngesting && (
                       <>
                         <div>
-                          <label className="block text-sm font-semibold text-purple-200 mb-3">
-                            Select PDF File
-                          </label>
+                          <label className="block text-sm font-semibold text-purple-200 mb-3">Select PDF File</label>
                           <label 
                             htmlFor="file-upload" 
                             className={`flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-xl cursor-pointer transition-all duration-300 ${
@@ -685,36 +491,21 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                                 ? 'border-pink-400 bg-gradient-to-br from-pink-500/30 to-purple-500/30 scale-[1.02] shadow-lg shadow-pink-500/50' 
                                 : 'border-purple-400/70 bg-gradient-to-br from-purple-500/10 to-pink-500/10 hover:from-purple-500/20 hover:to-pink-500/20 hover:border-purple-300'
                             }`}
-                            onDragEnter={handleDragEnter}
-                            onDragLeave={handleDragLeave}
-                            onDragOver={handleDragOver}
-                            onDrop={handleDrop}
+                            onDragEnter={handleDragEnter} onDragLeave={handleDragLeave} onDragOver={handleDragOver} onDrop={handleDrop}
                           >
                             <div className="flex flex-col items-center justify-center pt-8 pb-6">
-                              <Upload className={`w-12 h-12 mb-2 transition-all duration-300 ${
-                                isDragging ? 'text-pink-300 scale-125 rotate-12' : 'text-purple-300'
-                              }`} />
-                              <p className="text-sm font-semibold text-white">
-                                {isDragging ? '🚀 Drop your PDF here' : 'Click to upload or drag and drop'}
-                              </p>
-                              <p className="text-xs text-purple-300 mt-1">
-                                PDF files only
-                              </p>
+                              <Upload className={`w-12 h-12 mb-2 transition-all duration-300 ${isDragging ? 'text-pink-300 scale-125 rotate-12' : 'text-purple-300'}`} />
+                              <p className="text-sm font-semibold text-white">{isDragging ? '🚀 Drop your PDF here' : 'Click to upload or drag and drop'}</p>
+                              <p className="text-xs text-purple-300 mt-1">PDF files only</p>
                             </div>
                             <input
-                              id="file-upload"
-                              type="file"
-                              accept=".pdf"
+                              id="file-upload" type="file" accept=".pdf"
                               onClick={(e) => (e.target.value = null)}
                               onChange={(e) => {
                                 const file = e.target.files[0];
-                                if (file) {
-                                  setUploadFile(file);
-                                  addLog(`📎 File selected: ${file.name}`, "info");
-                                }
+                                if (file) { setUploadFile(file); addLog(`📎 File selected: ${file.name}`, "info"); }
                               }}
-                              className="hidden"
-                              disabled={isIngesting}
+                              className="hidden" disabled={isIngesting}
                             />
                           </label>
                           {uploadFile && (
@@ -722,31 +513,20 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                               <div className="flex items-center space-x-3">
                                 <CheckCircle className="w-5 h-5 text-green-400" />
                                 <div>
-                                  <p className="text-sm font-semibold text-green-300">
-                                    {uploadFile.name}
-                                  </p>
-                                  <p className="text-xs text-green-200">
-                                    {(uploadFile.size / 1024 / 1024).toFixed(2)} MB
-                                  </p>
+                                  <p className="text-sm font-semibold text-green-300">{uploadFile.name}</p>
+                                  <p className="text-xs text-green-200">{(uploadFile.size / 1024 / 1024).toFixed(2)} MB</p>
                                 </div>
                               </div>
                             </div>
                           )}
                         </div>
-
-                        {/* File Requirements */}
+                        {/* Requirements Box */}
                         <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-400/30 rounded-lg p-4">
-                          <h4 className="text-sm font-semibold text-purple-300 mb-2 flex items-center">
-                            <AlertCircle className="w-4 h-4 mr-2" />
-                            File Requirements
-                          </h4>
+                          <h4 className="text-sm font-semibold text-purple-300 mb-2 flex items-center"><AlertCircle className="w-4 h-4 mr-2" />File Requirements</h4>
                           <ul className="text-xs text-purple-200 space-y-1">
                             <li>• File format: PDF (.pdf)</li>
                             <li>• Recommended file size: Less than 50 MB</li>
-                            <li>
-                              • Filename format: "Book Title - Author Name.pdf"
-                            </li>
-                            <li>• System will auto-extract and chunk content</li>
+                            <li>• Filename format: "Book Title - Author Name.pdf"</li>
                           </ul>
                         </div>
                       </>
@@ -759,140 +539,59 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                           <div className={`w-2 h-2 rounded-full mr-3 ${currentPercentage === 100 ? 'bg-green-400' : 'bg-green-400 animate-pulse'}`}></div>
                           Ingestion Progress
                         </h3>
-
                         <div className="space-y-6">
-                          {/* Smooth Circular Progress */}
                           <div className="flex items-center justify-center">
                             <div className="relative w-32 h-32">
                               <svg className="w-full h-full transform -rotate-90">
-                                <circle
-                                  cx="64"
-                                  cy="64"
-                                  r="56"
-                                  stroke="rgba(139, 92, 246, 0.2)"
-                                  strokeWidth="8"
-                                  fill="none"
-                                />
-                                <circle
-                                  cx="64"
-                                  cy="64"
-                                  r="56"
-                                  stroke="url(#grad)"
-                                  strokeWidth="8"
-                                  fill="none"
-                                  strokeDasharray={circumference}
-                                  strokeDashoffset={circumference - (animatedPercentage / 100) * circumference}
-                                  strokeLinecap="round"
-                                  className="progress-circle"
-                                  style={{ filter: 'drop-shadow(0 0 8px rgba(168, 85, 247, 0.6))' }}
-                                />
-
+                                <circle cx="64" cy="64" r="56" stroke="rgba(139, 92, 246, 0.2)" strokeWidth="8" fill="none" />
+                                <circle cx="64" cy="64" r="56" stroke="url(#grad)" strokeWidth="8" fill="none" strokeDasharray={circumference} strokeDashoffset={circumference - (animatedPercentage / 100) * circumference} strokeLinecap="round" className="progress-circle" style={{ filter: 'drop-shadow(0 0 8px rgba(168, 85, 247, 0.6))' }} />
                                 <defs>
                                   <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                                    <stop offset="0%" stopColor="#8b5cf6" />
-                                    <stop offset="50%" stopColor="#a855f7" />
-                                    <stop offset="100%" stopColor="#ec4899" />
+                                    <stop offset="0%" stopColor="#8b5cf6" /><stop offset="50%" stopColor="#a855f7" /><stop offset="100%" stopColor="#ec4899" />
                                   </linearGradient>
                                 </defs>
                               </svg>
                               <div className="absolute inset-0 flex flex-col items-center justify-center">
-                                <p className="text-3xl font-bold bg-gradient-to-r from-purple-300 to-pink-300 bg-clip-text text-transparent">
-                                  {currentPercentage}%
-                                </p>
+                                <p className="text-3xl font-bold bg-gradient-to-r from-purple-300 to-pink-300 bg-clip-text text-transparent">{currentPercentage}%</p>
                                 <p className="text-xs text-purple-300 mt-1">{currentStatus}</p>
                               </div>
                             </div>
                           </div>
-
-                          {/* Status */}
+                          
                           <div className="bg-black/30 rounded-lg p-4 border border-purple-500/30">
                             <p className={`text-center text-sm font-semibold ${getStatusColor(currentStatus)}`}>
                               {liveProgress?.current_task || uploadProgress?.message || "Ready"}
                             </p>
                           </div>
 
-                          {/* Success/Error Message */}
                           {uploadProgress?.status === "success" && (
-                            <div className="p-4 rounded-lg bg-green-500/20 border border-green-400/50">
-                              <div className="flex items-center space-x-3">
-                                <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0" />
-                                <div>
-                                  <p className="text-sm font-semibold text-green-300">
-                                    Success!
-                                  </p>
-                                  <p className="text-xs text-green-200">
-                                    {uploadProgress.result?.chunks} chunks
-                                    created
-                                  </p>
-                                </div>
+                            <div className="p-4 rounded-lg bg-green-500/20 border border-green-400/50 flex items-center space-x-3">
+                              <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0" />
+                              <div>
+                                <p className="text-sm font-semibold text-green-300">Success!</p>
+                                <p className="text-xs text-green-200">{uploadProgress.result?.chunks} chunks created</p>
                               </div>
                             </div>
                           )}
 
-                          {uploadProgress?.status === "error" && (
-                            <div className="p-4 rounded-lg bg-red-500/20 border border-red-400/50">
-                              <div className="flex items-center space-x-3">
-                                <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
-                                <p className="text-sm font-semibold text-red-300">
-                                  {uploadProgress.message}
-                                </p>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Terminal-style Live Logs */}
                           {isIngesting && (
-                            <div className="mt-6">
-                              <div className="bg-black/90 rounded-xl border-2 border-purple-500/50 shadow-2xl terminal-glow overflow-hidden">
-                                {/* Terminal Header */}
-                                <div className="bg-gradient-to-r from-purple-900/80 via-pink-900/80 to-purple-900/80 px-4 py-3 border-b border-purple-500/50 flex items-center justify-between">
-                                  <div className="flex items-center space-x-3">
-                                    <div className="flex space-x-2">
-                                      <div className="w-3 h-3 rounded-full bg-gradient-to-br from-red-400 to-red-600 shadow-lg"></div>
-                                      <div className="w-3 h-3 rounded-full bg-gradient-to-br from-yellow-400 to-yellow-600 shadow-lg"></div>
-                                      <div className="w-3 h-3 rounded-full bg-gradient-to-br from-green-400 to-green-600 shadow-lg animate-pulse"></div>
-                                    </div>
-                                    <span className="text-sm text-purple-300 font-mono font-semibold">
-                                      🔧 backend@rag-bot:~$
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center space-x-3">
-                                    {logs.length > 0 && (
-                                      <span className="text-xs text-green-400 font-mono flex items-center space-x-2 bg-green-500/10 px-3 py-1 rounded-full border border-green-500/30">
-                                        <span className="relative flex h-2 w-2">
-                                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                                          <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                                        </span>
-                                        <span className="font-bold">LIVE</span>
-                                      </span>
-                                    )}
-                                    <span className="text-xs text-gray-400 font-mono bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/30">
-                                      {logs.length} lines
-                                    </span>
-                                  </div>
+                            <div className="mt-6 bg-black/90 rounded-xl border-2 border-purple-500/50 shadow-2xl terminal-glow overflow-hidden">
+                              <div className="bg-gradient-to-r from-purple-900/80 via-pink-900/80 to-purple-900/80 px-4 py-3 border-b border-purple-500/50 flex items-center justify-between">
+                                <div className="flex items-center space-x-3">
+                                  <div className="flex space-x-2"><div className="w-3 h-3 rounded-full bg-red-500"></div><div className="w-3 h-3 rounded-full bg-yellow-500"></div><div className="w-3 h-3 rounded-full bg-green-500 animate-pulse"></div></div>
+                                  <span className="text-sm text-purple-300 font-mono font-semibold">backend@rag-bot:~$</span>
                                 </div>
-                                
-                                {/* Terminal Content */}
-                                <div className="p-5 h-96 overflow-y-auto scrollbar-thin font-mono text-xs bg-gradient-to-b from-black/95 to-gray-900/95">
-                                  {logs.length === 0 ? (
-                                    <div className="flex items-center justify-center h-full">
-                                      <div className="text-center space-y-4">
-                                        <Loader className="w-10 h-10 animate-spin text-purple-400 mx-auto" />
-                                        <p className="text-purple-300 font-semibold text-base">
-                                          📡 Connecting to backend logger...
-                                        </p>
-                                        <p className="text-sm text-gray-500">
-                                          Waiting for ingestion logs to stream
-                                        </p>
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <div className="space-y-1">
-                                      {renderedLogs}
-                                      <div ref={logsEndRef} />
-                                    </div>
-                                  )}
-                                </div>
+                                <span className="text-xs text-gray-400 font-mono bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/30">{logs.length} lines</span>
+                              </div>
+                              <div className="p-5 h-96 overflow-y-auto scrollbar-thin font-mono text-xs bg-gradient-to-b from-black/95 to-gray-900/95">
+                                {logs.length === 0 ? (
+                                  <div className="flex items-center justify-center h-full flex-col space-y-4">
+                                    <Loader className="w-10 h-10 animate-spin text-purple-400" />
+                                    <p className="text-purple-300">Connecting to logger...</p>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-1">{renderedLogs}<div ref={logsEndRef} /></div>
+                                )}
                               </div>
                             </div>
                           )}
@@ -903,25 +602,13 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                     {/* Buttons */}
                     <div className="flex gap-3 pt-4">
                       <button
-                        onClick={handleUploadSubmit}
-                        disabled={!uploadFile || isIngesting}
+                        onClick={handleUploadSubmit} disabled={!uploadFile || isIngesting}
                         className="flex-1 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-semibold flex items-center justify-center space-x-2"
                       >
-                        {isIngesting ? (
-                          <>
-                            <Loader className="w-5 h-5 animate-spin" />
-                            <span>Processing...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Upload className="w-5 h-5" />
-                            <span>Upload & Ingest</span>
-                          </>
-                        )}
+                        {isIngesting ? <><Loader className="w-5 h-5 animate-spin" /><span>Processing...</span></> : <><Upload className="w-5 h-5" /><span>Upload & Ingest</span></>}
                       </button>
                       <button
-                        onClick={handleReset}
-                        disabled={isIngesting}
+                        onClick={handleReset} disabled={isIngesting}
                         className="px-6 py-3 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Cancel

@@ -53,7 +53,8 @@ class HierarchicalChunker:
         hierarchy_path_str = " > ".join(path)
         context_header = f"Context: {book_title} > {hierarchy_path_str}\n"
         
-        context_tokens = len(self.tokenizer.encode(context_header))
+        # ✅ FIX: Allow special tokens in header calculation
+        context_tokens = len(self.tokenizer.encode(context_header, disallowed_special=()))
         
         # 2. Chunk the text of THIS node (if any)
         if node["text"] and node["text"].strip():
@@ -92,7 +93,9 @@ class HierarchicalChunker:
 
     def _sliding_window_split(self, text: str, max_tokens: int) -> List[str]:
         """Simple sliding window splitter based on token count."""
-        tokens = self.tokenizer.encode(text)
+        # ✅ FIX: Allow special tokens in body text
+        tokens = self.tokenizer.encode(text, disallowed_special=())
+        
         if len(tokens) <= max_tokens:
             return [text]
             
