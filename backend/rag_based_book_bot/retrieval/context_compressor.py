@@ -23,8 +23,8 @@ class EnhancedContextCompressor:
     
     def __init__(
         self,
-        target_tokens: int = 2000,
-        max_tokens: int = 4000,
+        target_tokens: int = 20000,
+        max_tokens: int = 30000,
         encoding_name: str = "cl100k_base",
         semantic_threshold: float = 0.92
     ):
