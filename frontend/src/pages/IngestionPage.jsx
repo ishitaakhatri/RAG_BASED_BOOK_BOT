@@ -51,7 +51,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   const finishSequenceStarted = useRef(false); 
   const successTimerRef = useRef(null);
   
-  // ✅ NEW: Ref to track ingestion state instantly inside event listeners
+  // Ref to track ingestion state instantly inside event listeners
   const isIngestingRef = useRef(false);
   
   const navigate = useNavigate();
@@ -111,7 +111,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     };
   }, []);
 
-  // ✅ FIXED: Robust Completion Logic
+  // Completion Logic
   useEffect(() => {
     if (!isIngesting) return;
     
@@ -236,7 +236,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         };
 
         wsRef.current.onmessage = (event) => {
-          // ✅ GUARD: Block updates if we are done
+          // GUARD: Block updates if we are done
           if (!isIngestingRef.current) return;
 
           try {
@@ -274,7 +274,9 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     e.preventDefault();
     if (!uploadFile) return;
 
-    // Reset everything
+    // ✅ FIXED: Reset liveProgress to prevent instant completion detection
+    setLiveProgress(null); 
+    
     setIsIngesting(true);
     isIngestingRef.current = true; // Sync Ref
     setLogs([]);
@@ -310,8 +312,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
       const data = await response.json();
 
       if (data.success) {
-        // We rely on the WebSocket/Log completion detector to handle success UI
-        // But we update this state just in case WS failed
         setUploadProgress({
             status: "success",
             message: "Ingestion verified. Finalizing...",
@@ -322,7 +322,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         throw new Error(data.error || "Unknown error");
       }
     } catch (error) {
-      // Only show error if we haven't already succeeded via the failsafe
       if (isIngestingRef.current && !finishSequenceStarted.current) {
         setUploadProgress({
             status: "error",
