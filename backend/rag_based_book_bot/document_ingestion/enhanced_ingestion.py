@@ -58,8 +58,8 @@ logger.propagate = True  # Allow logs to propagate to handlers
 @dataclass
 class IngestorConfig:
     similarity_threshold: float = 0.75
-    min_chunk_size: int = 128
-    max_chunk_size: int = 256
+    min_chunk_size: int = 200
+    max_chunk_size: int = 1000
     use_grobid: bool = True
     debug: bool = False
 

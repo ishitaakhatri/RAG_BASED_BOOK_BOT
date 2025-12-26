@@ -497,7 +497,7 @@ class SemanticChunker:
 def create_semantic_chunker(
     similarity_threshold: float = 0.75,
     min_chunk_size: int = 200,
-    max_chunk_size: int = 1500,
+    max_chunk_size: int = 1000,
     embedding_model: Optional[SentenceTransformer] = None
 ) -> SemanticChunker:
     """
