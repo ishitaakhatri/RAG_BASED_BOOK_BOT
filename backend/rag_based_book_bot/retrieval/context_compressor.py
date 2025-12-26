@@ -271,7 +271,7 @@ class EnhancedContextCompressor:
             tokens = self.count_tokens(text)
             
             # If chunk is too large, summarize it
-            if tokens > 300:
+            if tokens > 3000:
                 text = self.extract_key_sentences(text, query, max_sentences=4)
                 tokens = self.count_tokens(text)
             

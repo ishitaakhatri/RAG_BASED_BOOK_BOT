@@ -32,7 +32,7 @@ class RetrievalConfig:
     rerank_top_k: int = 10
     enable_multi_hop: bool = True
     multi_hop_threshold: float = 0.6
-    max_context_tokens: int = 4000
+    max_context_tokens: int = 30000
 
 class HierarchicalRetriever:
     def __init__(self, config: Optional[RetrievalConfig] = None):

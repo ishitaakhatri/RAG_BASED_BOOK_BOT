@@ -80,7 +80,7 @@ class AgentState:
     pass1_k: int = 50
     pass2_k: int = 10
     pass3_enabled: bool = True
-    max_tokens: int = 4000
+    max_tokens: int = 30000
     book_filter: Optional[str] = None
     chapter_filter: Optional[str] = None
     
