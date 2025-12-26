@@ -114,9 +114,10 @@ class ProgressTracker:
         self._main_loop = None  # Reference to the main event loop
         self._log_handlers: List[ProgressLogHandler] = []  # Track handlers for cleanup
         
-        # ✅ FIX: Throttling variables to prevent WebSocket flooding
+        # ✅ FIX: Throttling variables
         self.last_emit_time = 0.0
         self.emit_interval = 0.1  # Max 10 updates per second
+        self._last_emitted_status = "" # Track last emitted status to force updates on change
 
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         """Set the main application event loop for scheduling async callbacks"""
@@ -134,15 +135,24 @@ class ProgressTracker:
                 self.callbacks.remove(callback)
     
     def _notify_callbacks(self) -> None:
-        """Notify all registered callbacks - Thread Safe Version with Throttling"""
+        """Notify all registered callbacks - Thread Safe Version with Smart Throttling"""
         
-        # ✅ FIX: Throttling Logic
-        # Always emit if status is 'completed' or 'failed' to ensure final state reaches client
         current_time = time.time()
-        is_critical_update = self.state.status in ["completed", "failed"]
         
-        # If not critical and too soon since last update, skip this notification
-        if not is_critical_update and (current_time - self.last_emit_time < self.emit_interval):
+        # ✅ FIX: Smart Throttling Logic
+        # 1. Always emit if we are in a terminal state (completed/failed)
+        is_terminal = self.state.status in ["completed", "failed"]
+        
+        # 2. Always emit if the status string has changed (e.g. "parsing_pdf" -> "chunking")
+        # This ensures the UI doesn't get stuck on an old step even if logs are spamming
+        status_changed = self.state.status != self._last_emitted_status
+        
+        # 3. Otherwise, check time interval
+        time_elapsed = (current_time - self.last_emit_time) >= self.emit_interval
+        
+        should_emit = is_terminal or status_changed or time_elapsed
+        
+        if not should_emit:
             return
 
         # Snapshot callbacks under lock to prevent modification during iteration
@@ -150,7 +160,8 @@ class ProgressTracker:
             if not self.callbacks:
                 return
             callbacks_snapshot = self.callbacks[:]
-            self.last_emit_time = current_time  # Update last emit time
+            self.last_emit_time = current_time
+            self._last_emitted_status = self.state.status
 
         for callback in callbacks_snapshot:
             try:
@@ -169,7 +180,7 @@ class ProgressTracker:
                                 loop = asyncio.get_running_loop()
                                 loop.create_task(result)
                             except RuntimeError:
-                                # No running loop and no stored loop - cannot execute async callback
+                                # No running loop available
                                 pass
                     except Exception as e:
                         logger.debug(f"Could not schedule async callback: {e}")
@@ -386,12 +397,16 @@ class ProgressTracker:
         handler = ProgressLogHandler(self)
         handler.setLevel(logging.INFO)
         
-        # Attach to relevant loggers
+        # ✅ FIX: Updated list of loggers to catch everything
         loggers_to_track = [
+            "main",                # Main application logs (initialization, cleanup)
+            "rag_based_book_bot",  # Root package logger (catches all submodules)
+            "uvicorn",             # Server logs
+            "uvicorn.error",       # Server errors
+            # Redundant but kept for safety if they are initialized independently:
             "enhanced_ingestion",
             "semantic_chunker",
             "grobid_parser",
-            "hierarchical_chunker",
             "sentence_transformers",
         ]
         
@@ -419,7 +434,7 @@ class ProgressTracker:
         with self.lock:
             self.state = ProgressState()
             self.log_history = []
-        # Notify listeners that state has been reset (e.g., status changed to 'initializing')
+        # Notify listeners that state has been reset
         self._notify_callbacks()
 
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Upload,
@@ -11,6 +11,27 @@ import {
 
 const API_BASE_URL = "http://localhost:8000";
 const WS_URL = "ws://localhost:8000/ws/ingest";
+
+// Extract LogItem to a memoized component for performance
+const LogItem = React.memo(({ log, getLogColor }) => (
+  <div className={`${getLogColor(log.type)} leading-relaxed flex items-start hover:bg-purple-500/10 px-3 py-1.5 rounded-md transition-all duration-200`}>
+    <span className="text-gray-500 text-xs mr-3 flex-shrink-0 select-none font-semibold">
+      [{log.timestamp}]
+    </span>
+    <span className={`mr-3 flex-shrink-0 font-bold text-xs select-none px-2 py-0.5 rounded ${
+      log.type === 'error' ? 'bg-red-500/20 text-red-300 border border-red-500/30' :
+      log.type === 'warning' ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30' :
+      log.type === 'success' ? 'bg-green-500/20 text-green-300 border border-green-500/30' :
+      'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+    }`}>
+      {log.type === 'error' ? 'ERR' :
+       log.type === 'warning' ? 'WRN' :
+       log.type === 'success' ? 'OK' :
+       'INF'}
+    </span>
+    <span className="flex-1 break-all text-gray-200">{log.message}</span>
+  </div>
+));
 
 export default function IngestionPage({ books, onUploadSuccess }) {
   const [uploadFile, setUploadFile] = useState(null);
@@ -27,6 +48,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   const wsRef = useRef(null);
   const logsEndRef = useRef(null);
   const processedLogsRef = useRef(new Set()); // Track processed logs to prevent duplicates
+  const finishSequenceStarted = useRef(false); // ✅ NEW: Prevents timer reset loops
   const navigate = useNavigate();
 
   // Add custom scrollbar and animation styles
@@ -86,23 +108,28 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     };
   }, []);
 
-  // ✅ NEW: Auto-finish Failsafe
-  // This watches the logs for the success message to override any stuck state
+  // ✅ FIXED: Auto-finish Failsafe with "Once-Only" Lock
   useEffect(() => {
     if (!isIngesting) return;
+    if (finishSequenceStarted.current) return; // Stop if already finishing
 
     // Check if logs contain the specific success message from backend
+    // Note: checking 'logs' dependency is fine here as long as we have the lock above
     const isFinishedInLogs = logs.some(l => l.message.includes("Ingestion completed successfully"));
     const isFinishedStatus = liveProgress?.status === "completed" || liveProgress?.status === "success";
 
     if (isFinishedInLogs || isFinishedStatus) {
+      finishSequenceStarted.current = true; // LOCK the sequence
+      
       // Force visual 100%
       if (animatedPercentage < 100) setAnimatedPercentage(100);
 
-      // Set a failsafe timer to unlock the UI if the HTTP response hangs
+      console.log("✅ Success detected, starting cleanup timer...");
+
+      // Set a failsafe timer to unlock the UI
       const timer = setTimeout(() => {
         if (isIngesting) {
-          console.log("⚠️ Failsafe triggered: forcing completion state");
+          console.log("🎉 Cleanup timer triggered");
           
           const mockResult = {
             chunks: liveProgress?.chunks_created || 0,
@@ -128,6 +155,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                 setIsIngesting(false);
                 setAnimatedPercentage(0);
                 processedLogsRef.current.clear();
+                finishSequenceStarted.current = false; // Unlock for next time
                 if (wsRef.current) wsRef.current.close(1000, "Ingestion complete");
              }, 2000);
           }
@@ -138,7 +166,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     }
   }, [logs, liveProgress, isIngesting, animatedPercentage, onUploadSuccess, uploadFile]);
 
-  // Smooth percentage animation
+  // ✅ FIXED: Smooth percentage animation (Removed 'logs' from dependency)
   useEffect(() => {
     const targetPercentage = calculatePercentage();
     
@@ -170,7 +198,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         cancelAnimationFrame(animationFrameId);
       }
     };
-  }, [liveProgress, uploadProgress, isIngesting, logs]); // Added logs to dependency
+  }, [liveProgress, uploadProgress, isIngesting]); // Removed 'logs' to prevent thrashing
 
   const addLog = (message, type = "info") => {
     const timestamp = new Date().toLocaleTimeString();
@@ -182,7 +210,12 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     }
     
     processedLogsRef.current.add(logKey);
-    setLogs((prev) => [...prev, { message, type, timestamp }]);
+    // ✅ FIXED: Cap logs at 100 items to prevent rendering lag
+    setLogs((prev) => {
+      const newLogs = [...prev, { message, type, timestamp }];
+      if (newLogs.length > 100) return newLogs.slice(-100);
+      return newLogs;
+    });
   };
 
   // Drag and Drop Handlers
@@ -264,7 +297,11 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                   
                   if (!processedLogsRef.current.has(logKey)) {
                     processedLogsRef.current.add(logKey);
-                    setLogs((prev) => [...prev, { message, type, timestamp }]);
+                    // ✅ FIXED: Cap logs in websocket handler too
+                    setLogs((prev) => {
+                        const newLogs = [...prev, { message, type, timestamp }];
+                        return newLogs.length > 100 ? newLogs.slice(-100) : newLogs;
+                    });
                   }
                 } else {
                   // Fallback for unformatted logs
@@ -272,11 +309,10 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                   if (!processedLogsRef.current.has(logKey)) {
                     processedLogsRef.current.add(logKey);
                     const timestamp = new Date().toLocaleTimeString();
-                    setLogs((prev) => [...prev, { 
-                      message: logLine, 
-                      type: "info", 
-                      timestamp 
-                    }]);
+                    setLogs((prev) => {
+                        const newLogs = [...prev, { message: logLine, type: "info", timestamp }];
+                        return newLogs.length > 100 ? newLogs.slice(-100) : newLogs;
+                    });
                   }
                 }
               });
@@ -314,6 +350,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     setShowLogs(true); // Auto-show logs when ingestion starts
     setAnimatedPercentage(0);
     processedLogsRef.current.clear(); // Reset processed logs
+    finishSequenceStarted.current = false; // Reset lock
     
     addLog("📋 Starting ingestion process...", "info");
 
@@ -363,6 +400,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
             setIsIngesting(false);
             setAnimatedPercentage(0);
             processedLogsRef.current.clear();
+            finishSequenceStarted.current = false;
             // Close WebSocket after successful ingestion
             if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
               wsRef.current.close(1000, "Ingestion complete");
@@ -377,10 +415,11 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         });
         addLog(`❌ Upload error: ${data.error}`, "error");
         setIsIngesting(false);
+        finishSequenceStarted.current = false;
       }
     } catch (error) {
       // Only show error if we haven't already succeeded via the failsafe
-      if (isIngesting && animatedPercentage < 100) {
+      if (isIngesting && animatedPercentage < 100 && !finishSequenceStarted.current) {
         setUploadProgress({
             status: "error",
             message: `Upload failed: ${error.message}`,
@@ -388,6 +427,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         });
         addLog(`❌ Upload failed: ${error.message}`, "error");
         setIsIngesting(false);
+        finishSequenceStarted.current = false;
       }
     }
   };
@@ -404,6 +444,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     setIsIngesting(false);
     setAnimatedPercentage(0);
     processedLogsRef.current.clear();
+    finishSequenceStarted.current = false;
     navigate("/");
   };
 
@@ -440,7 +481,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     }
   };
 
-  // ✅ FIXED: Percentage Calculation with Log Check
   const calculatePercentage = () => {
     // 1. Priority: If we have a success/completed status from ANY source, force 100%
     if (
@@ -452,6 +492,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     }
     
     // 2. Check logs for explicit completion message
+    // Note: We use the existing logs state here, which is fine
     if (logs.some(l => l.message.includes("Ingestion completed successfully"))) {
       return 100;
     }
@@ -472,39 +513,34 @@ export default function IngestionPage({ books, onUploadSuccess }) {
       return Math.min(Math.max(Number(liveProgress.percentage), 0), 100);
     }
 
-    // 5. Fallback calculation based on status (only used if backend percentage is missing)
+    // 5. Fallback calculation based on status
     const status = liveProgress.status;
     
-    // Stage 1: PDF Parsing (0-20%)
     if (status === "parsing_pdf" || status === "loading") {
       return 15;
     }
 
-    // Stage 2: Chunking (20-50%)
     if (status === "chunking") {
       const currentPage = liveProgress.current_page || 0;
       const totalPages = liveProgress.total_pages || 1;
-      const chunkingProgress = (currentPage / totalPages) * 30; // 30% of total
+      const chunkingProgress = (currentPage / totalPages) * 30;
       return 20 + chunkingProgress;
     }
 
-    // Stage 3: Embedding (50-80%)
     if (status === "embedding") {
       const embeddingsGenerated = liveProgress.embeddings_generated || 0;
       const totalChunks = liveProgress.chunks_created || 1;
-      const embeddingProgress = (embeddingsGenerated / totalChunks) * 30; // 30% of total
+      const embeddingProgress = (embeddingsGenerated / totalChunks) * 30;
       return 50 + embeddingProgress;
     }
 
-    // Stage 4: Upserting (80-98%)
     if (status === "upserting") {
       const vectorsUpserted = liveProgress.vectors_upserted || 0;
       const totalChunks = liveProgress.chunks_created || 1;
-      const upsertProgress = (vectorsUpserted / totalChunks) * 18; // 18% of total
+      const upsertProgress = (vectorsUpserted / totalChunks) * 18;
       return 80 + upsertProgress;
     }
 
-    // Default: return current percentage or show some progress
     return Math.max(uploadProgress?.percentage ?? 0, 5);
   };
 
@@ -512,6 +548,13 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   const currentStatus = liveProgress?.status || uploadProgress?.status || "idle";
   const radius = 48;
   const circumference = 2 * Math.PI * radius;
+
+  // Optimize log rendering with useMemo
+  const renderedLogs = useMemo(() => {
+    return logs.map((log, idx) => (
+        <LogItem key={idx} log={log} getLogColor={getLogColor} />
+    ));
+  }, [logs]);
 
   return (
     <div className="h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex flex-col overflow-hidden">
@@ -636,6 +679,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                             Select PDF File
                           </label>
                           <label 
+                            htmlFor="file-upload" 
                             className={`flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-xl cursor-pointer transition-all duration-300 ${
                               isDragging 
                                 ? 'border-pink-400 bg-gradient-to-br from-pink-500/30 to-purple-500/30 scale-[1.02] shadow-lg shadow-pink-500/50' 
@@ -658,8 +702,10 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                               </p>
                             </div>
                             <input
+                              id="file-upload"
                               type="file"
                               accept=".pdf"
+                              onClick={(e) => (e.target.value = null)}
                               onChange={(e) => {
                                 const file = e.target.files[0];
                                 if (file) {
@@ -842,28 +888,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                                     </div>
                                   ) : (
                                     <div className="space-y-1">
-                                      {logs.map((log, idx) => (
-                                        <div
-                                          key={idx}
-                                          className={`${getLogColor(log.type)} leading-relaxed flex items-start hover:bg-purple-500/10 px-3 py-1.5 rounded-md transition-all duration-200`}
-                                        >
-                                          <span className="text-gray-500 text-xs mr-3 flex-shrink-0 select-none font-semibold">
-                                            [{log.timestamp}]
-                                          </span>
-                                          <span className={`mr-3 flex-shrink-0 font-bold text-xs select-none px-2 py-0.5 rounded ${
-                                            log.type === 'error' ? 'bg-red-500/20 text-red-300 border border-red-500/30' :
-                                            log.type === 'warning' ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30' :
-                                            log.type === 'success' ? 'bg-green-500/20 text-green-300 border border-green-500/30' :
-                                            'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                                          }`}>
-                                            {log.type === 'error' ? 'ERR' :
-                                             log.type === 'warning' ? 'WRN' :
-                                             log.type === 'success' ? 'OK' :
-                                             'INF'}
-                                          </span>
-                                          <span className="flex-1 break-all text-gray-200">{log.message}</span>
-                                        </div>
-                                      ))}
+                                      {renderedLogs}
                                       <div ref={logsEndRef} />
                                     </div>
                                   )}
