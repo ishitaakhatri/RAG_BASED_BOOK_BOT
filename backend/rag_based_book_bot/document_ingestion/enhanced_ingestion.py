@@ -1,11 +1,13 @@
 # enhanced_ingestion.py
 """
 ENHANCED Ingestor with GROBID + Hierarchical Chunking + Real-time Logging
+Optimized for Memory Efficiency and UI Responsiveness
 """
 import os
 import uuid
 import logging
 import requests
+import time
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 from rag_based_book_bot.document_ingestion.progress_tracker import (
@@ -43,17 +45,11 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX = os.getenv("PINECONE_INDEX_NAME", "coding-books")
 PINECONE_NAMESPACE = os.getenv("PINECONE_NAMESPACE", "books_rag")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
-BATCH_SIZE = 100
-
-# GROBID Config
-GROBID_URL = os.getenv("GROBID_URL", "http://localhost:8070/api")
-GROBID_ENABLED = os.getenv("GROBID_ENABLED", "true").lower() == "true"
-GROBID_TIMEOUT = int(os.getenv("GROBID_TIMEOUT", "300"))
 
 # ✅ Configure logging at module level
 logger = logging.getLogger("enhanced_ingestion")
-logger.setLevel(logging.INFO)  # Use logging constant, not string
-logger.propagate = True  # Allow logs to propagate to handlers
+logger.setLevel(logging.INFO)
+logger.propagate = True
 
 @dataclass
 class IngestorConfig:
@@ -83,9 +79,10 @@ class SemanticBookIngestor:
         
         self.grobid_parser = GrobidTEIParser()
         self.pinecone_index = self._init_pinecone()
-        self.grobid_available = self._check_grobid_health() if (GROBID_ENABLED and self.config.use_grobid) else False
+        # Check Grobid only if enabled in env and config
+        self.grobid_available = self._check_grobid_health() if (os.getenv("GROBID_ENABLED", "true").lower() == "true" and self.config.use_grobid) else False
         
-        # Get tracker - handlers are set up automatically on first access
+        # Get tracker
         self.tracker = get_progress_tracker()
         logger.info("✅ SemanticBookIngestor initialized")
 
@@ -101,19 +98,22 @@ class SemanticBookIngestor:
             return None
 
     def _check_grobid_health(self) -> bool:
+        grobid_url = os.getenv("GROBID_URL", "http://localhost:8070/api")
         try:
-            resp = requests.get(f"{GROBID_URL}/isalive", timeout=2)
+            resp = requests.get(f"{grobid_url}/isalive", timeout=2)
             return resp.status_code == 200
         except Exception:
             return False
 
     def _process_pdf_with_grobid(self, pdf_path: str) -> Optional[Dict]:
+        grobid_url = os.getenv("GROBID_URL", "http://localhost:8070/api")
+        grobid_timeout = int(os.getenv("GROBID_TIMEOUT", "300"))
         try:
             logger.info("🔬 Sending PDF to GROBID...")
-            url = f"{GROBID_URL}/processFulltextDocument"
+            url = f"{grobid_url}/processFulltextDocument"
             with open(pdf_path, 'rb') as f:
                 files = {'input': (os.path.basename(pdf_path), f, 'application/pdf')}
-                resp = requests.post(url, files=files, timeout=GROBID_TIMEOUT)
+                resp = requests.post(url, files=files, timeout=grobid_timeout)
             
             if resp.status_code == 200:
                 return self.grobid_parser.parse_tei_xml(resp.text)
@@ -186,6 +186,8 @@ class SemanticBookIngestor:
                         def chunking_progress(batch_num: int, current_page: int):
                             logger.info(f"⚙️ Processing batch {batch_num}/{total_batches} (page {current_page})")
                             tracker.update_batch(batch_num, total_batches, current_page)
+                            # Yield CPU briefly during heavy chunking to keep WebSocket alive
+                            time.sleep(0.01)
 
                         tracker.start_chunking()
                         logger.info("🔄 Starting semantic chunking process...")    
@@ -214,9 +216,9 @@ class SemanticBookIngestor:
             tracker.add_log(f"✅ Generated {len(chunks)} chunks using {method}")
             logger.info(f"✅ Generated {len(chunks)} chunks using {method}")
             
-            # Embed and upsert
+            # Embed and upsert (Now using optimized batching)
             try:
-                self._embed_and_upsert(chunks, book_id, book_title, author, tracker=tracker)
+                self._embed_and_upsert_batched(chunks, book_id, book_title, author, tracker=tracker)
             except Exception as e:
                 error_msg = f"Embedding/upsert failed: {str(e)}"
                 logger.error(error_msg)
@@ -231,8 +233,7 @@ class SemanticBookIngestor:
                 "book_id": book_id, 
                 "chunks": len(chunks), 
                 "method": method,
-                "total_pages": total_pages if 'total_pages' in locals() else 0,
-                "total_batches": total_batches if 'total_batches' in locals() else 0
+                "total_pages": total_pages,
             }
         
         except Exception as e:
@@ -242,7 +243,7 @@ class SemanticBookIngestor:
                 tracker.finish(success=False)
             raise
         
-    def _embed_and_upsert(
+    def _embed_and_upsert_batched(
         self, 
         chunks: List[Tuple[str, Dict]], 
         book_id: str, 
@@ -250,101 +251,112 @@ class SemanticBookIngestor:
         author: str,
         tracker: Optional[ProgressTracker] = None
     ):
-        """Generate embeddings and upsert to Pinecone with progress tracking"""
+        """
+        Memory-optimized generation and upsert
+        Processes small batches: Encode -> Upsert -> Release Memory
+        """
         if not self.pinecone_index:
             logger.warning("Pinecone index not initialized, skipping upsert")
             return
 
+        total_chunks = len(chunks)
+        # Process in small batches to save RAM and CPU time
+        # Reduced batch size ensures frequent CPU yielding and updates
+        BATCH_SIZE = 32 
+        
+        logger.info(f"🧠 Starting stream processing for {total_chunks} chunks...")
+        
+        if tracker:
+            tracker.add_log(f"🧠 Processing {total_chunks} chunks (Embedding + Upserting)...")
+            # We stay in "embedding" phase visually to prevent jitter, or toggle between them
+            tracker.start_embedding()
+        
         try:
-            texts = [c[0] for c in chunks]
-            
-            logger.info(f"🧠 Starting embedding generation for {len(texts)} chunks...")
-            
-            if tracker:
-                tracker.add_log(f"🧠 Generating embeddings for {len(texts)} chunks...")
-                tracker.start_embedding()
-            
-            logger.info("⚡ Running embedding model...")
-            embeddings = self.embedding_model.encode(
-                texts, 
-                batch_size=64, 
-                show_progress_bar=False  # Disable progress bar to avoid log clutter
-            )
-            
-            logger.info(f"✅ Embeddings generated: {len(embeddings)}/{len(texts)}")
-            
-            if tracker:
-                tracker.update_embeddings(len(embeddings))
-                tracker.add_log(f"✅ Generated {len(embeddings)} embeddings")
-            
-            # Prepare vectors
-            vectors = []
-            for i, (text, meta) in enumerate(chunks):
+            for batch_start in range(0, total_chunks, BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, total_chunks)
+                chunk_batch = chunks[batch_start:batch_end]
                 
-                if "preview" not in meta:
-                    preview_text = text.strip()[:100].replace('\n', ' ') + "..."
-                    meta["preview"] = preview_text
+                # 1. Prepare texts (Only for this batch)
+                texts = [c[0] for c in chunk_batch]
+                
+                # 2. Generate embeddings (Only for this batch)
+                # show_progress_bar=False prevents console clutter
+                embeddings = self.embedding_model.encode(
+                    texts, 
+                    batch_size=BATCH_SIZE, 
+                    show_progress_bar=False
+                )
+                
+                # 3. Prepare vectors
+                vectors = []
+                for i, (text, meta) in enumerate(chunk_batch):
+                    global_idx = batch_start + i
+                    
+                    if "preview" not in meta:
+                        preview_text = text.strip()[:100].replace('\n', ' ') + "..."
+                        meta["preview"] = preview_text
 
-                if "chapter_title" not in meta:
-                    meta["chapter_title"] = meta.get("section_title", "General Content")
-                    if meta["chapter_title"] == "General Content":
-                         meta["section_title"] = f"Part {meta.get('chunk_index', i)}"
+                    if "chapter_title" not in meta:
+                        meta["chapter_title"] = meta.get("section_title", "General Content")
+                        if meta["chapter_title"] == "General Content":
+                             meta["section_title"] = f"Part {meta.get('chunk_index', global_idx)}"
+                    
+                    clean_meta = {
+                        "text": text,
+                        "book_id": book_id,
+                        "book_title": book_title,
+                        "author": author,
+                        "chapter_title": meta.get("chapter_title", "Unknown Chapter"),
+                        "section_title": meta.get("section_title", "Unknown Section"),
+                        "preview": meta.get("preview", ""),
+                        "hierarchy_path": meta.get("hierarchy_path", "root"),
+                        "hierarchy_level": int(meta.get("hierarchy_level", 0)),
+                        "chunk_index": int(meta.get("chunk_index", global_idx)),
+                        "chunk_type": meta.get("chunk_type", "text_block"),
+                        "page_number": int(meta.get("page_start", 0))
+                    }
+                    
+                    vectors.append({
+                        "id": f"{book_id}_{global_idx}",
+                        "values": embeddings[i].tolist(),
+                        "metadata": clean_meta
+                    })
                 
-                clean_meta = {
-                    "text": text,
-                    "book_id": book_id,
-                    "book_title": book_title,
-                    "author": author,
-                    "chapter_title": meta.get("chapter_title", "Unknown Chapter"),
-                    "section_title": meta.get("section_title", "Unknown Section"),
-                    "preview": meta.get("preview", ""),
-                    "hierarchy_path": meta.get("hierarchy_path", "root"),
-                    "hierarchy_level": int(meta.get("hierarchy_level", 0)),
-                    "chunk_index": int(meta.get("chunk_index", i)),
-                    "chunk_type": meta.get("chunk_type", "text_block"),
-                    "page_number": int(meta.get("page_start", 0))
-                }
-                
-                vectors.append({
-                    "id": f"{book_id}_{i}",
-                    "values": embeddings[i].tolist(),
-                    "metadata": clean_meta
-                })
-            
-            logger.info(f"📤 Starting Pinecone upsert for {len(vectors)} vectors...")
-            
-            if tracker:
-                tracker.add_log(f"📤 Upserting {len(vectors)} vectors to Pinecone...")
-                tracker.start_upsert()
-            
-            logger.info(f"📦 Upserting in batches of {BATCH_SIZE}...")
-            
-            for batch_idx in range(0, len(vectors), BATCH_SIZE):
-                batch = vectors[batch_idx:batch_idx + BATCH_SIZE]
-                
-                # ✅ FIX: Log this less frequently to avoid flooding the websocket channel
-                # logger.info(f"📦 Upserting batch {(batch_idx // BATCH_SIZE) + 1}/{(len(vectors) + BATCH_SIZE - 1) // BATCH_SIZE}")
-                
+                # 4. Upsert this batch immediately
                 self.pinecone_index.upsert(
-                    vectors=batch, 
+                    vectors=vectors, 
                     namespace=PINECONE_NAMESPACE
                 )
                 
+                # 5. Update Progress
                 if tracker:
-                    vectors_upserted = min(batch_idx + BATCH_SIZE, len(vectors))
-                    tracker.update_upsert(vectors_upserted)
+                    # Update counts
+                    tracker.update_embeddings(batch_end)
+                    # We can manually set the upsert count to track progress
+                    tracker.state.vectors_upserted = batch_end
                     
-                    if (batch_idx + BATCH_SIZE) % (BATCH_SIZE * 5) == 0 or (batch_idx + BATCH_SIZE) >= len(vectors):
-                        tracker.add_log(f"📤 Upserted {vectors_upserted}/{len(vectors)} vectors")
-                        logger.info(f"📤 Upserted {vectors_upserted}/{len(vectors)} vectors")
+                    # Log EVERY batch so the user knows it's working
+                    batch_num = (batch_start // BATCH_SIZE) + 1
+                    total_batches = (total_chunks + BATCH_SIZE - 1) // BATCH_SIZE
+                    
+                    msg = f"✅ Processed batch {batch_num}/{total_batches} ({batch_end}/{total_chunks} chunks)"
+                    logger.info(msg)
+                    tracker.add_log(msg)
+
+                # 6. CRITICAL: Sleep briefly to yield CPU to the main thread
+                # Increased to 0.1s to ensure WebSocket has enough time to breathe
+                time.sleep(0.1) 
             
+            # Finalize progress state
             if tracker:
-                tracker.add_log("✅ Upsert complete")
-            
-            logger.info("✅ Upsert complete.")
+                tracker.start_upsert() # Jump to 85%
+                tracker.update_upsert(total_chunks) # Jump to 95%
+                tracker.add_log(f"✅ Successfully processed {total_chunks} chunks")
+                
+            logger.info("✅ Batch processing complete.")
             
         except Exception as e:
-            error_msg = f"Embedding/upsert error: {str(e)}"
+            error_msg = f"Processing error at batch {batch_start}: {str(e)}"
             logger.error(error_msg)
             if tracker:
                 tracker.add_error(error_msg)
