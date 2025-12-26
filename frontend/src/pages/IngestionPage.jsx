@@ -52,7 +52,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   const successTimerRef = useRef(null);
   const isIngestingRef = useRef(false);
 
-  // ✅ NEW: Latch to prevent stale completion signals
+  // Latch to prevent stale completion signals
   const processingStarted = useRef(false);
   
   const navigate = useNavigate();
@@ -112,19 +112,30 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     };
   }, []);
 
-  // ✅ FIXED: Robust Completion Logic with Stale Data Protection
+  // ✅ FIXED: Stricter Latch Logic - Only trusts 'status', ignores logs for start trigger
   useEffect(() => {
     if (!isIngesting) return;
     if (successTimerRef.current) return;
 
     // 1. Detect if processing has ACTUALLY started (Active Latch)
-    // We only consider the job "started" if we see an active status or specific start logs.
-    // This filters out the "Completed" status from the PREVIOUS job that might be sent on reconnect.
+    // We strictly look for specific ACTIVE statuses.
+    // REMOVED: Log-based triggers (like "tracker reset") because they might come from stale history.
     const isActiveStatus = ["parsing_pdf", "chunking", "embedding", "upserting", "processing"].includes(liveProgress?.status);
-    const hasStartLog = logs.some(l => l.message.includes("Starting ingestion") || l.message.includes("Progress tracker reset"));
     
-    if (isActiveStatus || hasStartLog) {
+    if (!processingStarted.current && isActiveStatus) {
+        console.log("🚀 New Job Active Status Detected! Purging stale logs...");
         processingStarted.current = true;
+        
+        // Wipe stale logs to prevent false positives from previous run
+        setLogs(prevLogs => {
+            return prevLogs.filter(l => 
+                !l.message.includes("Ingestion completed successfully") && 
+                !l.message.includes("Success")
+            );
+        });
+        // Clear dedup cache to allow new success messages
+        processedLogsRef.current.clear();
+        addLog("🔄 Session verified active. Monitoring for completion...", "info");
     }
 
     // 2. Check completion conditions
@@ -272,7 +283,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     e.preventDefault();
     if (!uploadFile) return;
 
-    // ✅ FIXED: Hard reset of all states before starting
+    // Reset States
     setLiveProgress(null); 
     setUploadProgress(null);
     setLogs([]);
@@ -287,12 +298,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     
     addLog("📋 Starting ingestion process...", "info");
 
-    try {
-      await connectWebSocket();
-    } catch (error) {
-      addLog("⚠️ Could not connect to live progress (will still work)", "warning");
-    }
-
     const formData = new FormData();
     formData.append("file", uploadFile);
 
@@ -302,22 +307,40 @@ export default function IngestionPage({ books, onUploadSuccess }) {
       percentage: 5,
     });
 
-    try {
-      const response = await fetch(`${API_BASE_URL}/ingest`, {
+    // 1. Start the POST request (Backend Reset)
+    const requestPromise = fetch(`${API_BASE_URL}/ingest`, {
         method: "POST",
         body: formData,
-      });
+    });
 
+    // 2. Connect WebSocket - slightly delayed to allow backend reset to start
+    setTimeout(async () => {
+      try {
+        if (isIngestingRef.current) {
+             await connectWebSocket();
+        }
+      } catch (error) {
+        addLog("⚠️ Could not connect to live progress", "warning");
+      }
+    }, 500);
+
+    try {
+      const response = await requestPromise;
       const data = await response.json();
 
       if (data.success) {
-        // We rely on the WebSocket/Log completion detector to handle success UI
-        setUploadProgress({
-            status: "success",
-            message: "Ingestion verified. Finalizing...",
-            percentage: 95,
-            result: data.result
-        });
+        // Fallback: If WS missed completion, ensure we finish
+        if (isIngestingRef.current && !finishSequenceStarted.current) {
+             setUploadProgress({
+                status: "success",
+                message: "Ingestion verified. Finalizing...",
+                percentage: 95,
+                result: data.result
+            });
+             // Force finish via status update if socket didn't catch it
+             setLiveProgress(prev => ({ ...prev, status: "success" }));
+             processingStarted.current = true; // Force latch if we got success response
+        }
       } else {
         throw new Error(data.error || "Unknown error");
       }
