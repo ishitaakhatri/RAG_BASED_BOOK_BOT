@@ -1,0 +1,31 @@
+# --- PyTorch CPU Optimization ---
+# This line tells pip to look for CPU-only wheels first
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# Core PyTorch (CPU version)
+torch>=2.1.0
+
+# --- Web Server & API ---
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9          # Required for UploadFile in main.py
+pydantic>=2.6.0
+gunicorn>=21.2.0                 # Production server for EC2
+
+# --- RAG & Vector Database ---
+# STRICT: Code uses the 'Pinecone()' class (v3+ syntax)
+pinecone-client>=3.0.0           
+sentence-transformers>=2.3.1     # Embeddings & Reranking
+
+# --- LLM & Agents ---
+langchain-core>=0.1.20
+langchain-google-genai>=0.0.9    # Google Generative AI (Gemma/Gemini)
+
+# --- Document Processing ---
+pdfplumber>=0.10.3               # PDF text extraction
+lxml>=5.1.0                      # XML parsing (Critical for Grobid)
+requests>=2.31.0                 # HTTP calls to Grobid service
+
+# --- Utilities ---
+python-dotenv>=1.0.1             # Environment variables
+numpy>=1.26.0                    # Matrix operations
