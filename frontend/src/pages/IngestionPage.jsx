@@ -9,6 +9,8 @@ import {
   Book,
   Eye,
   EyeOff,
+  FileText,
+  X
 } from "lucide-react";
 
 const API_BASE_URL = "http://localhost:8000";
@@ -36,10 +38,14 @@ const LogItem = React.memo(({ log, getLogColor }) => (
 ));
 
 export default function IngestionPage({ books, onUploadSuccess }) {
-  const [uploadFile, setUploadFile] = useState(null);
+  // --- QUEUE STATE MANAGEMENT ---
+  const [fileQueue, setFileQueue] = useState([]);
+  const [currentFileIndex, setCurrentFileIndex] = useState(-1);
+  const [completedCount, setCompletedCount] = useState(0);
+
+  // --- EXISTING UI STATES ---
   const [uploadProgress, setUploadProgress] = useState(null);
   const [liveProgress, setLiveProgress] = useState(null);
-  // CHANGED: Initial state set to false (hidden by default)
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState([]);
   const [isIngesting, setIsIngesting] = useState(false);
@@ -57,6 +63,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
 
   // Latch to prevent stale completion signals
   const processingStarted = useRef(false);
+  const currentFileIdRef = useRef(null); // CRITICAL FIX: Tracks the specific ID of the active file
   
   const navigate = useNavigate();
 
@@ -115,123 +122,154 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     };
   }, []);
 
-  // ✅ FIXED: Stricter Latch Logic - Only trusts 'status', ignores logs for start trigger
+  // ==================================================================================
+  // QUEUE ORCHESTRATION
+  // ==================================================================================
+
+  // 1. Queue Watcher: Triggers upload when index changes
   useEffect(() => {
-    if (!isIngesting) return;
-    if (successTimerRef.current) return;
-
-    // 1. Detect if processing has ACTUALLY started (Active Latch)
-    // We strictly look for specific ACTIVE statuses.
-    // REMOVED: Log-based triggers (like "tracker reset") because they might come from stale history.
-    const isActiveStatus = ["parsing_pdf", "chunking", "embedding", "upserting", "processing"].includes(liveProgress?.status);
-    
-    if (!processingStarted.current && isActiveStatus) {
-        console.log("🚀 New Job Active Status Detected! Purging stale logs...");
-        processingStarted.current = true;
-        
-        // Wipe stale logs to prevent false positives from previous run
-        setLogs(prevLogs => {
-            return prevLogs.filter(l => 
-                !l.message.includes("Ingestion completed successfully") && 
-                !l.message.includes("Success")
-            );
-        });
-        // Clear dedup cache to allow new success messages
-        processedLogsRef.current.clear();
-        addLog("🔄 Session verified active. Monitoring for completion...", "info");
-    }
-
-    // 2. Check completion conditions
-    const isFinishedInLogs = logs.some(l => l.message.includes("Ingestion completed successfully"));
-    const isFinishedStatus = liveProgress?.status === "completed" || liveProgress?.status === "success";
-
-    // 3. ONLY trigger success if we have confirmed the start of THIS session
-    if ((isFinishedInLogs || isFinishedStatus) && processingStarted.current) {
-      console.log("✅ Verified Success detected (Session Active), starting cleanup sequence...");
-      finishSequenceStarted.current = true;
+    if (currentFileIndex >= 0 && currentFileIndex < fileQueue.length) {
+      const item = fileQueue[currentFileIndex];
+      // FIX: Update the reference ID immediately so async tasks know what's active
+      currentFileIdRef.current = item.id;
       
-      if (animatedPercentage < 100) setAnimatedPercentage(100);
-
-      successTimerRef.current = setTimeout(() => {
-        if (!isIngestingRef.current) return;
-
-        console.log("🎉 Cleanup timer triggered");
-        
-        const mockResult = {
-          chunks: liveProgress?.chunks_created || 0,
-          total_pages: liveProgress?.total_pages || 0,
-          title: uploadFile?.name,
-          method: "stream_verified"
-        };
-
-        setUploadProgress({
-          status: "success",
-          message: "Ingestion completed successfully!",
-          percentage: 100,
-          result: mockResult,
-        });
-
-        setTimeout(() => {
-          console.log("🧹 Resetting UI state...");
-          isIngestingRef.current = false;
-          
-          if (wsRef.current) {
-            wsRef.current.close(1000, "Ingestion complete");
-            wsRef.current = null;
-          }
-
-          setUploadFile(null);
-          setUploadProgress(null);
-          setLiveProgress(null);
-          setIsIngesting(false); 
-          setAnimatedPercentage(0);
-          setLogs([]);
-          processedLogsRef.current.clear();
-          finishSequenceStarted.current = false;
-          successTimerRef.current = null;
-          processingStarted.current = false; // Reset latch
-          
-          if (onUploadSuccess) {
-             console.log("📚 Refreshing book list...");
-             onUploadSuccess();
-          }
-        }, 2000);
-      }, 1500);
+      // Update status to processing
+      setFileQueue(prev => prev.map((f, i) => i === currentFileIndex ? { ...f, status: 'processing' } : f));
+      // Trigger upload
+      uploadSingleFile(item);
+    } else if (currentFileIndex >= fileQueue.length && currentFileIndex > 0) {
+      // End of Queue
+      finishQueue();
     }
-  }, [logs, liveProgress, isIngesting, animatedPercentage, onUploadSuccess, uploadFile]);
+  }, [currentFileIndex]);
 
-  // Smooth percentage animation
-  useEffect(() => {
-    const targetPercentage = calculatePercentage();
-    let animationFrameId;
-    const animateProgress = () => {
-      setAnimatedPercentage((prev) => {
-        const diff = targetPercentage - prev;
-        if (Math.abs(diff) < 0.1) return targetPercentage;
-        return prev + diff * 0.15;
-      });
-      if (Math.abs(targetPercentage - animatedPercentage) > 0.1) {
-        animationFrameId = requestAnimationFrame(animateProgress);
-      }
-    };
-    animationFrameId = requestAnimationFrame(animateProgress);
-    return () => {
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
-    };
-  }, [liveProgress, uploadProgress, isIngesting]);
-
-  const addLog = (message, type = "info") => {
-    const timestamp = new Date().toLocaleTimeString();
-    const logKey = `${timestamp}-${message}`;
-    
-    if (processedLogsRef.current.has(logKey)) return;
-    
-    processedLogsRef.current.add(logKey);
-    setLogs((prev) => {
-      const newLogs = [...prev, { message, type, timestamp }];
-      return newLogs.length > 100 ? newLogs.slice(-100) : newLogs;
-    });
+  // 2. Start Processing
+  const startQueueProcessing = () => {
+    if (fileQueue.length === 0) return;
+    setIsIngesting(true);
+    isIngestingRef.current = true;
+    setCurrentFileIndex(0);
+    setCompletedCount(0);
   };
+
+  // 3. Move to next file
+  const proceedToNextFile = () => {
+    if (wsRef.current) {
+        wsRef.current.close(1000, "File complete");
+        wsRef.current = null;
+    }
+    setCompletedCount(prev => prev + 1);
+    setCurrentFileIndex(prev => prev + 1);
+  };
+
+  // 4. Finish all
+  const finishQueue = () => {
+    setIsIngesting(false);
+    isIngestingRef.current = false;
+    setCurrentFileIndex(-1);
+    currentFileIdRef.current = null;
+    
+    setUploadProgress({
+        status: "success",
+        message: `All ${fileQueue.length} files processed successfully!`,
+        percentage: 100,
+    });
+    setLiveProgress({ status: "completed" });
+    setAnimatedPercentage(100);
+
+    addLog("🎉 All files in queue processed.", "success");
+
+    if (onUploadSuccess) {
+       console.log("📚 Refreshing book list...");
+       onUploadSuccess();
+    }
+  };
+
+  // ==================================================================================
+  // CORE UPLOAD LOGIC (Single File)
+  // ==================================================================================
+
+  const uploadSingleFile = async (queueItem) => {
+    // Reset individual progress states
+    setLiveProgress(null); 
+    setUploadProgress(null);
+    setLogs([]);
+    processedLogsRef.current.clear();
+    
+    // Reset logic latches
+    finishSequenceStarted.current = false;
+    successTimerRef.current = null;
+    processingStarted.current = false; 
+    setAnimatedPercentage(0);
+    
+    addLog(`📋 Starting: ${queueItem.file.name}`, "info");
+
+    const formData = new FormData();
+    formData.append("file", queueItem.file);
+
+    setUploadProgress({
+      status: "uploading",
+      message: `Uploading ${queueItem.file.name}...`,
+      percentage: 5,
+    });
+
+    // 1. Start the POST request
+    const requestPromise = fetch(`${API_BASE_URL}/ingest`, {
+        method: "POST",
+        body: formData,
+    });
+
+    // 2. Connect WebSocket - slightly delayed
+    setTimeout(async () => {
+      try {
+        if (isIngestingRef.current && currentFileIdRef.current === queueItem.id) {
+             await connectWebSocket();
+        }
+      } catch (error) {
+        addLog("⚠️ Could not connect to live progress", "warning");
+      }
+    }, 500);
+
+    try {
+      const response = await requestPromise;
+      const data = await response.json();
+
+      // CRITICAL FIX: Guard against stale responses
+      // If the queue has already moved on to the next file, IGNORE this response.
+      if (currentFileIdRef.current !== queueItem.id) {
+          console.warn(`🛑 Ignoring stale response for ${queueItem.file.name} (Current: ${currentFileIdRef.current})`);
+          return;
+      }
+
+      if (data.success) {
+        // Fallback if WS missed completion
+        if (isIngestingRef.current && !finishSequenceStarted.current) {
+             setUploadProgress({
+                status: "success",
+                message: "Ingestion verified. Finalizing...",
+                percentage: 95,
+                result: data.result
+            });
+             setLiveProgress(prev => ({ ...prev, status: "success" }));
+             processingStarted.current = true;
+        }
+      } else {
+        throw new Error(data.error || "Unknown error");
+      }
+    } catch (error) {
+      if (currentFileIdRef.current !== queueItem.id) return; // Ignore stale errors too
+
+      addLog(`❌ Failed: ${queueItem.file.name} - ${error.message}`, "error");
+      setFileQueue(prev => prev.map(f => f.id === queueItem.id ? { ...f, status: 'error' } : f));
+      
+      // Wait a bit then move next
+      setTimeout(() => proceedToNextFile(), 2000);
+    }
+  };
+
+  // ==================================================================================
+  // WEBSOCKET & LOGIC
+  // ==================================================================================
 
   const connectWebSocket = () => {
     return new Promise((resolve, reject) => {
@@ -282,112 +320,124 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     });
   };
 
-  const handleUploadSubmit = async (e) => {
-    e.preventDefault();
-    if (!uploadFile) return;
+  // Monitoring Effect (Success Detection)
+  useEffect(() => {
+    if (!isIngesting) return;
+    if (successTimerRef.current) return;
 
-    // Reset States
-    setLiveProgress(null); 
-    setUploadProgress(null);
-    setLogs([]);
-    processedLogsRef.current.clear();
+    // 1. Detect active processing
+    const isActiveStatus = ["parsing_pdf", "chunking", "embedding", "upserting", "processing"].includes(liveProgress?.status);
     
-    setIsIngesting(true);
-    isIngestingRef.current = true;
-    finishSequenceStarted.current = false;
-    successTimerRef.current = null;
-    processingStarted.current = false; // Reset Latch
-    setAnimatedPercentage(0);
-    // CHANGED: Removed setShowLogs(true) to keep logs hidden by default
-    
-    addLog("📋 Starting ingestion process...", "info");
+    if (!processingStarted.current && isActiveStatus) {
+        processingStarted.current = true;
+        // Purge old success logs
+        setLogs(prevLogs => prevLogs.filter(l => !l.message.includes("Ingestion completed")));
+        processedLogsRef.current.clear();
+    }
 
-    const formData = new FormData();
-    formData.append("file", uploadFile);
+    // 2. Check completion
+    const isFinishedInLogs = logs.some(l => l.message.includes("Ingestion completed successfully"));
+    const isFinishedStatus = liveProgress?.status === "completed" || liveProgress?.status === "success";
 
-    setUploadProgress({
-      status: "uploading",
-      message: "Uploading and processing PDF...",
-      percentage: 5,
-    });
+    // 3. Trigger Next Step
+    if ((isFinishedInLogs || isFinishedStatus) && processingStarted.current) {
+      finishSequenceStarted.current = true;
+      if (animatedPercentage < 100) setAnimatedPercentage(100);
 
-    // 1. Start the POST request (Backend Reset)
-    const requestPromise = fetch(`${API_BASE_URL}/ingest`, {
-        method: "POST",
-        body: formData,
-    });
+      successTimerRef.current = setTimeout(() => {
+        if (!isIngestingRef.current) return;
 
-    // 2. Connect WebSocket - slightly delayed to allow backend reset to start
-    setTimeout(async () => {
-      try {
-        if (isIngestingRef.current) {
-             await connectWebSocket();
+        // Mark current file as success
+        if (currentFileIndex >= 0 && currentFileIndex < fileQueue.length) {
+            setFileQueue(prev => prev.map((f, i) => i === currentFileIndex ? { ...f, status: 'success' } : f));
         }
-      } catch (error) {
-        addLog("⚠️ Could not connect to live progress", "warning");
-      }
-    }, 500);
 
-    try {
-      const response = await requestPromise;
-      const data = await response.json();
+        // Move to next
+        proceedToNextFile();
+        
+      }, 1500);
+    }
+  }, [logs, liveProgress, isIngesting, animatedPercentage, currentFileIndex]);
 
-      if (data.success) {
-        // Fallback: If WS missed completion, ensure we finish
-        if (isIngestingRef.current && !finishSequenceStarted.current) {
-             setUploadProgress({
-                status: "success",
-                message: "Ingestion verified. Finalizing...",
-                percentage: 95,
-                result: data.result
-            });
-             // Force finish via status update if socket didn't catch it
-             setLiveProgress(prev => ({ ...prev, status: "success" }));
-             processingStarted.current = true; // Force latch if we got success response
-        }
-      } else {
-        throw new Error(data.error || "Unknown error");
+  // Smooth percentage animation
+  useEffect(() => {
+    const targetPercentage = calculatePercentage();
+    let animationFrameId;
+    const animateProgress = () => {
+      setAnimatedPercentage((prev) => {
+        const diff = targetPercentage - prev;
+        if (Math.abs(diff) < 0.1) return targetPercentage;
+        return prev + diff * 0.15;
+      });
+      if (Math.abs(targetPercentage - animatedPercentage) > 0.1) {
+        animationFrameId = requestAnimationFrame(animateProgress);
       }
-    } catch (error) {
-      if (isIngestingRef.current && !finishSequenceStarted.current) {
-        setUploadProgress({
-            status: "error",
-            message: `Upload failed: ${error.message}`,
-            percentage: 0,
-        });
-        addLog(`❌ Upload failed: ${error.message}`, "error");
-        setIsIngesting(false);
-        isIngestingRef.current = false;
-      }
+    };
+    animationFrameId = requestAnimationFrame(animateProgress);
+    return () => {
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    };
+  }, [liveProgress, uploadProgress, isIngesting]);
+
+  // ==================================================================================
+  // FILE HANDLING UTILS
+  // ==================================================================================
+
+  const handleFilesSelected = (files) => {
+    const newFiles = Array.from(files)
+      .filter(f => f.type === "application/pdf" || f.name.endsWith(".pdf"))
+      .map(f => ({
+        file: f,
+        id: Math.random().toString(36).substr(2, 9),
+        status: 'pending' // pending, processing, success, error
+      }));
+
+    if (newFiles.length > 0) {
+      setFileQueue(prev => [...prev, ...newFiles]);
+      addLog(`📎 Added ${newFiles.length} files to queue`, "info");
     }
   };
 
-  const handleReset = () => {
-    if (wsRef.current) {
-      wsRef.current.close(1000, "User cancelled");
-    }
-    setUploadFile(null);
-    setUploadProgress(null);
-    setLiveProgress(null);
-    setLogs([]);
-    setShowLogs(false);
-    setIsIngesting(false);
-    isIngestingRef.current = false;
-    navigate("/");
+  const removeFile = (id) => {
+      if (isIngesting) return;
+      setFileQueue(prev => prev.filter(f => f.id !== id));
   };
 
-  // Drag and Drop Handlers
   const handleDragEnter = (e) => { e.preventDefault(); e.stopPropagation(); if (!isIngesting) setIsDragging(true); };
   const handleDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); if (e.currentTarget === e.target) setIsDragging(false); };
   const handleDragOver = (e) => { e.preventDefault(); e.stopPropagation(); };
   const handleDrop = (e) => {
     e.preventDefault(); e.stopPropagation(); setIsDragging(false);
     if (isIngesting) return;
-    const file = e.dataTransfer.files[0];
-    if (file && (file.type === "application/pdf" || file.name.endsWith(".pdf"))) {
-      setUploadFile(file);
-      addLog(`📎 File selected: ${file.name}`, "info");
+    handleFilesSelected(e.dataTransfer.files);
+  };
+
+  const handleReset = () => {
+    if (wsRef.current) {
+      wsRef.current.close(1000, "User cancelled");
     }
+    setFileQueue([]);
+    setCurrentFileIndex(-1);
+    setCompletedCount(0);
+    setUploadProgress(null);
+    setLiveProgress(null);
+    setLogs([]);
+    setShowLogs(false);
+    setIsIngesting(false);
+    isIngestingRef.current = false;
+    currentFileIdRef.current = null;
+    navigate("/");
+  };
+
+  const addLog = (message, type = "info") => {
+    const timestamp = new Date().toLocaleTimeString();
+    const logKey = `${timestamp}-${message}`;
+    if (processedLogsRef.current.has(logKey)) return;
+    processedLogsRef.current.add(logKey);
+    setLogs((prev) => {
+      const newLogs = [...prev, { message, type, timestamp }];
+      return newLogs.length > 100 ? newLogs.slice(-100) : newLogs;
+    });
   };
 
   const getStatusColor = (status) => {
@@ -408,7 +458,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     if (liveProgress?.status === "failed") return 0;
     if (!liveProgress) return uploadProgress?.percentage ?? 0;
     
-    // Explicit percentage from backend
     if (liveProgress.percentage !== undefined && liveProgress.percentage !== null) {
       return Math.min(Math.max(Number(liveProgress.percentage), 0), 100);
     }
@@ -502,14 +551,14 @@ export default function IngestionPage({ books, onUploadSuccess }) {
               <div className="lg:col-span-3 space-y-6">
                 <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20">
                   <h2 className="text-2xl font-bold text-white mb-2">Upload PDF Books</h2>
-                  <p className="text-purple-200 mb-6">Upload PDF files to ingest them into your knowledge base.</p>
+                  <p className="text-purple-200 mb-6">Select multiple files to ingest them sequentially.</p>
 
                   <div className="space-y-6">
                     {/* File Input Zone */}
                     {!isIngesting && (
                       <>
                         <div>
-                          <label className="block text-sm font-semibold text-purple-200 mb-3">Select PDF File</label>
+                          <label className="block text-sm font-semibold text-purple-200 mb-3">Select PDF Files</label>
                           <label 
                             htmlFor="file-upload" 
                             className={`flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-xl cursor-pointer transition-all duration-300 ${
@@ -521,52 +570,78 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                           >
                             <div className="flex flex-col items-center justify-center pt-8 pb-6">
                               <Upload className={`w-12 h-12 mb-2 transition-all duration-300 ${isDragging ? 'text-pink-300 scale-125 rotate-12' : 'text-purple-300'}`} />
-                              <p className="text-sm font-semibold text-white">{isDragging ? '🚀 Drop your PDF here' : 'Click to upload or drag and drop'}</p>
-                              <p className="text-xs text-purple-300 mt-1">PDF files only</p>
+                              <p className="text-sm font-semibold text-white">{isDragging ? '🚀 Drop files here' : 'Click to upload or drag and drop'}</p>
+                              <p className="text-xs text-purple-300 mt-1">Multiple PDFs supported</p>
                             </div>
                             <input
-                              id="file-upload" type="file" accept=".pdf"
+                              id="file-upload" type="file" accept=".pdf" multiple
                               onClick={(e) => (e.target.value = null)}
-                              onChange={(e) => {
-                                const file = e.target.files[0];
-                                if (file) { setUploadFile(file); addLog(`📎 File selected: ${file.name}`, "info"); }
-                              }}
+                              onChange={(e) => handleFilesSelected(e.target.files)}
                               className="hidden" disabled={isIngesting}
                             />
                           </label>
-                          {uploadFile && (
-                            <div className="mt-4 p-4 bg-gradient-to-r from-green-500/20 to-emerald-500/20 border border-green-400/50 rounded-lg shadow-lg">
-                              <div className="flex items-center space-x-3">
-                                <CheckCircle className="w-5 h-5 text-green-400" />
-                                <div>
-                                  <p className="text-sm font-semibold text-green-300">{uploadFile.name}</p>
-                                  <p className="text-xs text-green-200">{(uploadFile.size / 1024 / 1024).toFixed(2)} MB</p>
+
+                          {/* File Queue List */}
+                          {fileQueue.length > 0 && (
+                            <div className="mt-4">
+                                <h4 className="text-sm font-semibold text-purple-200 mb-2">Selected Files ({fileQueue.length})</h4>
+                                <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-thin">
+                                {fileQueue.map((item) => (
+                                    <div key={item.id} className="p-3 bg-white/5 border border-white/10 rounded-lg flex items-center justify-between group hover:bg-white/10 transition-all">
+                                    <div className="flex items-center space-x-3 truncate">
+                                        <FileText className="w-5 h-5 text-purple-400 flex-shrink-0" />
+                                        <div className="truncate">
+                                            <p className="text-sm font-medium text-white truncate">{item.file.name}</p>
+                                            <p className="text-xs text-purple-300">{(item.file.size / 1024 / 1024).toFixed(2)} MB</p>
+                                        </div>
+                                    </div>
+                                    <button 
+                                        onClick={() => removeFile(item.id)}
+                                        className="p-1.5 hover:bg-red-500/20 text-gray-400 hover:text-red-400 rounded-lg transition-colors"
+                                    >
+                                        <X className="w-4 h-4" />
+                                    </button>
+                                    </div>
+                                ))}
                                 </div>
-                              </div>
                             </div>
                           )}
-                        </div>
-                        {/* Requirements Box */}
-                        <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-400/30 rounded-lg p-4">
-                          <h4 className="text-sm font-semibold text-purple-300 mb-2 flex items-center"><AlertCircle className="w-4 h-4 mr-2" />File Requirements</h4>
-                          <ul className="text-xs text-purple-200 space-y-1">
-                            <li>• File format: PDF (.pdf)</li>
-                            <li>• Recommended file size: Less than 50 MB</li>
-                            <li>• Filename format: "Book Title - Author Name.pdf"</li>
-                          </ul>
                         </div>
                       </>
                     )}
 
                     {/* Progress Section */}
-                    {(uploadProgress || liveProgress || isIngesting) && (
+                    {(isIngesting || completedCount > 0) && (
                       <div className="bg-gradient-to-br from-purple-900/30 via-pink-900/20 to-purple-900/30 rounded-xl p-6 border border-purple-400/30 shadow-2xl">
-                        <h3 className="text-xl font-bold text-white mb-6 flex items-center">
-                          <div className={`w-2 h-2 rounded-full mr-3 ${currentPercentage === 100 ? 'bg-green-400' : 'bg-green-400 animate-pulse'}`}></div>
-                          Ingestion Progress
-                        </h3>
+                        <div className="flex items-center justify-between mb-6">
+                            <h3 className="text-xl font-bold text-white flex items-center">
+                                <div className={`w-2 h-2 rounded-full mr-3 ${currentPercentage === 100 && !isIngesting ? 'bg-green-400' : 'bg-green-400 animate-pulse'}`}></div>
+                                {isIngesting ? `Processing File ${currentFileIndex + 1} of ${fileQueue.length}` : 'Ingestion Complete'}
+                            </h3>
+                            <span className="text-xs font-mono bg-black/40 px-2 py-1 rounded text-purple-300">
+                                {completedCount} / {fileQueue.length} Done
+                            </span>
+                        </div>
+
                         <div className="space-y-6">
-                          <div className="flex items-center justify-center">
+                            {/* Queue Visualizer */}
+                            <div className="flex space-x-2 overflow-x-auto pb-2 scrollbar-thin">
+                                {fileQueue.map((item, idx) => (
+                                    <div key={item.id} className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border transition-all ${
+                                        idx === currentFileIndex ? 'bg-purple-500 border-purple-300 text-white animate-pulse' :
+                                        item.status === 'success' ? 'bg-green-500/20 border-green-500/50 text-green-400' :
+                                        item.status === 'error' ? 'bg-red-500/20 border-red-500/50 text-red-400' :
+                                        'bg-white/5 border-white/10 text-gray-500'
+                                    }`}>
+                                        {item.status === 'success' ? <CheckCircle className="w-5 h-5" /> : 
+                                         item.status === 'error' ? <AlertCircle className="w-5 h-5" /> : 
+                                         idx + 1}
+                                    </div>
+                                ))}
+                            </div>
+
+                          {/* Circular Progress (Current File) */}
+                          <div className="flex items-center justify-center py-4">
                             <div className="relative w-32 h-32">
                               <svg className="w-full h-full transform -rotate-90">
                                 <circle cx="64" cy="64" r="56" stroke="rgba(139, 92, 246, 0.2)" strokeWidth="8" fill="none" />
@@ -579,7 +654,9 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                               </svg>
                               <div className="absolute inset-0 flex flex-col items-center justify-center">
                                 <p className="text-3xl font-bold bg-gradient-to-r from-purple-300 to-pink-300 bg-clip-text text-transparent">{currentPercentage}%</p>
-                                <p className="text-xs text-purple-300 mt-1">{currentStatus}</p>
+                                <p className="text-xs text-purple-300 mt-1 max-w-[80px] truncate text-center">
+                                    {isIngesting ? fileQueue[currentFileIndex]?.file.name : 'Done'}
+                                </p>
                               </div>
                             </div>
                           </div>
@@ -590,78 +667,71 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                             </p>
                           </div>
 
-                          {uploadProgress?.status === "success" && (
-                            <div className="p-4 rounded-lg bg-green-500/20 border border-green-400/50 flex items-center space-x-3">
-                              <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0" />
-                              <div>
-                                <p className="text-sm font-semibold text-green-300">Success!</p>
-                                <p className="text-xs text-green-200">{uploadProgress.result?.chunks} chunks created</p>
+                          {/* Live Logs Terminal */}
+                          <div className="mt-6 bg-black/90 rounded-xl border-2 border-purple-500/50 shadow-2xl terminal-glow overflow-hidden transition-all duration-300">
+                            <div className={`bg-gradient-to-r from-purple-900/80 via-pink-900/80 to-purple-900/80 px-4 py-3 flex items-center justify-between ${showLogs ? 'border-b border-purple-500/50' : ''}`}>
+                              <div className="flex items-center space-x-3">
+                                <div className="flex space-x-2">
+                                  <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                                  <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+                                  <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse"></div>
+                                </div>
+                                <span className="text-sm text-purple-300 font-mono font-semibold">backend@rag-bot:~$</span>
+                              </div>
+                              
+                              <div className="flex items-center space-x-3">
+                                <span className="text-xs text-gray-400 font-mono bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/30">
+                                  {logs.length} lines
+                                </span>
+                                <button 
+                                  onClick={() => setShowLogs(!showLogs)}
+                                  className="p-1.5 hover:bg-white/10 rounded-md text-purple-300 hover:text-white transition-colors"
+                                  title={showLogs ? "Hide Logs" : "Show Logs"}
+                                >
+                                  {showLogs ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                </button>
                               </div>
                             </div>
-                          )}
 
-                          {isIngesting && (
-                            <div className="mt-6 bg-black/90 rounded-xl border-2 border-purple-500/50 shadow-2xl terminal-glow overflow-hidden transition-all duration-300">
-                              {/* Log Header */}
-                              <div className={`bg-gradient-to-r from-purple-900/80 via-pink-900/80 to-purple-900/80 px-4 py-3 flex items-center justify-between ${showLogs ? 'border-b border-purple-500/50' : ''}`}>
-                                <div className="flex items-center space-x-3">
-                                  <div className="flex space-x-2">
-                                    <div className="w-3 h-3 rounded-full bg-red-500"></div>
-                                    <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
-                                    <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse"></div>
+                            {showLogs && (
+                              <div className="p-5 h-64 overflow-y-auto scrollbar-thin font-mono text-xs bg-gradient-to-b from-black/95 to-gray-900/95">
+                                {logs.length === 0 ? (
+                                  <div className="flex items-center justify-center h-full flex-col space-y-4">
+                                    <Loader className="w-10 h-10 animate-spin text-purple-400" />
+                                    <p className="text-purple-300">Connecting to logger...</p>
                                   </div>
-                                  <span className="text-sm text-purple-300 font-mono font-semibold">backend@rag-bot:~$</span>
-                                </div>
-                                
-                                <div className="flex items-center space-x-3">
-                                  <span className="text-xs text-gray-400 font-mono bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/30">
-                                    {logs.length} lines
-                                  </span>
-                                  <button 
-                                    onClick={() => setShowLogs(!showLogs)}
-                                    className="p-1.5 hover:bg-white/10 rounded-md text-purple-300 hover:text-white transition-colors"
-                                    title={showLogs ? "Hide Logs" : "Show Logs"}
-                                  >
-                                    {showLogs ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                                  </button>
-                                </div>
+                                ) : (
+                                  <div className="space-y-1">
+                                    {renderedLogs}
+                                    <div ref={logsEndRef} />
+                                  </div>
+                                )}
                               </div>
-
-                              {/* Log Body - Conditionally Rendered */}
-                              {showLogs && (
-                                <div className="p-5 h-96 overflow-y-auto scrollbar-thin font-mono text-xs bg-gradient-to-b from-black/95 to-gray-900/95">
-                                  {logs.length === 0 ? (
-                                    <div className="flex items-center justify-center h-full flex-col space-y-4">
-                                      <Loader className="w-10 h-10 animate-spin text-purple-400" />
-                                      <p className="text-purple-300">Connecting to logger...</p>
-                                    </div>
-                                  ) : (
-                                    <div className="space-y-1">
-                                      {renderedLogs}
-                                      <div ref={logsEndRef} />
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )}
+                            )}
+                          </div>
                         </div>
                       </div>
                     )}
 
-                    {/* Buttons */}
+                    {/* Action Buttons */}
                     <div className="flex gap-3 pt-4">
                       <button
-                        onClick={handleUploadSubmit} disabled={!uploadFile || isIngesting}
+                        onClick={startQueueProcessing} 
+                        disabled={fileQueue.length === 0 || isIngesting}
                         className="flex-1 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-semibold flex items-center justify-center space-x-2"
                       >
-                        {isIngesting ? <><Loader className="w-5 h-5 animate-spin" /><span>Processing...</span></> : <><Upload className="w-5 h-5" /><span>Upload & Ingest</span></>}
+                        {isIngesting ? (
+                            <><Loader className="w-5 h-5 animate-spin" /><span>Processing Queue...</span></>
+                        ) : (
+                            <><Upload className="w-5 h-5" /><span>Start Ingestion ({fileQueue.length})</span></>
+                        )}
                       </button>
                       <button
-                        onClick={handleReset} disabled={isIngesting}
+                        onClick={handleReset} 
+                        disabled={isIngesting && fileQueue.length === 0}
                         className="px-6 py-3 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        Cancel
+                        {isIngesting ? "Cancel" : "Clear"}
                       </button>
                     </div>
                   </div>
