@@ -50,9 +50,10 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   const processedLogsRef = useRef(new Set()); 
   const finishSequenceStarted = useRef(false); 
   const successTimerRef = useRef(null);
-  
-  // Ref to track ingestion state instantly inside event listeners
   const isIngestingRef = useRef(false);
+
+  // ✅ NEW: Latch to prevent stale completion signals
+  const processingStarted = useRef(false);
   
   const navigate = useNavigate();
 
@@ -111,27 +112,34 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     };
   }, []);
 
-  // Completion Logic
+  // ✅ FIXED: Robust Completion Logic with Stale Data Protection
   useEffect(() => {
     if (!isIngesting) return;
-    
-    // Prevent re-entry if finish sequence is already running
     if (successTimerRef.current) return;
 
-    // Check completion conditions
+    // 1. Detect if processing has ACTUALLY started (Active Latch)
+    // We only consider the job "started" if we see an active status or specific start logs.
+    // This filters out the "Completed" status from the PREVIOUS job that might be sent on reconnect.
+    const isActiveStatus = ["parsing_pdf", "chunking", "embedding", "upserting", "processing"].includes(liveProgress?.status);
+    const hasStartLog = logs.some(l => l.message.includes("Starting ingestion") || l.message.includes("Progress tracker reset"));
+    
+    if (isActiveStatus || hasStartLog) {
+        processingStarted.current = true;
+    }
+
+    // 2. Check completion conditions
     const isFinishedInLogs = logs.some(l => l.message.includes("Ingestion completed successfully"));
     const isFinishedStatus = liveProgress?.status === "completed" || liveProgress?.status === "success";
 
-    if (isFinishedInLogs || isFinishedStatus) {
-      console.log("✅ Success detected, starting cleanup sequence...");
+    // 3. ONLY trigger success if we have confirmed the start of THIS session
+    if ((isFinishedInLogs || isFinishedStatus) && processingStarted.current) {
+      console.log("✅ Verified Success detected (Session Active), starting cleanup sequence...");
       finishSequenceStarted.current = true;
       
-      // Force visual 100%
       if (animatedPercentage < 100) setAnimatedPercentage(100);
 
-      // Start the timer
       successTimerRef.current = setTimeout(() => {
-        if (!isIngestingRef.current) return; // Guard clause
+        if (!isIngestingRef.current) return;
 
         console.log("🎉 Cleanup timer triggered");
         
@@ -142,7 +150,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
           method: "stream_verified"
         };
 
-        // 1. Show Success Message
         setUploadProgress({
           status: "success",
           message: "Ingestion completed successfully!",
@@ -150,39 +157,32 @@ export default function IngestionPage({ books, onUploadSuccess }) {
           result: mockResult,
         });
 
-        // 2. Wait a moment, then Reset UI & Fetch Books
         setTimeout(() => {
           console.log("🧹 Resetting UI state...");
-          
-          // A. Stop Ingestion Ref first (Blocks new WS messages)
           isIngestingRef.current = false;
           
-          // B. Close WebSocket immediately
           if (wsRef.current) {
             wsRef.current.close(1000, "Ingestion complete");
             wsRef.current = null;
           }
 
-          // C. Reset State (Enables buttons/inputs)
           setUploadFile(null);
           setUploadProgress(null);
           setLiveProgress(null);
           setIsIngesting(false); 
           setAnimatedPercentage(0);
           setLogs([]);
-          
-          // D. Reset Refs
           processedLogsRef.current.clear();
           finishSequenceStarted.current = false;
           successTimerRef.current = null;
+          processingStarted.current = false; // Reset latch
           
-          // E. Fetch Books (Delayed to ensure Pinecone indexing)
           if (onUploadSuccess) {
              console.log("📚 Refreshing book list...");
              onUploadSuccess();
           }
-        }, 2000); // 2s delay for user to see green success message
-      }, 1500); // 1.5s delay after completion detection
+        }, 2000);
+      }, 1500);
     }
   }, [logs, liveProgress, isIngesting, animatedPercentage, onUploadSuccess, uploadFile]);
 
@@ -236,7 +236,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         };
 
         wsRef.current.onmessage = (event) => {
-          // GUARD: Block updates if we are done
           if (!isIngestingRef.current) return;
 
           try {
@@ -248,7 +247,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                 const match = logLine.match(/\[(\d{2}:\d{2}:\d{2})\] (\w+): (.+)/);
                 if (match) {
                   const [, timestamp, level, message] = match;
-                  // Only add if we are still ingesting
                   if (isIngestingRef.current) {
                       addLog(message, level.toLowerCase());
                   }
@@ -274,17 +272,18 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     e.preventDefault();
     if (!uploadFile) return;
 
-    // ✅ FIXED: Reset liveProgress to prevent instant completion detection
+    // ✅ FIXED: Hard reset of all states before starting
     setLiveProgress(null); 
+    setUploadProgress(null);
+    setLogs([]);
+    processedLogsRef.current.clear();
     
     setIsIngesting(true);
-    isIngestingRef.current = true; // Sync Ref
-    setLogs([]);
-    setShowLogs(true);
-    setAnimatedPercentage(0);
-    processedLogsRef.current.clear();
+    isIngestingRef.current = true;
     finishSequenceStarted.current = false;
     successTimerRef.current = null;
+    processingStarted.current = false; // Reset Latch
+    setAnimatedPercentage(0);
     
     addLog("📋 Starting ingestion process...", "info");
 
@@ -312,6 +311,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
       const data = await response.json();
 
       if (data.success) {
+        // We rely on the WebSocket/Log completion detector to handle success UI
         setUploadProgress({
             status: "success",
             message: "Ingestion verified. Finalizing...",
