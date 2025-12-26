@@ -7,6 +7,8 @@ import {
   CheckCircle,
   Loader,
   Book,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 
 const API_BASE_URL = "http://localhost:8000";
@@ -37,7 +39,8 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   const [uploadFile, setUploadFile] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(null);
   const [liveProgress, setLiveProgress] = useState(null);
-  const [showLogs, setShowLogs] = useState(true);
+  // CHANGED: Initial state set to false (hidden by default)
+  const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState([]);
   const [isIngesting, setIsIngesting] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -295,6 +298,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     successTimerRef.current = null;
     processingStarted.current = false; // Reset Latch
     setAnimatedPercentage(0);
+    // CHANGED: Removed setShowLogs(true) to keep logs hidden by default
     
     addLog("📋 Starting ingestion process...", "info");
 
@@ -597,24 +601,48 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                           )}
 
                           {isIngesting && (
-                            <div className="mt-6 bg-black/90 rounded-xl border-2 border-purple-500/50 shadow-2xl terminal-glow overflow-hidden">
-                              <div className="bg-gradient-to-r from-purple-900/80 via-pink-900/80 to-purple-900/80 px-4 py-3 border-b border-purple-500/50 flex items-center justify-between">
+                            <div className="mt-6 bg-black/90 rounded-xl border-2 border-purple-500/50 shadow-2xl terminal-glow overflow-hidden transition-all duration-300">
+                              {/* Log Header */}
+                              <div className={`bg-gradient-to-r from-purple-900/80 via-pink-900/80 to-purple-900/80 px-4 py-3 flex items-center justify-between ${showLogs ? 'border-b border-purple-500/50' : ''}`}>
                                 <div className="flex items-center space-x-3">
-                                  <div className="flex space-x-2"><div className="w-3 h-3 rounded-full bg-red-500"></div><div className="w-3 h-3 rounded-full bg-yellow-500"></div><div className="w-3 h-3 rounded-full bg-green-500 animate-pulse"></div></div>
+                                  <div className="flex space-x-2">
+                                    <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                                    <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+                                    <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse"></div>
+                                  </div>
                                   <span className="text-sm text-purple-300 font-mono font-semibold">backend@rag-bot:~$</span>
                                 </div>
-                                <span className="text-xs text-gray-400 font-mono bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/30">{logs.length} lines</span>
+                                
+                                <div className="flex items-center space-x-3">
+                                  <span className="text-xs text-gray-400 font-mono bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/30">
+                                    {logs.length} lines
+                                  </span>
+                                  <button 
+                                    onClick={() => setShowLogs(!showLogs)}
+                                    className="p-1.5 hover:bg-white/10 rounded-md text-purple-300 hover:text-white transition-colors"
+                                    title={showLogs ? "Hide Logs" : "Show Logs"}
+                                  >
+                                    {showLogs ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                  </button>
+                                </div>
                               </div>
-                              <div className="p-5 h-96 overflow-y-auto scrollbar-thin font-mono text-xs bg-gradient-to-b from-black/95 to-gray-900/95">
-                                {logs.length === 0 ? (
-                                  <div className="flex items-center justify-center h-full flex-col space-y-4">
-                                    <Loader className="w-10 h-10 animate-spin text-purple-400" />
-                                    <p className="text-purple-300">Connecting to logger...</p>
-                                  </div>
-                                ) : (
-                                  <div className="space-y-1">{renderedLogs}<div ref={logsEndRef} /></div>
-                                )}
-                              </div>
+
+                              {/* Log Body - Conditionally Rendered */}
+                              {showLogs && (
+                                <div className="p-5 h-96 overflow-y-auto scrollbar-thin font-mono text-xs bg-gradient-to-b from-black/95 to-gray-900/95">
+                                  {logs.length === 0 ? (
+                                    <div className="flex items-center justify-center h-full flex-col space-y-4">
+                                      <Loader className="w-10 h-10 animate-spin text-purple-400" />
+                                      <p className="text-purple-300">Connecting to logger...</p>
+                                    </div>
+                                  ) : (
+                                    <div className="space-y-1">
+                                      {renderedLogs}
+                                      <div ref={logsEndRef} />
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
