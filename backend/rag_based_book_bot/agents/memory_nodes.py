@@ -27,52 +27,42 @@ llm = ChatGoogleGenerativeAI(
     convert_system_message_to_human=True # Keep this for Gemma models
 )
 
-def query_context_resolution_node(state: AgentState) -> AgentState:
+def query_context_resolution_node(state: AgentState) -> Dict:
     """
-    LLM-based context resolution node
+    LLM-based context resolution node (LangGraph compatible)
     
-    Analyzes the current query with conversation history to:
-    1. Detect if it references previous context (pronouns, implicit references)
-    2. Identify which previous turn it references
-    3. Determine if it can be answered from history alone
-    4. Generate a standalone query that doesn't need conversation context
-    
-    This is the KEY node that makes follow-up questions work!
-    
-    Example:
-        History: "What is CNN?" → "CNNs are neural networks..."
-        Query: "Show me code for it"
-        
-        → needs_conversation_context: true
-        → references_turn: 1
-        → can_answer_from_history: false
-        → standalone_query: "Show me CNN implementation code"
+    Returns dict with:
+    - resolved_query: Standalone query
+    - needs_retrieval: Whether retrieval is needed
+    - referenced_turn: Which turn was referenced
+    - current_node: Node identifier
     """
-    state.current_node = "context_resolution"
     
-    current_query = state.parsed_query.raw_query if state.parsed_query else state.user_query
+    current_query = state.get("parsed_query").raw_query if state.get("parsed_query") else state.get("user_query")
+    conversation_history = state.get("conversation_history", [])
     
     # No history? Skip resolution
-    if not state.conversation_history:
+    if not conversation_history:
         print(f"\n[Context Resolution] No conversation history - using query as-is")
-        state.resolved_query = current_query
-        state.needs_retrieval = True
-        state.referenced_turn = None
-        return state
+        return {
+            "resolved_query": current_query,
+            "needs_retrieval": True,
+            "referenced_turn": None,
+            "current_node": "context_resolution"
+        }
     
     try:
         print(f"\n[Context Resolution] Analyzing query with conversation history...")
         print(f"  Current query: '{current_query}'")
-        print(f"  History turns: {len(state.conversation_history)}")
+        print(f"  History turns: {len(conversation_history)}")
         
-        # Build conversation context (last 5 turns max for efficiency)
+        # Build conversation context
         conversation_context = ""
-        recent_history = state.conversation_history[-5:]
+        recent_history = conversation_history[-5:]
         
         for i, turn in enumerate(recent_history, 1):
             conversation_context += f"[Turn {i}]\n"
             conversation_context += f"Q: {turn.user_query}\n"
-            # Truncate long responses
             response_preview = turn.assistant_response[:200]
             if len(turn.assistant_response) > 200:
                 response_preview += "..."
@@ -99,18 +89,6 @@ Analyze this query in the context of the conversation above. Return a JSON respo
 3. If new information needed → can_answer_from_history=false
 4. Always provide a standalone_query that makes sense without history
 5. Detect implicit references (e.g., "what about X?" after discussing Y)
-6. If referring to "the first one", "earlier", "before" → set references_turn to that turn number
-
-**Examples:**
-
-Query: "Show me code for it" (after discussing CNN)
-→ {{"needs_conversation_context": true, "references_turn": 1, "can_answer_from_history": false, "standalone_query": "Show me CNN implementation code"}}
-
-Query: "What did you say about advantages?" 
-→ {{"needs_conversation_context": true, "references_turn": 2, "can_answer_from_history": true, "standalone_query": "What are the advantages of CNN?"}}
-
-Query: "How do I implement LSTM?"
-→ {{"needs_conversation_context": false, "references_turn": null, "can_answer_from_history": false, "standalone_query": "How do I implement LSTM?"}}
 
 Return ONLY valid JSON, no markdown formatting."""
 
@@ -118,7 +96,7 @@ Return ONLY valid JSON, no markdown formatting."""
         response = llm.invoke([HumanMessage(content=analysis_prompt)])
         response_text = response.content.strip()
         
-        # Clean up markdown formatting if present
+        # Clean up markdown
         if response_text.startswith("```"):
             response_text = (
                 response_text
@@ -126,120 +104,92 @@ Return ONLY valid JSON, no markdown formatting."""
                 .replace("```", "")
                 .strip()
             )
-
         
         # Parse JSON
         analysis = json.loads(response_text)
         
-        # Update state with analysis results
-        state.resolved_query = analysis.get('standalone_query', current_query)
-        state.needs_retrieval = not analysis.get('can_answer_from_history', True)
-        state.referenced_turn = analysis.get('references_turn')
+        # Extract results
+        resolved_query = analysis.get('standalone_query', current_query)
+        needs_retrieval = not analysis.get('can_answer_from_history', True)
+        referenced_turn = analysis.get('references_turn')
         
-        # Log results
         print(f"  ✅ Analysis complete:")
         print(f"     Original: '{current_query}'")
-        print(f"     Resolved: '{state.resolved_query}'")
-        print(f"     Needs retrieval: {state.needs_retrieval}")
-        print(f"     References turn: {state.referenced_turn}")
+        print(f"     Resolved: '{resolved_query}'")
+        print(f"     Needs retrieval: {needs_retrieval}")
+        print(f"     References turn: {referenced_turn}")
         print(f"     Reasoning: {analysis.get('reasoning', 'N/A')}")
+        
+        return {
+            "resolved_query": resolved_query,
+            "needs_retrieval": needs_retrieval,
+            "referenced_turn": referenced_turn,
+            "current_node": "context_resolution"
+        }
         
     except json.JSONDecodeError as e:
         print(f"  ⚠️ Failed to parse LLM response as JSON: {e}")
-        print(f"     Response was: {response_text[:200]}...")
         print(f"  → Using fallback (treat as new query)")
-        state.resolved_query = current_query
-        state.needs_retrieval = True
-        state.referenced_turn = None
+        return {
+            "resolved_query": current_query,
+            "needs_retrieval": True,
+            "referenced_turn": None,
+            "current_node": "context_resolution"
+        }
         
     except Exception as e:
         print(f"  ⚠️ Context resolution failed: {e}")
         print(f"  → Using fallback (treat as new query)")
-        state.resolved_query = current_query
-        state.needs_retrieval = True
-        state.referenced_turn = None
+        return {
+            "resolved_query": current_query,
+            "needs_retrieval": True,
+            "referenced_turn": None,
+            "current_node": "context_resolution"
+        }
+
+def conversation_search_node(state: AgentState) -> Dict:
+    """
+    Semantic search over conversation history (LangGraph compatible)
     
-    return state
+    Returns dict with:
+    - relevant_past_turns: List of relevant conversation turns
+    """
+    
+    conversation_history = state.get("conversation_history", [])
+    
+    if not conversation_history:
+        return {"relevant_past_turns": []}
+    
+    # For now, skip this search - would need session_id tracking
+    print(f"\n[Conversation Search] Skipping - no explicit session_id in state")
+    
+    return {
+        "relevant_past_turns": [],
+        "current_node": "conversation_search"
+    }
 
 
-def conversation_search_node(state: AgentState) -> AgentState:
-    """
-    Semantic search over conversation history
-    
-    Uses vector similarity to find relevant past turns.
-    This is called BEFORE retrieval to inject relevant conversation context.
-    
-    Example:
-        Query: "What were the advantages you mentioned?"
-        → Searches conversation vectors
-        → Finds turn where advantages were discussed
-        → Stores in state.relevant_past_turns
-    """
-    state.current_node = "conversation_search"
-    
-    # Only search if we have history and a session ID
-    if not state.conversation_history:
-        state.relevant_past_turns = []
-        return state
-    
-    # Get session_id from first turn (all turns have same session_id)
-    session_id = None
-    if state.conversation_history:
-        # Session ID should be passed in state, but we can infer from metadata
-        # For now, we'll skip this search if we don't have explicit session tracking
-        print(f"\n[Conversation Search] Skipping - no explicit session_id in state")
-        state.relevant_past_turns = []
-        return state
-    
-    try:
-        print(f"\n[Conversation Search] Searching conversation history...")
-        
-        query_to_search = state.resolved_query or state.user_query
-        
-        # Search for relevant past turns
-        relevant_turns = search_conversation_context(
-            session_id=session_id,
-            query=query_to_search,
-            top_k=3
-        )
-        
-        # Convert to ConversationTurn objects
-        state.relevant_past_turns = [
-            ConversationTurn(
-                user_query=turn['user_query'],
-                assistant_response=turn['assistant_response'],
-                timestamp=turn.get('timestamp', 0),
-                sources_used=turn.get('sources_used', [])
-            )
-            for turn in relevant_turns
-        ]
-        
-        print(f"  ✅ Found {len(state.relevant_past_turns)} relevant past turns")
-        
-    except Exception as e:
-        print(f"  ⚠️ Conversation search failed: {e}")
-        state.relevant_past_turns = []
-    
-    return state
 
-
-def answer_from_history_node(state: AgentState) -> AgentState:
+def answer_from_history_node(state: AgentState) -> Dict:
     """
-    Answer directly from conversation history without retrieval
+    Answer directly from conversation history (LangGraph compatible)
     
-    Used when context_resolution determines the answer already exists
-    in conversation history (can_answer_from_history=True).
-    
-    Example:
-        User: "What did you say about CNN advantages?"
-        → LLM extracts answer from previous turn where advantages were discussed
-        → No document retrieval needed
+    Returns dict with:
+    - response: LLMResponse with answer from history
+    - pipeline_snapshots: Updated snapshots
+    - current_node: Node identifier
     """
-    state.current_node = "answer_from_history"
     
-    if not state.conversation_history:
-        state.errors.append("No conversation history available to answer from")
-        return state
+    conversation_history = state.get("conversation_history", [])
+    resolved_query = state.get("resolved_query") or state.get("user_query")
+    referenced_turn = state.get("referenced_turn")
+    pipeline_snapshots = state.get("pipeline_snapshots", [])
+    
+    if not conversation_history:
+        return {
+            "errors": state.get("errors", []) + ["No conversation history available"],
+            "current_node": "answer_from_history"
+        }
     
     try:
         print(f"\n[Answer from History] Generating answer from previous conversation...")
@@ -247,29 +197,29 @@ def answer_from_history_node(state: AgentState) -> AgentState:
         # Build context from conversation history
         history_context = ""
         
-        if state.referenced_turn is not None:
+        if referenced_turn is not None:
             # Use specific referenced turn
-            turn_idx = state.referenced_turn - 1
-            if 0 <= turn_idx < len(state.conversation_history):
-                turn = state.conversation_history[turn_idx]
+            turn_idx = referenced_turn - 1
+            if 0 <= turn_idx < len(conversation_history):
+                turn = conversation_history[turn_idx]
                 history_context = f"""**Referenced Turn:**
 Question: {turn.user_query}
 Answer: {turn.assistant_response}
 
 """
-                print(f"  → Using referenced turn #{state.referenced_turn}")
+                print(f"  → Using referenced turn #{referenced_turn}")
         else:
             # Use last 3 turns
-            for i, turn in enumerate(state.conversation_history[-3:], 1):
+            for i, turn in enumerate(conversation_history[-3:], 1):
                 history_context += f"**Turn {i}:**\n"
                 history_context += f"Q: {turn.user_query}\n"
                 history_context += f"A: {turn.assistant_response}\n\n"
             print(f"  → Using last 3 turns")
         
-        # Generate answer from history using LLM
+        # Generate answer from history
         prompt = f"""{history_context}
 
-**Current Question:** {state.resolved_query or state.user_query}
+**Current Question:** {resolved_query}
 
 Extract or synthesize the answer from the conversation above. 
 
@@ -283,26 +233,34 @@ Answer:"""
 
         response = llm.invoke([HumanMessage(content=prompt)])
         
-        state.response = LLMResponse(
+        # Create response object
+        llm_response = LLMResponse(
             answer=response.content,
-            sources=[],  # No document sources, answered from memory
-            confidence=0.75,  # Lower confidence for history-based answers
+            sources=[],
+            confidence=0.75,
             code_snippets=[]
         )
         
-        # Track that we answered from history
-        state.pipeline_snapshots.append({
+        # Add snapshot
+        new_snapshot = {
             "stage": "answer_from_history",
             "chunk_count": 0,
             "chunks": [],
             "answered_from_memory": True
-        })
+        }
         
         print(f"  ✅ Answer generated from conversation history")
         print(f"     Answer length: {len(response.content)} characters")
         
+        return {
+            "response": llm_response,
+            "pipeline_snapshots": pipeline_snapshots + [new_snapshot],
+            "current_node": "answer_from_history"
+        }
+        
     except Exception as e:
         print(f"  ❌ Failed to answer from history: {e}")
-        state.errors.append(f"Failed to answer from history: {str(e)}")
-    
-    return state
+        return {
+            "errors": state.get("errors", []) + [f"Failed to answer from history: {str(e)}"],
+            "current_node": "answer_from_history"
+        }

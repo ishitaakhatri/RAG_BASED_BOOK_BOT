@@ -32,7 +32,6 @@ from app_config import get_config
 load_dotenv()
 settings = get_config()
 
-# Configure logging for main application
 logger = logging.getLogger("main")
 logger.setLevel(settings.log_level)
 logger.propagate = True
@@ -41,7 +40,7 @@ from rag_based_book_bot.document_ingestion.enhanced_ingestion import (
     EnhancedBookIngestorPaddle,
     IngestorConfig
 )
-from rag_based_book_bot.agents.states import AgentState, ConversationTurn
+from rag_based_book_bot.agents.states import AgentState, ConversationTurn, create_initial_state
 from rag_based_book_bot.agents.graph import build_query_graph
 from rag_based_book_bot.agents.nodes import get_pinecone_index, get_embedding_model
 
@@ -64,19 +63,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+query_graph_app = None
 # -----------------------------------------------------------
 # STARTUP EVENTS
 # -----------------------------------------------------------
 @app.on_event("startup")
 async def startup_event():
-    """Initialize global resources"""
-    # Capture the main event loop for the progress tracker
-    # This allows worker threads to send WebSocket updates safely
+    """Initialize global resources including LangGraph"""
+    global query_graph_app
+    
     loop = asyncio.get_running_loop()
     tracker = get_progress_tracker()
     tracker.set_loop(loop)
     logger.info("✅ Initialized progress tracker with main event loop")
     logger.info(f"🚀 RAG Book Bot API started successfully (Env: {settings.environment})")
+    query_graph_app = build_query_graph(enable_persistence=True)
     print("✅ Initialized progress tracker with main event loop")
 
 
@@ -128,7 +130,7 @@ class QueryResponse(BaseModel):
     conversation_turn: int
     resolved_query: Optional[str] = None
     answered_from_history: bool = False
-    needs_context: bool = False  # NEW: indicates if query needed context
+    needs_context: bool = False
 
 
 class IngestResponse(BaseModel):
@@ -168,6 +170,7 @@ class SessionSummary(BaseModel):
 class SessionListResponse(BaseModel):
     sessions: List[SessionSummary]
     total: int
+
 
 
 # ============================================================================
@@ -287,12 +290,10 @@ def extract_pipeline_stages(state: AgentState, executed_nodes: List[str]) -> Lis
     }
     
     pipeline_stages = []
+    pipeline_snapshots = state.get("pipeline_snapshots", [])
     
-    for snapshot in state.pipeline_snapshots:
+    for snapshot in pipeline_snapshots:
         stage_name = snapshot.get("stage", "")
-        
-        if stage_name not in executed_nodes:
-            continue
         
         display_name = stage_mapping.get(stage_name, stage_name)
         
@@ -383,9 +384,10 @@ async def root():
     """Health check"""
     return {
         "status": "online",
-        "message": "RAG Book Bot API v4.1 - Production Ready",
+        "message": "RAG Book Bot API v4.0 - LangGraph Edition",
+        "execution_engine": "LangGraph",
         "features": [
-            "graph_execution",
+            "langgraph_execution",
             "persistent_conversation_memory",
             "smart_context_detection",
             "full_session_management",
@@ -393,6 +395,7 @@ async def root():
             "robust_error_handling"
         ]
     }
+
 
 
 @app.get("/books", response_model=BooksResponse)
@@ -407,6 +410,8 @@ async def process_query(request: QueryRequest):
     """
     Process query with smart conversation memory
     """
+    global query_graph_app
+    
     try:
         print(f"\n{'='*80}")
         print(f"[NEW QUERY] {request.query}")
@@ -424,12 +429,15 @@ async def process_query(request: QueryRequest):
         print(f"[HISTORY] Loaded {len(conversation_history)} previous turns")
         print(f"{'='*80}")
         
-        # Initialize state
-        state = AgentState(
+        # ====================================================================
+        # CREATE INITIAL STATE using LangGraph-compatible format
+        # ====================================================================
+        
+        initial_state = create_initial_state(
             user_query=request.query,
-            conversation_history=conversation_history,
             session_id=session_id,
             user_id=request.user_id,
+            conversation_history=conversation_history,
             max_history_turns=5,
             book_filter=request.book_filter,
             chapter_filter=request.chapter_filter,
@@ -439,67 +447,90 @@ async def process_query(request: QueryRequest):
             max_tokens=request.max_tokens
         )
         
-        # Build and execute graph
-        print("\n[GRAPH] Building query pipeline...")
-        query_graph = build_query_graph()
+        # ====================================================================
+        # INVOKE LANGGRAPH (replaces custom graph.execute())
+        # ====================================================================
         
-        print("[GRAPH] Executing pipeline...")
-        result = query_graph.execute(state)
+        print("\n[LANGGRAPH] Invoking pipeline...")
         
-        # Check execution result
-        if not result.success:
-            error_msg = result.error_message or "Unknown pipeline error"
-            failed_at = result.failed_node or "unknown stage"
-            raise HTTPException(
-                status_code=500,
-                detail=f"Pipeline failed at {failed_at}: {error_msg}"
-            )
+        config = {
+            "configurable": {
+                "thread_id": session_id  # For persistence
+            }
+        }
         
-        final_state = result.final_state
+        # Invoke the graph
+        final_state = query_graph_app.invoke(initial_state, config=config)
+        
+        print("[LANGGRAPH] Pipeline completed")
+        
+        # ====================================================================
+        # VALIDATE RESULTS
+        # ====================================================================
         
         # Check for errors
-        if final_state.errors:
+        if final_state.get("errors"):
             raise HTTPException(
                 status_code=500,
-                detail=f"Pipeline errors: {'; '.join(final_state.errors)}"
+                detail=f"Pipeline errors: {'; '.join(final_state['errors'])}"
             )
         
         # Check for response
-        if not final_state.response:
+        if not final_state.get("response"):
             raise HTTPException(
                 status_code=500,
                 detail="Pipeline completed but no response generated"
             )
         
-        # Calculate turn number
+        # ====================================================================
+        # SAVE CONVERSATION TURN (Non-blocking background task)
+        # ====================================================================
+        
         turn_number = len(conversation_history) + 1
         
-        # Save conversation turn
-        print(f"\n[SAVING] Conversation turn to Pinecone...")
-        save_result = save_conversation_turn(
-            session_id=session_id,
-            turn_number=turn_number,
-            user_query=request.query,
-            assistant_response=final_state.response.answer,
-            resolved_query=final_state.resolved_query,
-            needs_retrieval=final_state.needs_retrieval,
-            referenced_turn=final_state.referenced_turn,
-            sources_used=[c.chunk.chunk_id for c in final_state.reranked_chunks[:5]] if final_state.reranked_chunks else [],
-            user_id=request.user_id
-        )
+        # Save conversation turn in background (non-blocking)
+        def save_turn_background():
+            """Save conversation turn in background to avoid blocking response"""
+            try:
+                print(f"\n[SAVING] Conversation turn to Pinecone...")
+                save_result = save_conversation_turn(
+                    session_id=session_id,
+                    turn_number=turn_number,
+                    user_query=request.query,
+                    assistant_response=final_state["response"].answer,
+                    resolved_query=final_state.get("resolved_query"),
+                    needs_retrieval=final_state.get("needs_retrieval", True),
+                    referenced_turn=final_state.get("referenced_turn"),
+                    sources_used=[c.chunk.chunk_id for c in final_state.get("reranked_chunks", [])[:5]],
+                    user_id=request.user_id
+                )
+                
+                if save_result.get('success'):
+                    print(f"✅ Saved turn #{turn_number}: {save_result.get('vector_id')}")
+                else:
+                    print(f"⚠️ Failed to save: {save_result.get('error')}")
+            except Exception as e:
+                print(f"[ERROR] Background save failed: {e}")
         
-        if save_result.get('success'):
-            print(f"✅ Saved turn #{turn_number}: {save_result.get('vector_id')}")
-        else:
-            print(f"⚠️ Failed to save: {save_result.get('error')}")
+        # Run save in background thread (non-blocking)
+        import threading
+        save_thread = threading.Thread(target=save_turn_background, daemon=True)
+        save_thread.start()
         
-        # Extract pipeline stages
-        pipeline_stages = extract_pipeline_stages(final_state, result.executed_nodes)
+        # ====================================================================
+        # BUILD RESPONSE
+        # ====================================================================
+        
+        # Extract pipeline stages - need to track executed nodes
+        # LangGraph doesn't provide this directly, so we infer from snapshots
+        executed_nodes = [s.get("stage") for s in final_state.get("pipeline_snapshots", [])]
+        pipeline_stages = extract_pipeline_stages(final_state, executed_nodes)
         
         # Build sources
         sources = []
-        if final_state.reranked_chunks:
-            for rc in final_state.reranked_chunks[:5]:
+        reranked_chunks = final_state.get("reranked_chunks", [])
+        if reranked_chunks:
+            for rc in reranked_chunks[:5]:
                 sources.append({
                     "chunk_id": rc.chunk.chunk_id,
                     "chapter": rc.chunk.chapter,
@@ -512,40 +543,40 @@ async def process_query(request: QueryRequest):
         
         # Calculate stats
         stats = {
-            "total_stages": len(result.executed_nodes),
-            "executed_nodes": result.executed_nodes,
+            "total_stages": len(executed_nodes),
+            "executed_nodes": executed_nodes,
             "conversation_turn": turn_number,
-            "referenced_turn": final_state.referenced_turn,
-            "answered_from_history": not final_state.needs_retrieval,
-            "pass1": next((s.get("chunk_count", 0) for s in final_state.pipeline_snapshots if s.get("stage") == "vector_search"), 0) if final_state.needs_retrieval else 0,
-            "pass2": next((s.get("chunk_count", 0) for s in final_state.pipeline_snapshots if s.get("stage") == "reranking"), 0) if final_state.needs_retrieval else 0,
-            "final": len(final_state.reranked_chunks) if final_state.reranked_chunks else 0,
-            "tokens": len(final_state.assembled_context.split()) if final_state.assembled_context else 0,
-            "rewritten_queries_count": len(final_state.rewritten_queries)
+            "referenced_turn": final_state.get("referenced_turn"),
+            "answered_from_history": not final_state.get("needs_retrieval", True),
+            "pass1": next((s.get("chunk_count", 0) for s in final_state.get("pipeline_snapshots", []) if s.get("stage") == "vector_search"), 0),
+            "pass2": next((s.get("chunk_count", 0) for s in final_state.get("pipeline_snapshots", []) if s.get("stage") == "reranking"), 0),
+            "final": len(reranked_chunks),
+            "tokens": len(final_state.get("assembled_context", "").split()),
+            "rewritten_queries_count": len(final_state.get("rewritten_queries", []))
         }
         
         print(f"\n{'='*80}")
         print(f"[SUCCESS] Pipeline completed")
-        print(f"[ANSWER] {len(final_state.response.answer)} characters")
+        print(f"[ANSWER] {len(final_state['response'].answer)} characters")
         print(f"[SESSION] Saved as turn #{turn_number}")
-        if final_state.referenced_turn:
-            print(f"[CONTEXT] Referenced turn #{final_state.referenced_turn}")
-        if not final_state.needs_retrieval:
+        if final_state.get("referenced_turn"):
+            print(f"[CONTEXT] Referenced turn #{final_state['referenced_turn']}")
+        if not final_state.get("needs_retrieval"):
             print(f"[MEMORY] Answered from conversation history")
         print(f"{'='*80}\n")
         
         return QueryResponse(
-            answer=final_state.response.answer,
+            answer=final_state["response"].answer,
             sources=sources,
-            confidence=final_state.response.confidence,
+            confidence=final_state["response"].confidence,
             stats=stats,
             pipeline_stages=pipeline_stages,
-            rewritten_queries=final_state.rewritten_queries,
+            rewritten_queries=final_state.get("rewritten_queries", []),
             session_id=session_id,
             conversation_turn=turn_number,
-            resolved_query=final_state.resolved_query,
-            answered_from_history=not final_state.needs_retrieval,
-            needs_context=bool(final_state.referenced_turn)
+            resolved_query=final_state.get("resolved_query"),
+            answered_from_history=not final_state.get("needs_retrieval", True),
+            needs_context=bool(final_state.get("referenced_turn"))
         )
         
     except HTTPException:
@@ -556,6 +587,7 @@ async def process_query(request: QueryRequest):
         print(f"[ERROR] {traceback.format_exc()}")
         print(f"{'='*80}\n")
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+
 
 
 
@@ -576,12 +608,10 @@ def ingest_book(
     try:
         logger.info(f"📥 Received upload request: {file.filename}")
         
-        # Reset tracker for new ingestion
         tracker = get_progress_tracker()
         tracker.reset()
         logger.info("🔄 Progress tracker reset for new ingestion")
         
-        # Auto-extract from filename
         if not book_title or not author:
             extracted_title, extracted_author = parse_book_filename(file.filename)
             final_book_title = book_title or extracted_title
@@ -605,7 +635,6 @@ def ingest_book(
         print(f"📥 Received file: {file.filename}")
         print(f"📊 Starting ingestion for '{final_book_title}'")
         
-        # Ingest
         logger.info("⚙️ Initializing ingestor with configuration...")
         
         # UPDATED: Use Config settings for ingestion
@@ -619,7 +648,6 @@ def ingest_book(
         ingestor = EnhancedBookIngestorPaddle(config=config)
         logger.info("✅ Ingestor initialized")
         
-        # This is the heavy blocking call - now runs in thread pool
         logger.info("🔨 Starting book ingestion process...")
         result = ingestor.ingest_book(
             pdf_path=tmp_path,
@@ -628,7 +656,6 @@ def ingest_book(
         )
         
         logger.info("💾 Storing book metadata...")
-        # Store metadata
         code_chunks = result.get('code_chunks', 0)
         total_chunks = result.get('chunks', 0)
         
@@ -641,7 +668,6 @@ def ingest_book(
         
         logger.info("✅ Metadata stored successfully")
         
-        # Cleanup
         logger.info("🧹 Cleaning up temporary files...")
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
@@ -656,7 +682,6 @@ def ingest_book(
         logger.exception("Full error traceback:")
         print(f"❌ Ingest error: {str(e)}")
         
-        # Notify tracker of failure
         try:
             tracker = get_progress_tracker()
             tracker.add_error(str(e))
@@ -673,6 +698,7 @@ def ingest_book(
         
         return IngestResponse(success=False, error=str(e))
 
+
 @app.websocket("/ws/ingest")
 async def websocket_ingestion_progress(websocket: WebSocket):
     """
@@ -684,39 +710,33 @@ async def websocket_ingestion_progress(websocket: WebSocket):
     logger.info("🔌 WebSocket client connected for ingestion progress")
     print("🔌 WebSocket client connected for ingestion progress")
 
-    # Track connection state
     is_connected = True
     send_failures = 0
-    max_send_failures = 3  # Stop trying after 3 consecutive failures
+    max_send_failures = 3
 
     async def send_update(state):
-        """Send progress updates to the WebSocket client"""
         nonlocal is_connected, send_failures
         
-        # Stop trying if disconnected or too many failures
         if not is_connected or send_failures >= max_send_failures:
             return
         
         try:
-            # Check if WebSocket is still open
             if websocket.client_state.name == "CONNECTED":
                 await websocket.send_json(state.to_dict())
-                send_failures = 0  # Reset failure count on success
+                send_failures = 0
             else:
                 is_connected = False
                 logger.info("WebSocket no longer connected, stopping updates")
         except Exception as e:
             send_failures += 1
-            if send_failures == 1:  # Only log first failure
+            if send_failures == 1:
                 logger.warning(f"⚠️ WebSocket send failed: {e}")
             if send_failures >= max_send_failures:
                 is_connected = False
                 logger.info(f"WebSocket disconnected after {max_send_failures} failed attempts")
 
-    # ✅ Register callback
     tracker.on_progress(send_update)
 
-    # ✅ Send initial state immediately (prevents blank UI)
     try:
         initial_state = tracker.get_state()
         if initial_state.get("status") != "completed":
@@ -725,13 +745,10 @@ async def websocket_ingestion_progress(websocket: WebSocket):
         logger.warning(f"Failed to send initial state: {e}")
 
     try:
-        # ✅ Keep connection alive and monitor for disconnection
         while is_connected:
             try:
-                # Try to receive ping/pong to detect disconnection
                 await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
             except asyncio.TimeoutError:
-                # No message received, that's fine - just checking connection
                 continue
             except WebSocketDisconnect:
                 logger.info("🔌 WebSocket client disconnected")
@@ -747,7 +764,6 @@ async def websocket_ingestion_progress(websocket: WebSocket):
         is_connected = False
 
     finally:
-        # ✅ IMPORTANT: Remove callback to prevent memory leaks
         is_connected = False
         logger.info("🧹 Removing WebSocket callback")
         tracker.remove_callback(send_update)
@@ -758,7 +774,7 @@ async def websocket_ingestion_progress(websocket: WebSocket):
             logger.debug(f"Error closing WebSocket: {e}")
 
 
-
+# Session management endpoints (unchanged)
 @app.get("/sessions", response_model=SessionListResponse)
 async def list_sessions(
     user_id: Optional[str] = Query(None),
@@ -862,8 +878,8 @@ async def health_check():
         
         return {
             "status": "healthy",
-            "version": "4.1.0",
-            "execution_mode": "graph-based",
+            "version": "4.0.0-langgraph",
+            "execution_mode": "LangGraph",
             "memory_backend": "pinecone",
             "pinecone": "connected",
             "total_vectors": stats.get('total_vector_count', 0),

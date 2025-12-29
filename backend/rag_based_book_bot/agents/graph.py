@@ -1,17 +1,29 @@
 """
 Updated Graph with Full 5-Pass Retrieval Pipeline
 """
-
-from typing import Callable, Optional
-from dataclasses import dataclass, field
+from typing import Literal
+from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.memory import MemorySaver
 from enum import Enum
+from dataclasses import dataclass, field
+from typing import Callable, Optional
 
-from .states import AgentState  # Existing import
+
+from .states import AgentState
+from .nodes import (
+    user_query_node,
+    query_rewriter_node,
+    vector_search_node,
+    reranking_node,
+    multi_hop_expansion_node,
+    cluster_expansion_node,
+    context_assembly_node,
+    llm_reasoning_node
+)
 
 # NEW IMPORTS: Memory nodes
-from rag_based_book_bot.agents.memory_nodes import (
+from .memory_nodes import (
     query_context_resolution_node,
-    conversation_search_node,
     answer_from_history_node
 )
 
@@ -171,137 +183,155 @@ class Graph:
                     lines.append(f"      → {edge.to_node}")
         
         return "\n".join(lines)
+    
+
+def route_after_context_resolution(
+    state: AgentState
+) -> Literal["answer_from_history", "query_rewriter"]:
+    """
+    Route based on whether retrieval is needed.
+    
+    If needs_retrieval=False, answer directly from conversation history.
+    If needs_retrieval=True, proceed to retrieval pipeline.
+    """
+    needs_retrieval = state.get("needs_retrieval", True)
+    
+    if needs_retrieval:
+        print(f"[Router] needs_retrieval=True → Proceeding to retrieval pipeline")
+        return "query_rewriter"
+    else:
+        print(f"[Router] needs_retrieval=False → Answering from history")
+        return "answer_from_history"
 
 
 # ============================================================================
 # UPDATED GRAPH BUILDERS WITH 5-PASS PIPELINE
 # ============================================================================
 
-def build_indexing_graph() -> Graph:
-    """Builds the graph for document indexing."""
-    from nodes import pdf_loader_node, chunking_embedding_node
+def build_indexing_graph():
+    """
+    Build graph for document indexing.
     
-    graph = Graph(name="indexing_pipeline")
+    Note: This is a placeholder. Document ingestion is handled
+    by enhanced_ingestion.py, not through the graph pipeline.
+    """
+    from .nodes import pdf_loader_node, chunking_embedding_node
     
-    graph.add_node("pdf_loader", pdf_loader_node, "Load and extract PDF content")
-    graph.add_node("chunking_embedding", chunking_embedding_node, "Chunk text and generate embeddings")
+    workflow = StateGraph(AgentState)
     
-    graph.add_edge("pdf_loader", "chunking_embedding")
+    workflow.add_node("pdf_loader", pdf_loader_node)
+    workflow.add_node("chunking_embedding", chunking_embedding_node)
     
-    graph.set_entry_point("pdf_loader")
-    graph.set_end_point("chunking_embedding")
+    workflow.add_edge("pdf_loader", "chunking_embedding")
+    workflow.add_edge("chunking_embedding", END)
     
-    return graph
+    workflow.set_entry_point("pdf_loader")
+    
+    return workflow.compile()
 
 
-def build_query_graph() -> Graph:
+def build_query_graph(enable_persistence: bool = True):
     """
-    Builds the FULL query graph with CONVERSATION MEMORY support
+    Build the full query processing graph with conversation memory support.
     
-    Pipeline with Memory:
-    1. Query Parser
-    2. Context Resolution (NEW) - Resolve pronouns, detect if needs retrieval
-    3A. Answer from History (NEW) - If can answer from memory
-    3B. Query Rewriter - If needs retrieval
-    4. Vector Search (Pass 1: Coarse) - Uses resolved standalone query
-    5. Cross-Encoder Reranking (Pass 2: Precision)
-    6. Multi-Hop Expansion (Pass 3: Cross-chapter)
-    7. Context Compression & Assembly (Pass 5: Token management)
-    8. LLM Reasoning (Final answer) - Includes referenced turn context
+    Pipeline Flow:
+    1. Query Parser → Parse user query
+    2. Context Resolution → Resolve pronouns, detect if needs retrieval
+    3A. Answer from History (if no retrieval needed)
+    3B. Query Rewriter → Retrieval Pipeline (if retrieval needed)
+    4. Vector Search (Pass 1)
+    5. Cross-Encoder Reranking (Pass 2)
+    6. Multi-Hop Expansion (Pass 3)
+    7. Cluster Expansion (Pass 4)
+    8. Context Assembly (Pass 5)
+    9. LLM Reasoning (Final answer)
     
-    Conditional Branching:
-    - After context_resolution, if needs_retrieval=False → answer_from_history
-    - After context_resolution, if needs_retrieval=True → query_rewriter → retrieval pipeline
+    Args:
+        enable_persistence: Whether to enable checkpointing
+    
+    Returns:
+        Compiled LangGraph application
     """
-    from .nodes import (
-        user_query_node, query_rewriter_node, vector_search_node, reranking_node,
-        multi_hop_expansion_node, cluster_expansion_node,
-        context_assembly_node, llm_reasoning_node
-    )
     
-    graph = Graph(name="rag_with_conversation_memory")
+    # Create StateGraph
+    workflow = StateGraph(AgentState)
     
-    # ============================================================
-    # Add all nodes
-    # ============================================================
+    # ========================================================================
+    # ADD ALL NODES
+    # ========================================================================
+    
+    print("Building LangGraph pipeline...")
     
     # Stage 1: Query Understanding
-    graph.add_node("query_parser", user_query_node, 
-                   "Parse user query and detect intent")
+    workflow.add_node("query_parser", user_query_node)
     
-    # Stage 2: Context Resolution (NEW)
-    graph.add_node("context_resolution", query_context_resolution_node,
-                   "Resolve query using conversation history")
+    # Stage 2: Context Resolution
+    workflow.add_node("context_resolution", query_context_resolution_node)
     
-    # Stage 3A: Answer from Memory (NEW - conditional)
-    graph.add_node("answer_from_history", answer_from_history_node,
-                   "Answer directly from conversation history")
+    # Stage 3A: Answer from Memory (conditional)
+    workflow.add_node("answer_from_history", answer_from_history_node)
     
     # Stage 3B: Query Rewriting (for retrieval path)
-    graph.add_node("query_rewriter", query_rewriter_node,
-                   "Generate alternative query formulations")
+    workflow.add_node("query_rewriter", query_rewriter_node)
     
-    # Stage 4-8: Retrieval Pipeline
-    graph.add_node("vector_search", vector_search_node, 
-                   "PASS 1: Coarse vector search")
-    graph.add_node("cross_encoder_reranking", reranking_node, 
-                   "PASS 2: Cross-encoder reranking")
-    graph.add_node("multi_hop_expansion", multi_hop_expansion_node, 
-                   "PASS 3: Multi-hop retrieval")
-    graph.add_node("cluster_expansion", cluster_expansion_node, 
-                   "PASS 4: Cluster-based expansion")
-    graph.add_node("context_compression", context_assembly_node, 
-                   "PASS 5: Context assembly")
-    graph.add_node("llm_reasoning", llm_reasoning_node, 
-                   "Generate final answer with LLM")
+    # Stage 4-9: Retrieval Pipeline
+    workflow.add_node("vector_search", vector_search_node)
+    workflow.add_node("cross_encoder_reranking", reranking_node)
+    workflow.add_node("multi_hop_expansion", multi_hop_expansion_node)
+    workflow.add_node("cluster_expansion", cluster_expansion_node)
+    workflow.add_node("context_compression", context_assembly_node)
+    workflow.add_node("llm_reasoning", llm_reasoning_node)
     
-    # ============================================================
-    # Connect nodes with edges
-    # ============================================================
+    # ========================================================================
+    # DEFINE EDGES
+    # ========================================================================
     
     # Always start with query parser
-    graph.add_edge("query_parser", "context_resolution")
+    workflow.add_edge("query_parser", "context_resolution")
     
-    # ============================================================
-    # CONDITIONAL BRANCHING based on needs_retrieval
-    # ============================================================
-    
-    # Path A: Can answer from history (skip retrieval)
-    graph.add_edge(
-        "context_resolution", 
-        "answer_from_history",
-        condition=lambda s: not s.needs_retrieval
-    )
-    
-    # Path B: Need retrieval (go to query rewriter)
-    graph.add_edge(
+    # CONDITIONAL BRANCHING after context resolution
+    workflow.add_conditional_edges(
         "context_resolution",
-        "query_rewriter",
-        condition=lambda s: s.needs_retrieval
+        route_after_context_resolution,
+        {
+            "answer_from_history": "answer_from_history",
+            "query_rewriter": "query_rewriter"
+        }
     )
     
-    # ============================================================
-    # Retrieval Pipeline (Path B continues)
-    # ============================================================
-    graph.add_edge("query_rewriter", "vector_search")
-    graph.add_edge("vector_search", "cross_encoder_reranking")
-    graph.add_edge("cross_encoder_reranking", "multi_hop_expansion")
-    graph.add_edge("multi_hop_expansion", "cluster_expansion")
-    graph.add_edge("cluster_expansion", "context_compression")
-    graph.add_edge("context_compression", "llm_reasoning")
+    # Retrieval Pipeline (linear flow)
+    workflow.add_edge("query_rewriter", "vector_search")
+    workflow.add_edge("vector_search", "cross_encoder_reranking")
+    workflow.add_edge("cross_encoder_reranking", "multi_hop_expansion")
+    workflow.add_edge("multi_hop_expansion", "cluster_expansion")
+    workflow.add_edge("cluster_expansion", "context_compression")
+    workflow.add_edge("context_compression", "llm_reasoning")
     
-    # ============================================================
-    # Set entry and end points
-    # ============================================================
-    graph.set_entry_point("query_parser")
+    # ========================================================================
+    # SET ENTRY AND EXIT POINTS
+    # ========================================================================
     
-    # Two possible end points:
-    graph.set_end_point("llm_reasoning")      # End after retrieval + LLM
-    graph.set_end_point("answer_from_history") # End after answering from memory
+    # Entry point
+    workflow.set_entry_point("query_parser")
     
-    return graph
-
-
+    # Terminal nodes (two possible endpoints)
+    workflow.add_edge("llm_reasoning", END)
+    workflow.add_edge("answer_from_history", END)
+    
+    # ========================================================================
+    # COMPILE GRAPH
+    # ========================================================================
+    
+    if enable_persistence:
+        # Use MemorySaver for session persistence
+        memory = MemorySaver()
+        app = workflow.compile(checkpointer=memory)
+        print("✅ LangGraph compiled WITH persistence")
+    else:
+        app = workflow.compile()
+        print("✅ LangGraph compiled WITHOUT persistence")
+    
+    return app
 
 
 def build_full_graph() -> Graph:
