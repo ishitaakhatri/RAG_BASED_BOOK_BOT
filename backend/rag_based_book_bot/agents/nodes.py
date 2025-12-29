@@ -6,6 +6,7 @@ CHANGES:
 - Using Google's Gemini (ChatGoogleGenerativeAI)
 - Enhanced metadata handling to preserve book_title throughout pipeline
 - Better chunk formatting with book information
+- [REF] Centralized Configuration
 """
 
 import re
@@ -32,24 +33,22 @@ from rag_based_book_bot.retrieval.multi_hop_expander import MultiHopExpander
 from rag_based_book_bot.retrieval.cluster_manager import ClusterManager
 from rag_based_book_bot.retrieval.context_compressor import EnhancedContextCompressor
 
+# NEW: Import Config
+from app_config import get_config
+settings = get_config()
 
-
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "coding-books")
-NAMESPACE = os.getenv("PINECONE_NAMESPACE", "books_rag")
-EMBEDDING_MODEL = "BAAI/bge-m3"
 
 # ============================================================================
 # LANGCHAIN LLM INITIALIZATION (Gemini)
 # ============================================================================
 
-# Initialize Ollama LLM at module level
+# Initialize LLM at module level using CONFIG
 llm = ChatGoogleGenerativeAI(
-    model="models/gemma-3-27b-it", # Use the official model string (Gemma 3 might require models/ prefix)
-    google_api_key=os.getenv("GOOGLE_API_KEY"),
-    temperature=0.7,
-    max_retries=0, # FIX: Prevents passing the unexpected keyword argument
-    convert_system_message_to_human=True # Keep this for Gemma models
+    model=settings.llm.model_name,
+    google_api_key=settings.llm.google_api_key,
+    temperature=settings.llm.temperature,
+    max_retries=0, 
+    convert_system_message_to_human=True 
 )
 
 # Global instances (lazy loading)
@@ -65,15 +64,15 @@ def get_pinecone_index():
     """Get Pinecone index (lazy initialization)"""
     global _pc, _index
     if _index is None:
-        _pc = Pinecone(api_key=PINECONE_API_KEY)
-        _index = _pc.Index(INDEX_NAME)
+        _pc = Pinecone(api_key=settings.vector_db.api_key)
+        _index = _pc.Index(settings.vector_db.index_name)
     return _index
 
 def get_embedding_model():
     """Get embedding model (lazy initialization)"""
     global _model
     if _model is None:
-        _model = SentenceTransformer(EMBEDDING_MODEL)
+        _model = SentenceTransformer(settings.vector_db.embedding_model)
     return _model
 
 def get_cross_encoder():
@@ -97,11 +96,15 @@ def get_cluster_manager():
         _cluster_manager = ClusterManager(n_clusters=100)
     return _cluster_manager
 
-def get_compressor(target_tokens=2000, max_tokens=4000):
+def get_compressor(target_tokens=None, max_tokens=None):
     """Get context compressor with configurable token limits"""
+    # Use explicit args if provided, else fall back to config
+    t_tokens = target_tokens or settings.retrieval.target_context_tokens
+    m_tokens = max_tokens or settings.retrieval.max_context_tokens
+    
     return EnhancedContextCompressor(
-        target_tokens=target_tokens,
-        max_tokens=max_tokens
+        target_tokens=t_tokens,
+        max_tokens=m_tokens
     )
 
 
@@ -152,11 +155,6 @@ def user_query_node(state: AgentState) -> AgentState:
 def query_rewriter_node(state: AgentState, num_variations: int = 3) -> AgentState:
     """
     Query Rewriting Node - NOW USES RESOLVED QUERY
-    
-    Generates alternative query formulations using the RESOLVED query
-    (which is already standalone after context resolution).
-    
-    No conversation history needed here - that's handled by context_resolution_node!
     """
     state.current_node = "query_rewriter"
     
@@ -165,16 +163,12 @@ def query_rewriter_node(state: AgentState, num_variations: int = 3) -> AgentStat
         return state
     
     try:
-        # ============================================================
-        # KEY CHANGE: Use resolved_query if available
-        # ============================================================
+        # Use resolved_query if available
         query_to_expand = state.resolved_query or state.parsed_query.raw_query
         
         print(f"\n[Query Rewriting] Generating {num_variations} alternative queries...")
         print(f"  Expanding query: '{query_to_expand}'")
         
-        # Generate variations using the STANDALONE query
-        # No conversation history needed - query is already resolved!
         rewritten = _generate_query_variations(
             query_to_expand,
             state.parsed_query.intent,
@@ -240,12 +234,10 @@ Generate {num_variations} alternative phrasings."""
         response = llm.invoke(messages)
         response_text = response.content.strip()
         
-        # --- FIXED BROKEN STRINGS BELOW ---
         if response_text.startswith("```"):
             response_text = response_text.replace("```json", "").replace("```", "")
         elif response_text.startswith("```"):
             response_text = response_text.replace("```", "")
-        # --- END FIX ---
 
         # Parse JSON array
         variations = json.loads(response_text)
@@ -466,12 +458,10 @@ def vector_search_node(state: AgentState) -> AgentState:
         return state
     
     try:
-        # Read configuration from state
+        # Read configuration from state (which has config defaults)
         top_k = state.pass1_k
         
-        # ============================================================
-        # KEY CHANGE: Use resolved_query as main query
-        # ============================================================
+        # Use resolved_query as main query
         main_query = state.resolved_query or state.parsed_query.raw_query
         
         # Collect all queries (resolved + rewritten variations)
@@ -502,7 +492,7 @@ def vector_search_node(state: AgentState) -> AgentState:
             results = index.query(
                 vector=query_embedding,
                 top_k=top_k,
-                namespace=NAMESPACE,
+                namespace=settings.vector_db.namespace,
                 filter=filter_dict if filter_dict else None,
                 include_metadata=True
             )
@@ -721,7 +711,7 @@ def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState
             results = index.query(
                 vector=emb,
                 top_k=top_k,
-                namespace=NAMESPACE,
+                namespace=settings.vector_db.namespace,
                 include_metadata=True
             )
             
@@ -852,18 +842,18 @@ def context_assembly_node(state: AgentState) -> AgentState:
         return state
     
     try:
-        # Read configuration from state
-        max_tokens = state.max_tokens
+        # Read configuration from state (which has config defaults)
+        limit = state.max_tokens if state.max_tokens > 0 else settings.retrieval.max_context_tokens
         
-        print(f"\n[PASS 5] Context Compression & Assembly (max_tokens={max_tokens})")
+        print(f"\n[PASS 5] Context Compression & Assembly (max_tokens={limit})")
         
         before_compression = len(state.reranked_chunks)
         
         # Try to get compressor, fallback to simple assembly if it fails
         try:
             compressor = get_compressor(
-                target_tokens=int(max_tokens * 0.8),
-                max_tokens=max_tokens
+                target_tokens=int(limit * 0.8),
+                max_tokens=limit
             )
             
             if compressor is None:
@@ -975,7 +965,7 @@ def llm_reasoning_node(state: AgentState) -> AgentState:
         return state
     
     if not state.assembled_context:
-        state = context_assembly_node(state, max_tokens=2500)
+        state = context_assembly_node(state)
     
     try:
         print(f"\n[FINAL] LLM Reasoning")

@@ -5,32 +5,35 @@ Uses BERT-based cross-encoder to compute true relevance scores
 between query and candidate chunks.
 
 This is the REAL Pass 2 - not just keyword matching.
+[REF] Centralized Configuration
 """
 
 from typing import List, Tuple
 from sentence_transformers import CrossEncoder
 import numpy as np
 
+# NEW: Import Config
+from app_config import get_config
+settings = get_config()
+
 
 class CrossEncoderReranker:
     """
     True cross-encoder reranking using BERT.
-    
-    Models available:
-    - cross-encoder/ms-marco-MiniLM-L-6-v2 (fast, 80MB)
-    - cross-encoder/ms-marco-MiniLM-L-12-v2 (better, 120MB)
-    - cross-encoder/ms-marco-TinyBERT-L-2-v2 (fastest, 16MB)
     """
     
-    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
+    def __init__(self, model_name: str = None):
         """
         Initialize cross-encoder model.
         
         Args:
             model_name: HuggingFace cross-encoder model name
         """
-        print(f"Loading cross-encoder: {model_name}")
-        self.model = CrossEncoder(model_name, max_length=512)
+        # Use config default if not provided
+        self.model_name = model_name or settings.retrieval.cross_encoder_model
+        
+        print(f"Loading cross-encoder: {self.model_name}")
+        self.model = CrossEncoder(self.model_name, max_length=512)
         print("✅ Cross-encoder loaded")
     
     def rerank(

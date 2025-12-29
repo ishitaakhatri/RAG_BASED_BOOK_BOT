@@ -26,11 +26,15 @@ from uuid import uuid4
 from datetime import datetime
 from dotenv import load_dotenv
 
+# NEW: Import Configuration
+from app_config import get_config
+
 load_dotenv()
+settings = get_config()
 
 # Configure logging for main application
 logger = logging.getLogger("main")
-logger.setLevel(logging.INFO)
+logger.setLevel(settings.log_level)
 logger.propagate = True
 
 from rag_based_book_bot.document_ingestion.enhanced_ingestion import (
@@ -50,7 +54,7 @@ from rag_based_book_bot.memory import (
     search_across_sessions
 )
 
-app = FastAPI(title="RAG Book Bot API", version="4.0.0")
+app = FastAPI(title="RAG Book Bot API", version="4.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -72,7 +76,7 @@ async def startup_event():
     tracker = get_progress_tracker()
     tracker.set_loop(loop)
     logger.info("✅ Initialized progress tracker with main event loop")
-    logger.info("🚀 RAG Book Bot API started successfully")
+    logger.info(f"🚀 RAG Book Bot API started successfully (Env: {settings.environment})")
     print("✅ Initialized progress tracker with main event loop")
 
 
@@ -99,10 +103,11 @@ class QueryRequest(BaseModel):
     book_filter: Optional[str] = None
     chapter_filter: Optional[str] = None
     top_k: int = 5
-    pass1_k: int = 50
-    pass2_k: int = 15
-    pass3_enabled: bool = True
-    max_tokens: int = 2500
+    # UPDATED: Use Config Defaults
+    pass1_k: int = settings.retrieval.pass1_top_k
+    pass2_k: int = settings.retrieval.pass2_top_k
+    pass3_enabled: bool = settings.retrieval.pass3_enabled
+    max_tokens: int = settings.retrieval.max_context_tokens
     force_retrieval: bool = False  # Override memory detection
 
 
@@ -189,12 +194,12 @@ def get_available_books() -> List[BookInfo]:
     """Retrieve all books from metadata namespace"""
     try:
         index = get_pinecone_index()
-        metadata_namespace = "books_metadata"
+        metadata_namespace = settings.vector_db.metadata_namespace
         
         try:
-            # ✅ FIX: Use 1024 dimensions for BGE-M3
+            # UPDATED: Use Config Dimension
             results = index.query(
-                vector=[1.0] * 1024,  # ← FIXED from 384
+                vector=[1.0] * settings.vector_db.dimension,
                 top_k=10000,
                 namespace=metadata_namespace,
                 include_metadata=True
@@ -230,14 +235,14 @@ def store_book_metadata(book_title: str, author: str, total_chunks: int, code_ch
     """Store book metadata in separate namespace"""
     try:
         index = get_pinecone_index()
-        metadata_namespace = "books_metadata"
+        metadata_namespace = settings.vector_db.metadata_namespace
         book_id = hashlib.md5(book_title.encode()).hexdigest()
         
-        # ✅ FIX: Use 1024 dimensions for BGE-M3
+        # UPDATED: Use Config Dimension
         index.upsert(
             vectors=[{
                 "id": book_id,
-                "values": [1.0] * 1024,  # ← FIXED from 384
+                "values": [1.0] * settings.vector_db.dimension,
                 "metadata": {
                     "book_title": book_title,
                     "author": author,
@@ -345,7 +350,7 @@ def fetch_chunk_details_by_ids(chunk_ids: List[str]) -> List[dict]:
         index = get_pinecone_index()
         
         # Fetch vectors by ID from Pinecone
-        fetch_response = index.fetch(ids=chunk_ids, namespace="books_rag")
+        fetch_response = index.fetch(ids=chunk_ids, namespace=settings.vector_db.namespace)
         
         sources = []
         for chunk_id in chunk_ids:
@@ -378,7 +383,7 @@ async def root():
     """Health check"""
     return {
         "status": "online",
-        "message": "RAG Book Bot API v4.0 - Production Ready",
+        "message": "RAG Book Bot API v4.1 - Production Ready",
         "features": [
             "graph_execution",
             "persistent_conversation_memory",
@@ -401,13 +406,6 @@ async def list_books():
 async def process_query(request: QueryRequest):
     """
     Process query with smart conversation memory
-    
-    Features:
-    - Loads conversation history from Pinecone
-    - LLM determines if context is needed
-    - Can answer from history without retrieval
-    - Saves conversation turn after response
-    - Robust error handling
     """
     try:
         print(f"\n{'='*80}")
@@ -569,11 +567,6 @@ def ingest_book(
 ):
     """
     Ingest a new PDF book with real-time progress tracking
-    
-    CHANGED: Now a synchronous 'def' (not 'async def'). 
-    FastAPI will run this in a separate thread pool, preventing the heavy
-    ingestion process from blocking the main event loop. This allows 
-    WebSockets to stay alive and send progress updates.
     """
     if not file.filename.endswith('.pdf'):
         logger.warning(f"❌ Rejected non-PDF file: {file.filename}")
@@ -602,10 +595,8 @@ def ingest_book(
             logger.info(f"📖 Using provided metadata: '{final_book_title}' by {final_author}")
         
         # Save temporarily
-        # Since this is a synchronous function now, we use standard sync IO
         logger.info("💾 Saving uploaded file to temporary location...")
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-            # Synchronous read from the UploadFile wrapper
             content = file.file.read()
             tmp_file.write(content)
             tmp_path = tmp_file.name
@@ -616,10 +607,13 @@ def ingest_book(
         
         # Ingest
         logger.info("⚙️ Initializing ingestor with configuration...")
+        
+        # UPDATED: Use Config settings for ingestion
         config = IngestorConfig(
-            similarity_threshold=0.75,
-            min_chunk_size=200,
-            max_chunk_size=1500,
+            similarity_threshold=settings.ingestion.similarity_threshold,
+            min_chunk_size=settings.ingestion.min_chunk_size,
+            max_chunk_size=settings.ingestion.max_chunk_size,
+            use_grobid=settings.ingestion.use_grobid,
             debug=False
         )
         ingestor = EnhancedBookIngestorPaddle(config=config)
@@ -683,9 +677,6 @@ def ingest_book(
 async def websocket_ingestion_progress(websocket: WebSocket):
     """
     WebSocket endpoint for real-time ingestion progress updates
-
-    Frontend connects with:
-    ws://localhost:8000/ws/ingest
     """
     await websocket.accept()
     tracker = get_progress_tracker()
@@ -871,15 +862,15 @@ async def health_check():
         
         return {
             "status": "healthy",
-            "version": "4.0.0",
+            "version": "4.1.0",
             "execution_mode": "graph-based",
             "memory_backend": "pinecone",
             "pinecone": "connected",
             "total_vectors": stats.get('total_vector_count', 0),
             "namespaces": {
-                "books": stats.get('namespaces', {}).get('books_rag', {}).get('vector_count', 0),
+                "books": stats.get('namespaces', {}).get(settings.vector_db.namespace, {}).get('vector_count', 0),
                 "conversations": stats.get('namespaces', {}).get('conversations', {}).get('vector_count', 0),
-                "metadata": stats.get('namespaces', {}).get('books_metadata', {}).get('vector_count', 0)
+                "metadata": stats.get('namespaces', {}).get(settings.vector_db.metadata_namespace, {}).get('vector_count', 0)
             },
             "books": len(get_available_books())
         }
@@ -888,9 +879,6 @@ async def health_check():
             "status": "unhealthy",
             "error": str(e)
         }
-    
-
-
 
 if __name__ == "__main__":
     import uvicorn

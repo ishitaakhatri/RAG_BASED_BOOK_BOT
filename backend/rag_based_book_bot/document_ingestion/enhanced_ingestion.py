@@ -2,6 +2,7 @@
 """
 ENHANCED Ingestor with GROBID + Hierarchical Chunking + Real-time Logging
 Optimized for Memory Efficiency and UI Responsiveness
+[REF] Centralized Configuration
 """
 import os
 import uuid
@@ -40,23 +41,26 @@ from rag_based_book_bot.document_ingestion.ingestion.grobid_parser import (
 # Import shared model getter
 from rag_based_book_bot.memory.embedding_utils import get_embedding_model
 
+# NEW: Import Config
+from app_config import get_config
+settings = get_config()
+
 # Config
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_INDEX = os.getenv("PINECONE_INDEX_NAME", "coding-books")
-PINECONE_NAMESPACE = os.getenv("PINECONE_NAMESPACE", "books_rag")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
+PINECONE_INDEX = settings.vector_db.index_name
+PINECONE_NAMESPACE = settings.vector_db.namespace
+EMBEDDING_MODEL = settings.vector_db.embedding_model
 
 # ✅ Configure logging at module level
 logger = logging.getLogger("enhanced_ingestion")
-logger.setLevel(logging.INFO)
+logger.setLevel(settings.log_level)
 logger.propagate = True
 
 @dataclass
 class IngestorConfig:
-    similarity_threshold: float = 0.75
-    min_chunk_size: int = 200
-    max_chunk_size: int = 1000
-    use_grobid: bool = True
+    similarity_threshold: float = settings.ingestion.similarity_threshold
+    min_chunk_size: int = settings.ingestion.min_chunk_size
+    max_chunk_size: int = settings.ingestion.max_chunk_size
+    use_grobid: bool = settings.ingestion.use_grobid
     debug: bool = False
 
 class SemanticBookIngestor:
@@ -68,7 +72,7 @@ class SemanticBookIngestor:
         
         self.hierarchical_chunker = HierarchicalChunker(
             max_chunk_tokens=self.config.max_chunk_size,
-            overlap=100
+            overlap=settings.ingestion.overlap
         )
         self.semantic_chunker = create_semantic_chunker(
             similarity_threshold=self.config.similarity_threshold,
@@ -79,26 +83,28 @@ class SemanticBookIngestor:
         
         self.grobid_parser = GrobidTEIParser()
         self.pinecone_index = self._init_pinecone()
-        # Check Grobid only if enabled in env and config
-        self.grobid_available = self._check_grobid_health() if (os.getenv("GROBID_ENABLED", "true").lower() == "true" and self.config.use_grobid) else False
+        
+        # Check Grobid
+        is_grobid_enabled = (os.getenv("GROBID_ENABLED", "true").lower() == "true") and self.config.use_grobid
+        self.grobid_available = self._check_grobid_health() if is_grobid_enabled else False
         
         # Get tracker
         self.tracker = get_progress_tracker()
         logger.info("✅ SemanticBookIngestor initialized")
 
     def _init_pinecone(self):
-        if not _HAS_PINECONE or not PINECONE_API_KEY:
+        if not _HAS_PINECONE or not settings.vector_db.api_key:
             logger.warning("Pinecone credentials missing.")
             return None
         try:
-            pc = Pinecone(api_key=PINECONE_API_KEY)
-            return pc.Index(PINECONE_INDEX)
+            pc = Pinecone(api_key=settings.vector_db.api_key)
+            return pc.Index(settings.vector_db.index_name)
         except Exception as e:
             logger.error(f"Pinecone init failed: {e}")
             return None
 
     def _check_grobid_health(self) -> bool:
-        grobid_url = os.getenv("GROBID_URL", "http://localhost:8070/api")
+        grobid_url = settings.ingestion.grobid_url
         try:
             resp = requests.get(f"{grobid_url}/isalive", timeout=2)
             return resp.status_code == 200
@@ -106,8 +112,9 @@ class SemanticBookIngestor:
             return False
 
     def _process_pdf_with_grobid(self, pdf_path: str) -> Optional[Dict]:
-        grobid_url = os.getenv("GROBID_URL", "http://localhost:8070/api")
-        grobid_timeout = int(os.getenv("GROBID_TIMEOUT", "300"))
+        grobid_url = settings.ingestion.grobid_url
+        grobid_timeout = settings.ingestion.grobid_timeout
+        
         try:
             logger.info("🔬 Sending PDF to GROBID...")
             url = f"{grobid_url}/processFulltextDocument"
@@ -260,9 +267,9 @@ class SemanticBookIngestor:
             return
 
         total_chunks = len(chunks)
-        # Process in small batches to save RAM and CPU time
-        # Reduced batch size ensures frequent CPU yielding and updates
-        BATCH_SIZE = 32 
+        
+        # UPDATED: Use Config Batch Size
+        BATCH_SIZE = settings.ingestion.batch_size
         
         logger.info(f"🧠 Starting stream processing for {total_chunks} chunks...")
         
