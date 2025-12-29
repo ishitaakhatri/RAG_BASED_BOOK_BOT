@@ -27,7 +27,7 @@ llm = ChatGoogleGenerativeAI(
     convert_system_message_to_human=True # Keep this for Gemma models
 )
 
-def query_context_resolution_node(state: AgentState) -> Dict:
+async def query_context_resolution_node(state: AgentState) -> Dict:
     """
     LLM-based context resolution node (LangGraph compatible)
     
@@ -147,7 +147,7 @@ Return ONLY valid JSON, no markdown formatting."""
             "current_node": "context_resolution"
         }
 
-def conversation_search_node(state: AgentState) -> Dict:
+async def conversation_search_node(state: AgentState) -> Dict:
     """
     Semantic search over conversation history (LangGraph compatible)
     
@@ -170,7 +170,7 @@ def conversation_search_node(state: AgentState) -> Dict:
 
 
 
-def answer_from_history_node(state: AgentState) -> Dict:
+async def answer_from_history_node(state: AgentState) -> Dict:
     """
     Answer directly from conversation history (LangGraph compatible)
     

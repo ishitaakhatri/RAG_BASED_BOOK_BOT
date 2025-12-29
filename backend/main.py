@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
 from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks
 import asyncio
 import json
 import logging
@@ -406,7 +407,7 @@ async def list_books():
 
 
 @app.post("/query", response_model=QueryResponse)
-async def process_query(request: QueryRequest):
+async def process_query(request: QueryRequest, background_tasks:BackgroundTasks):
     """
     Process query with smart conversation memory
     """
@@ -460,7 +461,7 @@ async def process_query(request: QueryRequest):
         }
         
         # Invoke the graph
-        final_state = query_graph_app.invoke(initial_state, config=config)
+        final_state = await query_graph_app.ainvoke(initial_state, config=config)
         
         print("[LANGGRAPH] Pipeline completed")
         
@@ -489,7 +490,7 @@ async def process_query(request: QueryRequest):
         turn_number = len(conversation_history) + 1
         
         # Save conversation turn in background (non-blocking)
-        def save_turn_background():
+        def save_turn_task():
             """Save conversation turn in background to avoid blocking response"""
             try:
                 print(f"\n[SAVING] Conversation turn to Pinecone...")
@@ -513,9 +514,7 @@ async def process_query(request: QueryRequest):
                 print(f"[ERROR] Background save failed: {e}")
         
         # Run save in background thread (non-blocking)
-        import threading
-        save_thread = threading.Thread(target=save_turn_background, daemon=True)
-        save_thread.start()
+        background_tasks.add_task(save_turn_task)
         
         # ====================================================================
         # BUILD RESPONSE

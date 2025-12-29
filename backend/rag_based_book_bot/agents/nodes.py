@@ -110,7 +110,7 @@ def get_compressor(target_tokens=None, max_tokens=None):
 # UPDATED: LLM-BASED QUERY PARSING NODE WITH LANGCHAIN
 # ============================================================================
 
-def user_query_node(state: AgentState) -> Dict:
+async def user_query_node(state: AgentState) -> Dict:
     """
     LLM-based query parsing (LangGraph compatible)
     
@@ -165,7 +165,7 @@ def user_query_node(state: AgentState) -> Dict:
 
 
 
-def query_rewriter_node(state: AgentState, num_variations: int = 3) -> Dict:
+async def query_rewriter_node(state: AgentState, num_variations: int = 3) -> Dict:
     """
     Query Rewriting Node - NOW USES RESOLVED QUERY
     """
@@ -209,7 +209,7 @@ def query_rewriter_node(state: AgentState, num_variations: int = 3) -> Dict:
     
 
 
-def _generate_query_variations(query: str, intent: QueryIntent, num_variations: int = 3) -> list[str]:
+async def _generate_query_variations(query: str, intent: QueryIntent, num_variations: int = 3) -> list[str]:
     """Generate alternative query formulations using Gemini"""
     
     system_prompt = """You are an expert at reformulating search queries to improve information retrieval.
@@ -330,7 +330,7 @@ def _fallback_query_variations(query: str, num_variations: int = 3) -> list[str]
 
 
 
-def _parse_query_with_llm(query: str) -> dict:
+async def _parse_query_with_llm(query: str) -> dict:
     """Intelligent query parsing using Gemini via LangChain"""
     
     system_prompt = """You are an expert query analyzer for a coding book learning assistant.
@@ -467,7 +467,7 @@ def chunking_embedding_node(state: AgentState) -> AgentState:
 # RETRIEVAL NODES (unchanged - no LLM calls here)
 # ============================================================================
 
-def vector_search_node(state: AgentState) -> Dict:
+async def vector_search_node(state: AgentState) -> Dict:
     """
     PASS 1: Vector Search (LangGraph compatible)
     
@@ -604,7 +604,7 @@ def vector_search_node(state: AgentState) -> Dict:
 
 
 
-def reranking_node(state: AgentState) -> Dict:
+async def reranking_node(state: AgentState) -> Dict:
     """
     PASS 2: Cross-Encoder Reranking (LangGraph compatible)
     
@@ -699,7 +699,7 @@ def reranking_node(state: AgentState) -> Dict:
         }
 
 
-def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState:
+async def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState:
     """PASS 3: Multi-Hop Retrieval - Now checks state.pass3_enabled"""
     state["current_node"] = "multi_hop_expansion"
 
@@ -821,7 +821,7 @@ def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState
     
     return state
 
-def cluster_expansion_node(state: AgentState) -> AgentState:
+async def cluster_expansion_node(state: AgentState) -> AgentState:
     """PASS 4: Cluster-Based Expansion"""
     state["current_node"] = "cluster_expansion"
     
@@ -868,7 +868,7 @@ def cluster_expansion_node(state: AgentState) -> AgentState:
 
 
 
-def context_assembly_node(state: AgentState) -> AgentState:
+async def context_assembly_node(state: AgentState) -> AgentState:
     """PASS 5: Compression & Assembly - Now reads max_tokens from state"""
     state["current_node"] = "context_assembly"
     
@@ -991,7 +991,7 @@ Always reference sources WITH BOOK TITLES and ensure code is correct and follows
 # UPDATED: LLM REASONING NODE WITH LANGCHAIN & GEMINI
 # ============================================================================
 
-def llm_reasoning_node(state: AgentState) -> Dict:
+async def llm_reasoning_node(state: AgentState) -> Dict:
     """
     Final LLM reasoning node (LangGraph compatible)
     
