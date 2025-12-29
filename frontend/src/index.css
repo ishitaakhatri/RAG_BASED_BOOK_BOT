@@ -230,3 +230,112 @@ input[type="checkbox"] {
     color: #f8fafc;
   }
 }
+
+/* ==================== INPUT STYLING - PERFECT RANGE SLIDER ==================== */
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 18px;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  display: block;
+}
+
+/* Chrome, Safari, Edge */
+input[type="range"]::-webkit-slider-runnable-track {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  background: linear-gradient(
+    90deg,
+    rgba(168, 85, 247, 0.4) 0%,
+    rgba(236, 72, 153, 0.4) 100%
+  );
+  border-radius: 5px;
+  border: 1px solid rgba(168, 85, 247, 0.6);
+  box-sizing: border-box;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(168, 85, 247, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.3);
+  border: none;
+  transition: all 0.2s ease;
+  margin-top: -6px;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 4px 12px rgba(168, 85, 247, 0.8),
+    0 0 0 2px rgba(255, 255, 255, 0.4);
+}
+
+/* Firefox */
+input[type="range"]::-moz-range-track {
+  background: linear-gradient(
+    90deg,
+    rgba(168, 85, 247, 0.4) 0%,
+    rgba(236, 72, 153, 0.4) 100%
+  );
+  height: 6px;
+  border-radius: 5px;
+  border: 1px solid rgba(168, 85, 247, 0.6);
+  box-sizing: border-box;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(168, 85, 247, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.3);
+  border: none;
+  transition: all 0.2s ease;
+}
+
+input[type="range"]::-moz-range-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 4px 12px rgba(168, 85, 247, 0.8),
+    0 0 0 2px rgba(255, 255, 255, 0.4);
+}
+
+/* Disabled state */
+input[type="range"]:disabled,
+input[type="range"][aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+input[type="checkbox"] {
+  cursor: pointer;
+}
+
+/* ==================== ACCESSIBILITY ==================== */
+
+:focus-visible {
+  outline: 2px solid #a855f7;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

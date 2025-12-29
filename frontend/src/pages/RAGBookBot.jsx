@@ -30,7 +30,7 @@ import {
   Copy,
   Download,
   ToggleLeft,
-  ToggleRight
+  ToggleRight,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
@@ -41,7 +41,7 @@ const BACKEND_DEFAULTS = {
   pass1K: 50,
   pass2K: 15,
   pass3Enabled: true,
-  maxTokens: 30000 
+  maxTokens: 30000,
 };
 
 export default function RAGBookBot() {
@@ -65,9 +65,11 @@ export default function RAGBookBot() {
   const [useBackendDefaults, setUseBackendDefaults] = useState(true);
   const [pass1K, setPass1K] = useState(BACKEND_DEFAULTS.pass1K);
   const [pass2K, setPass2K] = useState(BACKEND_DEFAULTS.pass2K);
-  const [pass3Enabled, setPass3Enabled] = useState(BACKEND_DEFAULTS.pass3Enabled);
+  const [pass3Enabled, setPass3Enabled] = useState(
+    BACKEND_DEFAULTS.pass3Enabled
+  );
   const [maxTokens, setMaxTokens] = useState(BACKEND_DEFAULTS.maxTokens);
-  
+
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -89,7 +91,6 @@ export default function RAGBookBot() {
     shouldAutoScrollRef.current = isAtBottom;
   };
 
-
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -109,13 +110,13 @@ export default function RAGBookBot() {
     let yPosition = 20;
 
     // Helper function to add text with wrapping
-    const addText = (text, size, style = 'normal', color = [0, 0, 0]) => {
+    const addText = (text, size, style = "normal", color = [0, 0, 0]) => {
       pdf.setFontSize(size);
-      pdf.setFont('helvetica', style);
+      pdf.setFont("helvetica", style);
       pdf.setTextColor(...color);
       const lines = pdf.splitTextToSize(text, maxWidth);
-      
-      lines.forEach(line => {
+
+      lines.forEach((line) => {
         if (yPosition > pageHeight - 20) {
           pdf.addPage();
           yPosition = 20;
@@ -128,21 +129,25 @@ export default function RAGBookBot() {
 
     // Add header
     pdf.setFillColor(139, 92, 246); // Purple color
-    pdf.rect(0, 0, pageWidth, 30, 'F');
+    pdf.rect(0, 0, pageWidth, 30, "F");
     pdf.setTextColor(255, 255, 255);
     pdf.setFontSize(20);
-    pdf.setFont('helvetica', 'bold');
-    pdf.text('RAG Book Bot - Chat History', margin, 20);
-    
+    pdf.setFont("helvetica", "bold");
+    pdf.text("RAG Book Bot - Chat History", margin, 20);
+
     yPosition = 40;
 
     // Add metadata
     pdf.setTextColor(100, 100, 100);
     pdf.setFontSize(10);
-    pdf.setFont('helvetica', 'normal');
+    pdf.setFont("helvetica", "normal");
     pdf.text(`Generated: ${new Date().toLocaleString()}`, margin, yPosition);
     yPosition += 5;
-    pdf.text(`Session ID: ${currentSessionId || "New Session"}`, margin, yPosition);
+    pdf.text(
+      `Session ID: ${currentSessionId || "New Session"}`,
+      margin,
+      yPosition
+    );
     yPosition += 5;
     pdf.text(`Book Filter: ${selectedBook}`, margin, yPosition);
     yPosition += 5;
@@ -162,22 +167,22 @@ export default function RAGBookBot() {
         yPosition = 20;
       }
 
-      if (msg.role === 'user') {
+      if (msg.role === "user") {
         // User message
         pdf.setFillColor(139, 92, 246); // Purple
-        pdf.roundedRect(margin, yPosition - 5, maxWidth, 8, 2, 2, 'F');
+        pdf.roundedRect(margin, yPosition - 5, maxWidth, 8, 2, 2, "F");
         pdf.setTextColor(255, 255, 255);
         pdf.setFontSize(11);
-        pdf.setFont('helvetica', 'bold');
+        pdf.setFont("helvetica", "bold");
         pdf.text(`Question ${Math.floor(idx / 2) + 1}`, margin + 3, yPosition);
         yPosition += 10;
 
         // User query content
         pdf.setTextColor(0, 0, 0);
         pdf.setFontSize(10);
-        pdf.setFont('helvetica', 'normal');
+        pdf.setFont("helvetica", "normal");
         const userLines = pdf.splitTextToSize(msg.content, maxWidth - 6);
-        userLines.forEach(line => {
+        userLines.forEach((line) => {
           if (yPosition > pageHeight - 20) {
             pdf.addPage();
             yPosition = 20;
@@ -186,32 +191,31 @@ export default function RAGBookBot() {
           yPosition += 5;
         });
         yPosition += 5;
-
       } else {
         // Assistant message
         pdf.setFillColor(34, 197, 94); // Green
-        pdf.roundedRect(margin, yPosition - 5, maxWidth, 8, 2, 2, 'F');
+        pdf.roundedRect(margin, yPosition - 5, maxWidth, 8, 2, 2, "F");
         pdf.setTextColor(255, 255, 255);
         pdf.setFontSize(11);
-        pdf.setFont('helvetica', 'bold');
-        pdf.text('Answer', margin + 3, yPosition);
+        pdf.setFont("helvetica", "bold");
+        pdf.text("Answer", margin + 3, yPosition);
         yPosition += 10;
 
         // Assistant response content
         pdf.setTextColor(0, 0, 0);
         pdf.setFontSize(10);
-        pdf.setFont('helvetica', 'normal');
-        
+        pdf.setFont("helvetica", "normal");
+
         // Clean markdown formatting from content
         let cleanContent = msg.content
-          .replace(/\*\*(.*?)\*\*/g, '$1')  // Remove bold
-          .replace(/\*(.*?)\*/g, '$1')      // Remove italic
-          .replace(/`(.*?)`/g, '$1')        // Remove code
-          .replace(/#{1,6}\s/g, '')         // Remove headers
-          .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1'); // Remove links
-        
+          .replace(/\*\*(.*?)\*\*/g, "$1") // Remove bold
+          .replace(/\*(.*?)\*/g, "$1") // Remove italic
+          .replace(/`(.*?)`/g, "$1") // Remove code
+          .replace(/#{1,6}\s/g, "") // Remove headers
+          .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1"); // Remove links
+
         const assistantLines = pdf.splitTextToSize(cleanContent, maxWidth - 6);
-        assistantLines.forEach(line => {
+        assistantLines.forEach((line) => {
           if (yPosition > pageHeight - 20) {
             pdf.addPage();
             yPosition = 20;
@@ -224,12 +228,12 @@ export default function RAGBookBot() {
         // Add sources if available
         if (msg.sources && msg.sources.length > 0) {
           pdf.setFontSize(9);
-          pdf.setFont('helvetica', 'bold');
+          pdf.setFont("helvetica", "bold");
           pdf.setTextColor(100, 100, 100);
           pdf.text(`Sources (${msg.sources.length}):`, margin + 3, yPosition);
           yPosition += 5;
 
-          pdf.setFont('helvetica', 'normal');
+          pdf.setFont("helvetica", "normal");
           pdf.setFontSize(8);
           msg.sources.slice(0, 5).forEach((src, i) => {
             if (yPosition > pageHeight - 20) {
@@ -239,10 +243,11 @@ export default function RAGBookBot() {
             let sourceText = `  ${i + 1}. ${src.book_title}`;
             if (src.chapter) sourceText += ` - ${src.chapter}`;
             if (src.page) sourceText += ` (Page ${src.page})`;
-            if (src.relevance) sourceText += ` - ${src.relevance.toFixed(0)}% relevant`;
-            
+            if (src.relevance)
+              sourceText += ` - ${src.relevance.toFixed(0)}% relevant`;
+
             const sourceLines = pdf.splitTextToSize(sourceText, maxWidth - 6);
-            sourceLines.forEach(line => {
+            sourceLines.forEach((line) => {
               if (yPosition > pageHeight - 20) {
                 pdf.addPage();
                 yPosition = 20;
@@ -251,9 +256,13 @@ export default function RAGBookBot() {
               yPosition += 4;
             });
           });
-          
+
           if (msg.sources.length > 5) {
-            pdf.text(`  ... and ${msg.sources.length - 5} more sources`, margin + 3, yPosition);
+            pdf.text(
+              `  ... and ${msg.sources.length - 5} more sources`,
+              margin + 3,
+              yPosition
+            );
             yPosition += 4;
           }
           yPosition += 3;
@@ -276,7 +285,7 @@ export default function RAGBookBot() {
       `Generated by RAG Book Bot - ${new Date().toLocaleDateString()}`,
       pageWidth / 2,
       pageHeight - 10,
-      { align: 'center' }
+      { align: "center" }
     );
 
     // Save the PDF
@@ -314,7 +323,7 @@ export default function RAGBookBot() {
           role: "user",
           content: turn.user_query,
         });
-        
+
         loadedMessages.push({
           role: "assistant",
           content: turn.assistant_response,
@@ -406,12 +415,14 @@ export default function RAGBookBot() {
       session_id: currentSessionId,
       book_filter: selectedBook === "all" ? null : selectedBook,
       top_k: 5,
-      ...(useBackendDefaults ? {} : {
-        pass1_k: pass1K,
-        pass2_k: pass2K,
-        pass3_enabled: pass3Enabled,
-        max_tokens: maxTokens,
-      }),
+      ...(useBackendDefaults
+        ? {}
+        : {
+            pass1_k: pass1K,
+            pass2_k: pass2K,
+            pass3_enabled: pass3Enabled,
+            max_tokens: maxTokens,
+          }),
     };
 
     try {
@@ -488,137 +499,139 @@ export default function RAGBookBot() {
   return (
     <div className="h-screen  bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex">
       {/* SESSIONS SIDEBAR */}
-<div
-  className={`${
-    showSessions ? "w-80" : "w-0"
-  } transition-all duration-300 bg-black/30 backdrop-blur-lg border-r border-white/10 overflow-hidden flex flex-col`}
->
-  <div className="p-4 border-b border-white/10">
-    <button
-      onClick={startNewChat}
-      className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all"
-    >
-      <Plus className="w-5 h-5" />
-      <span className="font-semibold">New Chat</span>
-    </button>
-  </div>
-
-  {/* Search Bar */}
-  <div className="p-4 border-b border-white/10">
-    <div className="relative">
-      <input
-        type="text"
-        value={searchQuery}
-        onChange={(e) => setSearchQuery(e.target.value)}
-        onKeyPress={(e) => e.key === "Enter" && searchSessions()}
-        placeholder="Search conversations..."
-        className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-purple-300 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-      />
-      <Search className="absolute left-3 top-2.5 w-4 h-4 text-purple-300" />
-      {searchQuery && (
-        <button
-          onClick={() => {
-            setSearchQuery("");
-            setSearchResults([]);
-          }}
-          className="absolute right-3 top-2.5 text-purple-300 hover:text-white"
-        >
-          <X className="w-4 h-4" />
-        </button>
-      )}
-    </div>
-    {isSearching && (
-      <div className="mt-2 text-xs text-purple-300 flex items-center">
-        <Loader className="w-3 h-3 animate-spin mr-2" />
-        Searching...
-      </div>
-    )}
-  </div>
-
-  {/* Sessions List - SCROLLABLE */}
-<div className="flex-1 overflow-y-scroll p-4 space-y-2 custom-scrollbar" style={{maxHeight: '980px'}}>
-    {searchResults.length > 0 ? (
-      <>
-        <div className="text-xs text-purple-300 mb-2">
-          {searchResults.length} results for "{searchQuery}"
-        </div>
-        {searchResults.map((result, idx) => (
-          <div
-            key={idx}
-            onClick={() => loadSession(result.session_id)}
-            className="bg-white/5 hover:bg-white/10 rounded-lg p-3 cursor-pointer transition-all border border-white/10 hover:border-purple-400/50"
+      <div
+        className={`${
+          showSessions ? "w-80" : "w-0"
+        } transition-all duration-300 bg-black/30 backdrop-blur-lg border-r border-white/10 overflow-hidden flex flex-col`}
+      >
+        <div className="p-4 border-b border-white/10">
+          <button
+            onClick={startNewChat}
+            className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all"
           >
-            <div className="text-sm text-white font-medium mb-1 truncate">
-              {result.user_query}
-            </div>
-            <div className="text-xs text-purple-200 mb-2 line-clamp-2">
-              {result.assistant_response}
-            </div>
-            <div className="flex items-center justify-between text-xs text-purple-300">
-              <span className="flex items-center">
-                <Clock className="w-3 h-3 mr-1" />
-                {formatTimestamp(result.timestamp)}
-              </span>
-              <span className="text-green-400">
-                {(result.relevance_score * 100).toFixed(0)}% match
-              </span>
-            </div>
+            <Plus className="w-5 h-5" />
+            <span className="font-semibold">New Chat</span>
+          </button>
+        </div>
+
+        {/* Search Bar */}
+        <div className="p-4 border-b border-white/10">
+          <div className="relative">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyPress={(e) => e.key === "Enter" && searchSessions()}
+              placeholder="Search conversations..."
+              className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-purple-300 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+            />
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-purple-300" />
+            {searchQuery && (
+              <button
+                onClick={() => {
+                  setSearchQuery("");
+                  setSearchResults([]);
+                }}
+                className="absolute right-3 top-2.5 text-purple-300 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
-        ))}
-      </>
-    ) : (
-      <>
-        {currentSessionId && (
-          <div className="mb-2 text-xs text-purple-300 font-semibold">
-            CURRENT CHAT
-          </div>
-        )}
-        {sessions.map((session, idx) => {
-          const isCurrent = session.session_id === currentSessionId;
-          return (
-            <div
-              key={idx}
-              onClick={() => loadSession(session.session_id)}
-              className={`rounded-lg p-3 cursor-pointer transition-all border ${
-                isCurrent
-                  ? "bg-purple-600/30 border-purple-400"
-                  : "bg-white/5 hover:bg-white/10 border-white/10 hover:border-purple-400/50"
-              }`}
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex-1 min-w-0">
+          {isSearching && (
+            <div className="mt-2 text-xs text-purple-300 flex items-center">
+              <Loader className="w-3 h-3 animate-spin mr-2" />
+              Searching...
+            </div>
+          )}
+        </div>
+
+        {/* Sessions List - SCROLLABLE */}
+        <div
+          className="flex-1 overflow-y-scroll p-4 space-y-2 custom-scrollbar"
+          style={{ maxHeight: "980px" }}
+        >
+          {searchResults.length > 0 ? (
+            <>
+              <div className="text-xs text-purple-300 mb-2">
+                {searchResults.length} results for "{searchQuery}"
+              </div>
+              {searchResults.map((result, idx) => (
+                <div
+                  key={idx}
+                  onClick={() => loadSession(result.session_id)}
+                  className="bg-white/5 hover:bg-white/10 rounded-lg p-3 cursor-pointer transition-all border border-white/10 hover:border-purple-400/50"
+                >
                   <div className="text-sm text-white font-medium mb-1 truncate">
-                    {session.title}
+                    {result.user_query}
                   </div>
-                  <div className="text-xs text-purple-200 truncate mb-2">
-                    {session.last_message}
+                  <div className="text-xs text-purple-200 mb-2 line-clamp-2">
+                    {result.assistant_response}
                   </div>
-                  <div className="flex items-center space-x-3 text-xs text-purple-300">
-                    <span className="flex items-center">
-                      <MessageCircle className="w-3 h-3 mr-1" />
-                      {session.message_count}
-                    </span>
+                  <div className="flex items-center justify-between text-xs text-purple-300">
                     <span className="flex items-center">
                       <Clock className="w-3 h-3 mr-1" />
-                      {formatTimestamp(session.updated_at)}
+                      {formatTimestamp(result.timestamp)}
+                    </span>
+                    <span className="text-green-400">
+                      {(result.relevance_score * 100).toFixed(0)}% match
                     </span>
                   </div>
                 </div>
-                <button
-                  onClick={(e) => deleteSession(session.session_id, e)}
-                  className="ml-2 p-1 hover:bg-red-500/20 rounded text-red-400 hover:text-red-300 transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </>
-    )}
-  </div>
-</div>
-
+              ))}
+            </>
+          ) : (
+            <>
+              {currentSessionId && (
+                <div className="mb-2 text-xs text-purple-300 font-semibold">
+                  CURRENT CHAT
+                </div>
+              )}
+              {sessions.map((session, idx) => {
+                const isCurrent = session.session_id === currentSessionId;
+                return (
+                  <div
+                    key={idx}
+                    onClick={() => loadSession(session.session_id)}
+                    className={`rounded-lg p-3 cursor-pointer transition-all border ${
+                      isCurrent
+                        ? "bg-purple-600/30 border-purple-400"
+                        : "bg-white/5 hover:bg-white/10 border-white/10 hover:border-purple-400/50"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-white font-medium mb-1 truncate">
+                          {session.title}
+                        </div>
+                        <div className="text-xs text-purple-200 truncate mb-2">
+                          {session.last_message}
+                        </div>
+                        <div className="flex items-center space-x-3 text-xs text-purple-300">
+                          <span className="flex items-center">
+                            <MessageCircle className="w-3 h-3 mr-1" />
+                            {session.message_count}
+                          </span>
+                          <span className="flex items-center">
+                            <Clock className="w-3 h-3 mr-1" />
+                            {formatTimestamp(session.updated_at)}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => deleteSession(session.session_id, e)}
+                        className="ml-2 p-1 hover:bg-red-500/20 rounded text-red-400 hover:text-red-300 transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </div>
+      </div>
 
       {/* MAIN CONTENT AREA */}
       <div className="flex-1 flex flex-col h-full min-h-0">
@@ -677,76 +690,75 @@ export default function RAGBookBot() {
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-full min-h-0">
           {" "}
           {/* Sidebar */}
-<div className="lg:col-span-1 space-y-4 overflow-hidden">
-  {/* Books List */}
-  <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20">
-    <h3 className="text-lg font-semibold text-white mb-3 flex items-center">
-      <Book className="w-5 h-5 mr-2" />
-      Available Books
-    </h3>
-    <div className="space-y-2">
-      <button
-        onClick={() => setSelectedBook("all")}
-        className={`w-full text-left px-3 py-2 rounded-lg transition-all ${
-          selectedBook === "all"
-            ? "bg-purple-600 text-white"
-            : "bg-white/5 text-purple-200 hover:bg-white/10"
-        }`}
-      >
-        All Books
-      </button>
-      {/* Scrollable container for books */}
-      <div className="max-h-[320px] overflow-y-auto pr-2 space-y-2 custom-scrollbar">
-        {books.map((book, idx) => (
-          <button
-            key={idx}
-            onClick={() => setSelectedBook(book.title)}
-            className={`w-full text-left px-3 py-2 rounded-lg transition-all truncate ${
-              selectedBook === book.title
-                ? "bg-purple-600 text-white"
-                : "bg-white/5 text-purple-200 hover:bg-white/10"
-            }`}
-            title={`${book.title} by ${book.author}`}
-          >
-            <div className="text-sm font-semibold">{book.title}</div>
-            <div className="text-xs opacity-75">by {book.author}</div>
-            {book.total_chunks > 0 && (
-              <div className="text-xs opacity-60 mt-1">
-                {book.total_chunks} chunks
+          <div className="lg:col-span-1 space-y-4 overflow-hidden">
+            {/* Books List */}
+            <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20">
+              <h3 className="text-lg font-semibold text-white mb-3 flex items-center">
+                <Book className="w-5 h-5 mr-2" />
+                Available Books
+              </h3>
+              <div className="space-y-2">
+                <button
+                  onClick={() => setSelectedBook("all")}
+                  className={`w-full text-left px-3 py-2 rounded-lg transition-all ${
+                    selectedBook === "all"
+                      ? "bg-purple-600 text-white"
+                      : "bg-white/5 text-purple-200 hover:bg-white/10"
+                  }`}
+                >
+                  All Books
+                </button>
+                {/* Scrollable container for books */}
+                <div className="max-h-[320px] overflow-y-auto pr-2 space-y-2 custom-scrollbar">
+                  {books.map((book, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setSelectedBook(book.title)}
+                      className={`w-full text-left px-3 py-2 rounded-lg transition-all truncate ${
+                        selectedBook === book.title
+                          ? "bg-purple-600 text-white"
+                          : "bg-white/5 text-purple-200 hover:bg-white/10"
+                      }`}
+                      title={`${book.title} by ${book.author}`}
+                    >
+                      <div className="text-sm font-semibold">{book.title}</div>
+                      <div className="text-xs opacity-75">by {book.author}</div>
+                      {book.total_chunks > 0 && (
+                        <div className="text-xs opacity-60 mt-1">
+                          {book.total_chunks} chunks
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
               </div>
-            )}
-          </button>
-        ))}
-      </div>
-    </div>
-  </div>
+            </div>
 
-  {/* Quick Stats */}
-  <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20">
-    <h3 className="text-lg font-semibold text-white mb-3">Stats</h3>
-    <div className="space-y-2 text-sm">
-      <div className="flex justify-between text-purple-200">
-        <span>Total Books:</span>
-        <span className="font-semibold text-white">
-          {books.length}
-        </span>
-      </div>
-      <div className="flex justify-between text-purple-200">
-        <span>Sessions:</span>
-        <span className="font-semibold text-white">
-          {sessions.length}
-        </span>
-      </div>
-      <div className="flex justify-between text-purple-200">
-        <span>Current Queries:</span>
-        <span className="font-semibold text-white">
-          {messages.filter((m) => m.role === "user").length}
-        </span>
-      </div>
-    </div>
-  </div>
-</div>
-
+            {/* Quick Stats */}
+            <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20">
+              <h3 className="text-lg font-semibold text-white mb-3">Stats</h3>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between text-purple-200">
+                  <span>Total Books:</span>
+                  <span className="font-semibold text-white">
+                    {books.length}
+                  </span>
+                </div>
+                <div className="flex justify-between text-purple-200">
+                  <span>Sessions:</span>
+                  <span className="font-semibold text-white">
+                    {sessions.length}
+                  </span>
+                </div>
+                <div className="flex justify-between text-purple-200">
+                  <span>Current Queries:</span>
+                  <span className="font-semibold text-white">
+                    {messages.filter((m) => m.role === "user").length}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
           {/* Main Chat Area */}
           <div className="lg:col-span-3 space-y-4 flex flex-col h-full min-h-0">
             {/* Settings Panel */}
@@ -757,7 +769,7 @@ export default function RAGBookBot() {
                     <Settings className="w-5 h-5 mr-2" />
                     5-Pass Retrieval Settings
                   </h3>
-                  
+
                   {/* 4. Toggle Switch for Server Defaults */}
                   <button
                     onClick={() => setUseBackendDefaults(!useBackendDefaults)}
@@ -773,7 +785,11 @@ export default function RAGBookBot() {
                 </div>
 
                 {/* Conditional Opacity for Settings */}
-                <div className={`grid grid-cols-2 gap-4 transition-opacity duration-300 ${useBackendDefaults ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
+                <div
+                  className={`grid grid-cols-2 gap-4 transition-opacity duration-300 ${
+                    useBackendDefaults ? "opacity-50" : "opacity-100"
+                  }`}
+                >
                   <div>
                     <label className="block text-sm font-medium text-purple-200 mb-2">
                       Pass 1: Initial Candidates
@@ -782,10 +798,12 @@ export default function RAGBookBot() {
                       type="range"
                       min="30"
                       max="100"
-                      disabled={useBackendDefaults}
+                      aria-disabled={useBackendDefaults}
                       value={pass1K}
                       onChange={(e) => setPass1K(parseInt(e.target.value))}
-                      className="w-full accent-purple-500"
+                      className={`w-full accent-purple-500 ${
+                        useBackendDefaults ? "pointer-events-none" : ""
+                      }`}
                     />
                     <span className="text-white text-sm">{pass1K} chunks</span>
                   </div>
@@ -800,7 +818,9 @@ export default function RAGBookBot() {
                       disabled={useBackendDefaults}
                       value={pass2K}
                       onChange={(e) => setPass2K(parseInt(e.target.value))}
-                      className="w-full accent-purple-500"
+                      className={`w-full accent-purple-500 ${
+                        useBackendDefaults ? "pointer-events-none" : ""
+                      }`}
                     />
                     <span className="text-white text-sm">{pass2K} chunks</span>
                   </div>
@@ -816,7 +836,9 @@ export default function RAGBookBot() {
                       disabled={useBackendDefaults}
                       value={maxTokens}
                       onChange={(e) => setMaxTokens(parseInt(e.target.value))}
-                      className="w-full accent-purple-500"
+                      className={`w-full accent-purple-500 ${
+                        useBackendDefaults ? "pointer-events-none" : ""
+                      }`}
                     />
                     <span className="text-white text-sm">
                       {maxTokens.toLocaleString()} tokens
@@ -829,7 +851,9 @@ export default function RAGBookBot() {
                         checked={pass3Enabled}
                         disabled={useBackendDefaults}
                         onChange={(e) => setPass3Enabled(e.target.checked)}
-                        className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 bg-white/10 border-white/30"
+                        className={`w-4 h-4 rounded text-purple-600 focus:ring-purple-500 bg-white/10 border-white/30 ${
+                          useBackendDefaults ? "pointer-events-none" : ""
+                        }`}
                       />
                       <span>Enable Multi-Hop (Pass 3)</span>
                     </label>
@@ -1013,58 +1037,60 @@ function MessageBubble({ message, id }) {
                 <h4 className="font-semibold text-purple-100">Answer</h4>
               </div>
               <div className="prose prose-invert prose-p:leading-relaxed prose-pre:bg-black/50 max-w-none text-gray-100">
-               <ReactMarkdown
-  components={{
-    code: ({ node, inline, className, children, ...props }) => {
-      const [copied, setCopied] = React.useState(false);
-      
-      const handleCopy = () => {
-        const codeText = String(children).replace(/\n$/, '');
-        navigator.clipboard.writeText(codeText);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      };
-      
-      if (inline) {
-        return (
-          <code className="bg-white/10 rounded px-1 py-0.5" {...props}>
-            {children}
-          </code>
-        );
-      }
-      
-      return (
-        <div className="relative group my-4">
-          <button
-            onClick={handleCopy}
-            className="absolute top-2 right-2 p-2 bg-purple-600/80 hover:bg-purple-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-200 z-10 flex items-center space-x-1.5 shadow-lg"
-          >
-            {copied ? (
-              <>
-                <CheckCircle className="w-4 h-4" />
-                <span className="text-xs">Copied!</span>
-              </>
-            ) : (
-              <>
-                <Copy className="w-4 h-4" />
-                <span className="text-xs">Copy</span>
-              </>
-            )}
-          </button>
-          <code
-            className="block bg-gradient-to-br from-gray-900 to-gray-800 p-4 pt-6 rounded-lg overflow-x-auto border border-white/10"
-            {...props}
-          >
-            {children}
-          </code>
-        </div>
-      );
-    },
-  }}
->
-  {message.content}
-</ReactMarkdown>
+                <ReactMarkdown
+                  components={{
+                    code: ({ node, inline, className, children, ...props }) => {
+                      const [copied, setCopied] = React.useState(false);
 
+                      const handleCopy = () => {
+                        const codeText = String(children).replace(/\n$/, "");
+                        navigator.clipboard.writeText(codeText);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 2000);
+                      };
+
+                      if (inline) {
+                        return (
+                          <code
+                            className="bg-white/10 rounded px-1 py-0.5"
+                            {...props}
+                          >
+                            {children}
+                          </code>
+                        );
+                      }
+
+                      return (
+                        <div className="relative group my-4">
+                          <button
+                            onClick={handleCopy}
+                            className="absolute top-2 right-2 p-2 bg-purple-600/80 hover:bg-purple-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-200 z-10 flex items-center space-x-1.5 shadow-lg"
+                          >
+                            {copied ? (
+                              <>
+                                <CheckCircle className="w-4 h-4" />
+                                <span className="text-xs">Copied!</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-4 h-4" />
+                                <span className="text-xs">Copy</span>
+                              </>
+                            )}
+                          </button>
+                          <code
+                            className="block bg-gradient-to-br from-gray-900 to-gray-800 p-4 pt-6 rounded-lg overflow-x-auto border border-white/10"
+                            {...props}
+                          >
+                            {children}
+                          </code>
+                        </div>
+                      );
+                    },
+                  }}
+                >
+                  {message.content}
+                </ReactMarkdown>
               </div>
             </div>
 
@@ -1099,7 +1125,7 @@ function MessageBubble({ message, id }) {
             )}
 
             {/* Sources Section */}
-         {message.sources && message.sources.length > 0 && (
+            {message.sources && message.sources.length > 0 && (
               <div className="mt-3">
                 <button
                   onClick={() => setShowSources(!showSources)}
@@ -1159,11 +1185,17 @@ function MessageBubble({ message, id }) {
                             {/* Chapter info with pill design */}
                             <div className="inline-flex items-center bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-400/30 rounded-lg px-3 py-2 text-xs text-purple-200">
                               <div className="w-1.5 h-1.5 bg-purple-400 rounded-full mr-2 animate-pulse" />
-                              <span className="font-medium">{source.chapter}</span>
+                              <span className="font-medium">
+                                {source.chapter}
+                              </span>
                               {source.page && (
                                 <>
-                                  <span className="mx-2 text-purple-400">•</span>
-                                  <span className="text-purple-300">Page {source.page}</span>
+                                  <span className="mx-2 text-purple-400">
+                                    •
+                                  </span>
+                                  <span className="text-purple-300">
+                                    Page {source.page}
+                                  </span>
                                 </>
                               )}
                             </div>
@@ -1350,3 +1382,57 @@ function EnhancedPipelineDisplay({ stages, stats }) {
     </div>
   );
 }
+
+/* Add this style block at the top level of your component file (or in your global CSS) */
+<style>
+{`
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  background: linear-gradient(to right, #8b5cf6, #ec4899);
+  border-radius: 3px;
+}
+input[type="range"]::-webkit-slider-thumb {
+  width: 18px;
+  height: 18px;
+  background: #fff;
+  border: 2px solid #8b5cf6;
+  border-radius: 50%;
+  margin-top: -6px;
+  cursor: pointer;
+  box-shadow: 0 0 2px #8b5cf6;
+}
+input[type="range"]:disabled::-webkit-slider-thumb {
+  background: #e5e7eb;
+  border-color: #a78bfa;
+}
+input[type="range"]:focus::-webkit-slider-thumb {
+  outline: 2px solid #8b5cf6;
+}
+input[type="range"]::-moz-range-track {
+  height: 6px;
+  background: linear-gradient(to right, #8b5cf6, #ec4899);
+  border-radius: 3px;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  background: #fff;
+  border: 2px solid #8b5cf6;
+  border-radius: 50%;
+  cursor: pointer;
+}
+input[type="range"]:disabled::-moz-range-thumb {
+  background: #e5e7eb;
+  border-color: #a78bfa;
+}
+input[type="range"]::-ms-fill-lower {
+  background: #8b5cf6;
+}
+input[type="range"]::-ms-fill-upper {
+  background: #ec4899;
+}
+input[type="range"] {
+  background: transparent;
+}
+`}
+</style>
