@@ -5,8 +5,8 @@ from typing import Optional
 
 class LLMConfig(BaseModel):
     # Model Settings
-    # Supports Google Gemini models (e.g. gemini-1.5-flash, gemini-1.5-pro)
-    model_name: str = Field(default="models/gemini-1.5-flash", env="LLM_MODEL_NAME")
+    # PRESERVED: Defaults to your specific model
+    model_name: str = Field(default="models/gemma-3-27b-it", env="LLM_MODEL_NAME")
     temperature: float = 0.7
     
     # Provider keys
