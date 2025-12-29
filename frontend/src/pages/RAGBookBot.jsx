@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import "tailwindcss/tailwind.css";
 import jsPDF from "jspdf";
 
-
 import {
   Search,
   BookOpen,
@@ -30,10 +29,20 @@ import {
   X,
   Copy,
   Download,
+  ToggleLeft,
+  ToggleRight
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
 const API_BASE_URL = "http://localhost:8000";
+
+// 1. Define Backend Defaults (Matches app_config.py)
+const BACKEND_DEFAULTS = {
+  pass1K: 50,
+  pass2K: 15,
+  pass3Enabled: true,
+  maxTokens: 30000 
+};
 
 export default function RAGBookBot() {
   const [query, setQuery] = useState("");
@@ -52,11 +61,13 @@ export default function RAGBookBot() {
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
 
-  // Pipeline settings
-  const [pass1K, setPass1K] = useState(50);
-  const [pass2K, setPass2K] = useState(15);
-  const [pass3Enabled, setPass3Enabled] = useState(true);
-  const [maxTokens, setMaxTokens] = useState(2500);
+  // 2. Initialize State with Backend Defaults
+  const [useBackendDefaults, setUseBackendDefaults] = useState(true);
+  const [pass1K, setPass1K] = useState(BACKEND_DEFAULTS.pass1K);
+  const [pass2K, setPass2K] = useState(BACKEND_DEFAULTS.pass2K);
+  const [pass3Enabled, setPass3Enabled] = useState(BACKEND_DEFAULTS.pass3Enabled);
+  const [maxTokens, setMaxTokens] = useState(BACKEND_DEFAULTS.maxTokens);
+  
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -388,20 +399,26 @@ export default function RAGBookBot() {
     setLoading(true);
     setQuery("");
 
+    // 3. Conditional Request Payload
+    // If using backend defaults, exclude pipeline params so backend uses its own config
+    const requestPayload = {
+      query,
+      session_id: currentSessionId,
+      book_filter: selectedBook === "all" ? null : selectedBook,
+      top_k: 5,
+      ...(useBackendDefaults ? {} : {
+        pass1_k: pass1K,
+        pass2_k: pass2K,
+        pass3_enabled: pass3Enabled,
+        max_tokens: maxTokens,
+      }),
+    };
+
     try {
       const response = await fetch(`${API_BASE_URL}/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          query,
-          session_id: currentSessionId,
-          book_filter: selectedBook === "all" ? null : selectedBook,
-          top_k: 5,
-          pass1_k: pass1K,
-          pass2_k: pass2K,
-          pass3_enabled: pass3Enabled,
-          max_tokens: maxTokens,
-        }),
+        body: JSON.stringify(requestPayload),
       });
 
       const data = await response.json();
@@ -735,11 +752,28 @@ export default function RAGBookBot() {
             {/* Settings Panel */}
             {showSettings && (
               <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
-                <h3 className="text-lg font-semibold text-white mb-4 flex items-center">
-                  <Settings className="w-5 h-5 mr-2" />
-                  5-Pass Retrieval Settings
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-white flex items-center">
+                    <Settings className="w-5 h-5 mr-2" />
+                    5-Pass Retrieval Settings
+                  </h3>
+                  
+                  {/* 4. Toggle Switch for Server Defaults */}
+                  <button
+                    onClick={() => setUseBackendDefaults(!useBackendDefaults)}
+                    className="flex items-center text-sm text-purple-200 hover:text-white transition-colors focus:outline-none"
+                  >
+                    {useBackendDefaults ? (
+                      <ToggleRight className="w-8 h-8 text-purple-500 mr-2" />
+                    ) : (
+                      <ToggleLeft className="w-8 h-8 text-gray-400 mr-2" />
+                    )}
+                    <span>Use Server Defaults</span>
+                  </button>
+                </div>
+
+                {/* Conditional Opacity for Settings */}
+                <div className={`grid grid-cols-2 gap-4 transition-opacity duration-300 ${useBackendDefaults ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
                   <div>
                     <label className="block text-sm font-medium text-purple-200 mb-2">
                       Pass 1: Initial Candidates
@@ -748,9 +782,10 @@ export default function RAGBookBot() {
                       type="range"
                       min="30"
                       max="100"
+                      disabled={useBackendDefaults}
                       value={pass1K}
                       onChange={(e) => setPass1K(parseInt(e.target.value))}
-                      className="w-full"
+                      className="w-full accent-purple-500"
                     />
                     <span className="text-white text-sm">{pass1K} chunks</span>
                   </div>
@@ -762,9 +797,10 @@ export default function RAGBookBot() {
                       type="range"
                       min="10"
                       max="30"
+                      disabled={useBackendDefaults}
                       value={pass2K}
                       onChange={(e) => setPass2K(parseInt(e.target.value))}
-                      className="w-full"
+                      className="w-full accent-purple-500"
                     />
                     <span className="text-white text-sm">{pass2K} chunks</span>
                   </div>
@@ -775,23 +811,25 @@ export default function RAGBookBot() {
                     <input
                       type="range"
                       min="1500"
-                      max="4000"
+                      max="32000"
                       step="100"
+                      disabled={useBackendDefaults}
                       value={maxTokens}
                       onChange={(e) => setMaxTokens(parseInt(e.target.value))}
-                      className="w-full"
+                      className="w-full accent-purple-500"
                     />
                     <span className="text-white text-sm">
-                      {maxTokens} tokens
+                      {maxTokens.toLocaleString()} tokens
                     </span>
                   </div>
                   <div>
-                    <label className="flex items-center space-x-2 text-purple-200 cursor-pointer">
+                    <label className="flex items-center space-x-2 text-purple-200 cursor-pointer mt-7">
                       <input
                         type="checkbox"
                         checked={pass3Enabled}
+                        disabled={useBackendDefaults}
                         onChange={(e) => setPass3Enabled(e.target.checked)}
-                        className="w-4 h-4"
+                        className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 bg-white/10 border-white/30"
                       />
                       <span>Enable Multi-Hop (Pass 3)</span>
                     </label>
