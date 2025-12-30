@@ -493,7 +493,7 @@ async def vector_search_node(state: AgentState) -> Dict:
     
     try:
         # Read configuration from state (which has config defaults)
-        top_k = state.pass1_k
+        top_k = state.get("pass1_k", 50)
         
         main_query = resolved_query or parsed_query.raw_query
         all_queries = [main_query] + rewritten_queries
