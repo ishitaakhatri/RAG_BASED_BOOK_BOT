@@ -32,7 +32,8 @@ import {
   ToggleLeft,
   ToggleRight,
   Library,
-  GraduationCap // New icon for Papers
+  GraduationCap, // New icon for Papers
+  Edit,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
@@ -54,6 +55,10 @@ export default function RAGBookBot() {
   const [selectedBook, setSelectedBook] = useState("all");
   const [showSettings, setShowSettings] = useState(false);
   const messagesEndRef = useRef(null);
+
+  // EDIT MESSAGE STATE
+  const [editingMessageIndex, setEditingMessageIndex] = useState(null);
+  const [editingText, setEditingText] = useState("");
 
   // SESSION MANAGEMENT
   const [sessions, setSessions] = useState([]);
@@ -502,6 +507,99 @@ export default function RAGBookBot() {
     }
   };
 
+  const handleEditQuery = (index, currentText) => {
+    setEditingMessageIndex(index);
+    setEditingText(currentText);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingMessageIndex(null);
+    setEditingText("");
+  };
+
+  const handleSubmitEdit = async (index) => {
+    if (!editingText.trim() || loading) return;
+
+    // Update the user message with edited text
+    const updatedMessages = [...messages];
+    updatedMessages[index].content = editingText;
+    setMessages(updatedMessages);
+
+    // Remove the assistant response that followed (if any)
+    if (index + 1 < messages.length && messages[index + 1].role === "assistant") {
+      updatedMessages.splice(index + 1, 1);
+      setMessages(updatedMessages);
+    }
+
+    setEditingMessageIndex(null);
+    setEditingText("");
+    setLoading(true);
+
+    // Submit the edited query
+    const requestPayload = {
+      query: editingText,
+      session_id: currentSessionId,
+      book_filter: selectedBook === "all" ? null : selectedBook,
+      search_mode: searchMode,
+      top_k: 5,
+      ...(useBackendDefaults
+        ? {}
+        : {
+            pass1_k: pass1K,
+            pass2_k: pass2K,
+            pass3_enabled: pass3Enabled,
+            max_tokens: maxTokens,
+          }),
+    };
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestPayload),
+      });
+
+      const data = await response.json();
+
+      if (data.error || data.detail) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `Error: ${data.error || data.detail}`,
+            error: true,
+          },
+        ]);
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: data.answer,
+            sources: data.sources,
+            stats: data.stats,
+            confidence: data.confidence,
+            pipeline_stages: data.pipeline_stages,
+            rewritten_queries: data.rewritten_queries || [],
+            answered_from_history: data.answered_from_history,
+            resolved_query: data.resolved_query,
+          },
+        ]);
+      }
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: `Failed to get response: ${error.message}`,
+          error: true,
+        },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const formatTimestamp = (timestamp) => {
     const date = new Date(timestamp * 1000);
     const now = new Date();
@@ -918,7 +1016,19 @@ export default function RAGBookBot() {
                   </div>
                 ) : (
                   messages.map((msg, idx) => (
-                    <MessageBubble key={idx} message={msg} id={`msg-${idx}`} />
+                    <MessageBubble
+                      key={idx}
+                      message={msg}
+                      id={`msg-${idx}`}
+                      index={idx}
+                      isEditing={editingMessageIndex === idx}
+                      editingText={editingText}
+                      onEditChange={setEditingText}
+                      onEdit={handleEditQuery}
+                      onCancelEdit={handleCancelEdit}
+                      onSubmitEdit={handleSubmitEdit}
+                      isLoading={loading}
+                    />
                   ))
                 )}
                 {loading && (
@@ -996,16 +1106,69 @@ export default function RAGBookBot() {
   );
 }
 
-function MessageBubble({ message, id }) {
+function MessageBubble({
+  message,
+  id,
+  index,
+  isEditing,
+  editingText,
+  onEditChange,
+  onEdit,
+  onCancelEdit,
+  onSubmitEdit,
+  isLoading,
+}) {
   const [showSources, setShowSources] = useState(false);
   const [showPipeline, setShowPipeline] = useState(false);
   const [showRewrittenQueries, setShowRewrittenQueries] = useState(false);
 
   if (message.role === "user") {
+    if (isEditing) {
+      return (
+        <div id={id} className="flex justify-end">
+          <div className="max-w-2xl bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg px-4 py-3 w-full">
+            <div className="flex gap-2">
+              <textarea
+                value={editingText}
+                onChange={(e) => onEditChange(e.target.value)}
+                className="flex-1 px-3 py-2 bg-white/20 border border-white/30 rounded-lg text-white placeholder-gray-200 focus:outline-none focus:ring-2 focus:ring-white resize-none"
+                rows="3"
+                disabled={isLoading}
+                autoFocus
+              />
+            </div>
+            <div className="flex justify-end space-x-2 mt-3">
+              <button
+                onClick={onCancelEdit}
+                disabled={isLoading}
+                className="px-3 py-1.5 bg-red-500/50 hover:bg-red-600 text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => onSubmitEdit(index)}
+                disabled={isLoading}
+                className="px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                {isLoading ? "Submitting..." : "Submit"}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
-      <div id={id} className="flex justify-end">
-        <div className="max-w-2xl bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg px-4 py-3">
+      <div id={id} className="flex justify-end group">
+        <div className="max-w-2xl bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg px-4 py-3 relative">
           <p className="whitespace-pre-wrap">{message.content}</p>
+          <button
+            onClick={() => onEdit(index, message.content)}
+            className="absolute top-2 right-2 p-2 bg-white/20 hover:bg-white/30 text-white rounded opacity-0 group-hover:opacity-100 transition-all duration-200"
+            title="Edit this query"
+          >
+            <Edit className="w-4 h-4" />
+          </button>
         </div>
       </div>
     );
