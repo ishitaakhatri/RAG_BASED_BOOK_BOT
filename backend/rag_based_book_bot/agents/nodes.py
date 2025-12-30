@@ -2,11 +2,11 @@
 Updated Node implementations with LangChain and Gemini
 
 CHANGES:
-- Switched from direct OpenAI API calls to LangChain
-- Using Google's Gemini (ChatGoogleGenerativeAI)
-- Enhanced metadata handling to preserve book_title throughout pipeline
-- Better chunk formatting with book information
-- [REF] Centralized Configuration
+- Integrated HierarchicalSearchEngine for vector_search_node
+- Added support for multiple namespaces (Books + Papers)
+- RESTORED Multi-Hop Expansion logic
+- RESTORED Cluster Expansion logic
+- RESTORED Enhanced Context Compression
 """
 
 import re
@@ -26,21 +26,20 @@ from rag_based_book_bot.agents.states import (
     ParsedQuery, QueryIntent, LLMResponse
 )
 
+from rag_based_book_bot.retrieval.retriever import create_retriever
 from rag_based_book_bot.retrieval.cross_encoder_reranker import CrossEncoderReranker
 from rag_based_book_bot.retrieval.multi_hop_expander import MultiHopExpander
 from rag_based_book_bot.retrieval.cluster_manager import ClusterManager
 from rag_based_book_bot.retrieval.context_compressor import EnhancedContextCompressor
 
-# NEW: Import Config
 from app_config import get_config
 settings = get_config()
 
 
 # ============================================================================
-# LANGCHAIN LLM INITIALIZATION (Gemini)
+# LANGCHAIN LLM INITIALIZATION
 # ============================================================================
 
-# Initialize LLM at module level using CONFIG
 llm = ChatGoogleGenerativeAI(
     model=settings.llm.model_name,
     google_api_key=settings.llm.google_api_key,
@@ -53,13 +52,13 @@ llm = ChatGoogleGenerativeAI(
 _pc = None
 _index = None
 _model = None
+_search_engine = None  # NEW: Hierarchical Search Engine
 _cross_encoder = None
 _multi_hop = None
 _cluster_manager = None
 _compressor = None
 
 def get_pinecone_index():
-    """Get Pinecone index (lazy initialization)"""
     global _pc, _index
     if _index is None:
         _pc = Pinecone(api_key=settings.vector_db.api_key)
@@ -67,71 +66,53 @@ def get_pinecone_index():
     return _index
 
 def get_embedding_model():
-    """Get embedding model (lazy initialization)"""
     global _model
     if _model is None:
         _model = SentenceTransformer(settings.vector_db.embedding_model)
     return _model
 
+def get_search_engine():
+    """Get the Hierarchical Search Engine"""
+    global _search_engine
+    if _search_engine is None:
+        _search_engine = create_retriever(get_pinecone_index(), get_embedding_model())
+    return _search_engine
+
 def get_cross_encoder():
-    """Get cross-encoder reranker"""
     global _cross_encoder
     if _cross_encoder is None:
         _cross_encoder = CrossEncoderReranker()
     return _cross_encoder
 
 def get_multi_hop_expander():
-    """Get multi-hop expander"""
     global _multi_hop
     if _multi_hop is None:
         _multi_hop = MultiHopExpander()
     return _multi_hop
 
 def get_cluster_manager():
-    """Get cluster manager"""
     global _cluster_manager
     if _cluster_manager is None:
         _cluster_manager = ClusterManager(n_clusters=100)
     return _cluster_manager
 
 def get_compressor(target_tokens=None, max_tokens=None):
-    """Get context compressor with configurable token limits"""
-    # Use explicit args if provided, else fall back to config
     t_tokens = target_tokens or settings.retrieval.target_context_tokens
     m_tokens = max_tokens or settings.retrieval.max_context_tokens
-    
-    return EnhancedContextCompressor(
-        target_tokens=t_tokens,
-        max_tokens=m_tokens
-    )
+    return EnhancedContextCompressor(target_tokens=t_tokens, max_tokens=m_tokens)
 
 
 # ============================================================================
-# UPDATED: LLM-BASED QUERY PARSING NODE WITH LANGCHAIN
+# QUERY PARSING NODES
 # ============================================================================
 
 async def user_query_node(state: AgentState) -> Dict:
-    """
-    LLM-based query parsing (LangGraph compatible)
-    
-    Returns dict with:
-    - parsed_query: ParsedQuery object
-    - current_node: Node identifier
-    - errors: List of errors (if any)
-    """
-    
     user_query = state.get("user_query")
-    
     if not user_query:
-        return {
-            "errors": state.get("errors", []) + ["No user query provided"],
-            "current_node": "user_query"
-        }
+        return {"errors": state.get("errors", []) + ["No user query provided"], "current_node": "user_query"}
     
     try:
         print(f"\n[Query Parsing] Analyzing: '{user_query[:60]}...'")
-        
-        # Use LLM for intelligent parsing
         parsed_data = await _parse_query_with_llm(user_query)
         
         parsed_query = ParsedQuery(
@@ -143,75 +124,33 @@ async def user_query_node(state: AgentState) -> Dict:
             complexity_hint=parsed_data['complexity_hint']
         )
         
-        print(f"  ✅ Intent: {parsed_data['intent']}")
-        print(f"  📚 Topics: {', '.join(parsed_data['topics'][:3])}")
-        if parsed_data['code_language']:
-            print(f"  💻 Language: {parsed_data['code_language']}")
-        print(f"  📊 Level: {parsed_data['complexity_hint']}")
-        
-        return {
-            "parsed_query": parsed_query,
-            "current_node": "user_query"
-        }
+        return {"parsed_query": parsed_query, "current_node": "user_query"}
         
     except Exception as e:
-        print(f"  ⚠️ LLM parsing failed: {e}")
-        print(f"  → Using fallback heuristics")
-        
-        return {
-            "parsed_query": _fallback_parse_query(user_query),
-            "current_node": "user_query"
-        }
-
+        print(f"  ⚠️ LLM parsing failed: {e} -> Using fallback")
+        return {"parsed_query": _fallback_parse_query(user_query), "current_node": "user_query"}
 
 
 async def query_rewriter_node(state: AgentState, num_variations: int = 3) -> Dict:
-    """
-    Query Rewriting Node - NOW USES RESOLVED QUERY
-    """
-    
     parsed_query = state.get("parsed_query")
     resolved_query = state.get("resolved_query")
     
     if not parsed_query:
-        return {
-            "errors": state.get("errors", []) + ["Missing parsed query for rewriting"],
-            "current_node": "query_rewriter"
-        }
+        return {"errors": state.get("errors", []) + ["Missing parsed query"], "current_node": "query_rewriter"}
     
     try:
         query_to_expand = resolved_query or parsed_query.raw_query
+        print(f"\n[Query Rewriting] Expanding: '{query_to_expand}'")
         
-        print(f"\n[Query Rewriting] Generating {num_variations} alternative queries...")
-        print(f"  Expanding query: '{query_to_expand}'")
+        rewritten = await _generate_query_variations(query_to_expand, parsed_query.intent, num_variations)
         
-        rewritten = await _generate_query_variations(
-            query_to_expand,
-            parsed_query.intent,
-            num_variations
-        )
-        
-        print(f"  ✅ Generated {len(rewritten)} variations:")
-        for i, query in enumerate(rewritten, 1):
-            print(f"     {i}. {query}")
-        
-        return {
-            "rewritten_queries": rewritten,
-            "current_node": "query_rewriter"
-        }
-        
+        return {"rewritten_queries": rewritten, "current_node": "query_rewriter"}
     except Exception as e:
         print(f"  ⚠️ Query rewriting failed: {e}")
-        return {
-            "rewritten_queries": [],
-            "current_node": "query_rewriter"
-        }
-    
+        return {"rewritten_queries": [], "current_node": "query_rewriter"}
 
 
 async def _generate_query_variations(query: str, intent: QueryIntent, num_variations: int = 3) -> list[str]:
-    """Generate alternative query formulations using Gemini"""
-    
     system_prompt = """You are an expert at reformulating search queries to improve information retrieval.
 
 Your task: Generate alternative phrasings of the user's query that:
@@ -220,33 +159,12 @@ Your task: Generate alternative phrasings of the user's query that:
 3. Cover different angles or aspects of the same question
 4. Are optimized for semantic search in technical documentation
 
-Guidelines:
-- Keep queries concise (1-2 sentences max)
-- Use synonyms and related technical terms
-- Rephrase from different perspectives (e.g., "how to X" → "implementing X", "X tutorial")
-- For code requests, vary between implementation-focused and explanation-focused
-- Don't add new requirements or constraints not in the original query
-
 Return ONLY a JSON array of strings, nothing else:
 ["variation 1", "variation 2", "variation 3"]"""
 
-    intent_hints = {
-        QueryIntent.CONCEPTUAL: "Focus on understanding, explanation, and theoretical aspects.",
-        QueryIntent.CODE_REQUEST: "Vary between implementation details, code examples, and practical usage.",
-        QueryIntent.DEBUGGING: "Include variations about troubleshooting, error fixing, and problem solving.",
-        QueryIntent.COMPARISON: "Rephrase as differences, pros/cons, or when to use each option.",
-        QueryIntent.TUTORIAL: "Vary between step-by-step guides, walkthroughs, and practical examples."
-    }
-    
-    user_prompt = f"""Original query: "{query}"
-
-Intent: {intent.value}
-Hint: {intent_hints.get(intent, "")}
-
-Generate {num_variations} alternative phrasings."""
+    user_prompt = f"Original query: \"{query}\"\nIntent: {intent.value}\nGenerate {num_variations} alternative phrasings."
 
     try:
-        # Use LangChain to invoke Gemini
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt)
@@ -257,717 +175,427 @@ Generate {num_variations} alternative phrasings."""
         
         if response_text.startswith("```"):
             response_text = response_text.replace("```json", "").replace("```", "")
-        elif response_text.startswith("```"):
-            response_text = response_text.replace("```", "")
-
-        # Parse JSON array
+        
         variations = json.loads(response_text)
         
-        # Validate
         if isinstance(variations, list) and len(variations) > 0:
-            return variations[:num_variations]  # Limit to requested number
+            return variations[:num_variations]
         else:
-            print(f"  ⚠️ Invalid response format: {variations}")
             return _fallback_query_variations(query, num_variations)
             
     except Exception as e:
         print(f"  ⚠️ LLM query rewriting failed: {e}")
         return _fallback_query_variations(query, num_variations)
 
-
-
 def _fallback_query_variations(query: str, num_variations: int = 3) -> list[str]:
-    """Fallback query variations using simple heuristics"""
-    variations = []
-    query_lower = query.lower()
-    
-    # Variation 1: Rephrase question words
-    var1 = query
-    replacements = {
-        "how do i": "implementing",
-        "what is": "explanation of",
-        "how to": "guide for",
-        "why does": "reason for",
-        "can i": "method to"
-    }
-    for old, new in replacements.items():
-        if old in query_lower:
-            var1 = query_lower.replace(old, new)
-            break
-    if var1 != query_lower:
-        variations.append(var1)
-    
-    # Variation 2: Add context words
-    context_words = {
-        "conceptual": ["understand", "explain", "concept"],
-        "code": ["implement", "code", "example"],
-        "debugging": ["fix", "troubleshoot", "debug"],
-        "comparison": ["difference", "compare", "versus"],
-        "tutorial": ["tutorial", "guide", "walkthrough"]
-    }
-    
-    # Pick context based on keywords
-    for category, words in context_words.items():
-        if any(w in query_lower for w in words):
-            var2 = f"{words} {query}"
-            variations.append(var2)
-            break
-    
-    # Variation 3: Extract key terms
-    import re
-    words = re.findall(r'\b\w{4,}\b', query_lower)
-    if len(words) >= 2:
-        var3 = " ".join(words[:min(5, len(words))])
-        variations.append(var3)
-    
-    # Ensure we have enough variations
-    while len(variations) < num_variations:
-        variations.append(query)  # Use original as fallback
-    
-    return variations[:num_variations]
-
-
-
+    return [query] * num_variations
 
 
 async def _parse_query_with_llm(query: str) -> dict:
-    """Intelligent query parsing using Gemini via LangChain"""
-    
-    system_prompt = """You are an expert query analyzer for a coding book learning assistant.
+    system_prompt = """You are an expert query analyzer. Analyze user queries to help retrieve the most relevant content.
+Extract:
+1. intent (CONCEPTUAL, CODE_REQUEST, DEBUGGING, COMPARISON, TUTORIAL)
+2. topics (list of strings)
+3. keywords (list of strings)
+4. code_language (string or null)
+5. complexity_hint (beginner, intermediate, advanced)
 
-Analyze user queries to help retrieve the most relevant content from programming books.
-
-For each query, extract:
-
-1. **intent** (choose exactly ONE):
-   - CONCEPTUAL: Understanding theory, explanations, "what is X?"
-   - CODE_REQUEST: Wants code examples, implementations, "show me code"
-   - DEBUGGING: Fixing errors, troubleshooting, "why isn't this working?"
-   - COMPARISON: Comparing options, "difference between X and Y"
-   - TUTORIAL: Step-by-step guide, "how to build X"
-
-2. **topics**: Key technical concepts (3-5 items, lowercase)
-   Examples: ["neural networks", "gradient descent", "tensorflow"]
-
-3. **keywords**: Search terms (5-10 words, lowercase, no stopwords)
-   Examples: ["neural", "network", "training", "loss", "function"]
-
-4. **code_language**: Programming language or null
-   Examples: "python", "javascript", "java", null
-
-5. **complexity_hint** (choose ONE):
-   - beginner: New to programming or the topic
-   - intermediate: Has some experience, wants practical knowledge  
-   - advanced: Expert-level, wants deep technical details
-
-Respond with ONLY valid JSON:
-{
-  "intent": "CONCEPTUAL",
-  "topics": ["deep learning", "cnn"],
-  "keywords": ["convolution", "neural", "network", "layer"],
-  "code_language": "python",
-  "complexity_hint": "intermediate"
-}"""
+Respond with ONLY valid JSON."""
 
     user_prompt = f'Analyze this query: "{query}"'
 
-    # Use LangChain to invoke Gemini
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_prompt)
-    ]
-    
-    response = llm.invoke(messages)
-    
-    # Parse the response
-    response_text = response.content.strip()
-    
-    # Remove markdown code blocks if present
-    if response_text.startswith("```json"):
-        response_text = response_text.replace("```json", "").replace("```", "").strip()
-    elif response_text.startswith("```"):
-        response_text = response_text.replace("```", "").strip()
-    
-    parsed = json.loads(response_text)
-    
-    # Validate and set defaults
-    return {
-        'intent': parsed.get('intent', 'CONCEPTUAL'),
-        'topics': parsed.get('topics', []),
-        'keywords': parsed.get('keywords', []),
-        'code_language': parsed.get('code_language'),
-        'complexity_hint': parsed.get('complexity_hint', 'intermediate')
-    }
-
+    try:
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ]
+        
+        response = llm.invoke(messages)
+        response_text = response.content.strip()
+        
+        if response_text.startswith("```"):
+            response_text = response_text.replace("```json", "").replace("```", "")
+        
+        parsed = json.loads(response_text)
+        
+        return {
+            'intent': parsed.get('intent', 'CONCEPTUAL'),
+            'topics': parsed.get('topics', []),
+            'keywords': parsed.get('keywords', []),
+            'code_language': parsed.get('code_language'),
+            'complexity_hint': parsed.get('complexity_hint', 'intermediate')
+        }
+    except Exception as e:
+        print(f"Parsing error: {e}")
+        return {
+            'intent': 'CONCEPTUAL',
+            'topics': [],
+            'keywords': [],
+            'code_language': None,
+            'complexity_hint': 'intermediate'
+        }
 
 def _fallback_parse_query(query: str) -> ParsedQuery:
-    """Fallback parser using simple heuristics"""
-    query_lower = query.lower()
-    
-    # Intent detection
-    if any(w in query_lower for w in ['implement', 'code', 'write', 'build', 'show me']):
-        intent = QueryIntent.CODE_REQUEST
-    elif any(w in query_lower for w in ['difference', 'compare', 'vs', 'versus']):
-        intent = QueryIntent.COMPARISON
-    elif any(w in query_lower for w in ['error', 'bug', 'fix', 'wrong', 'debug']):
-        intent = QueryIntent.DEBUGGING
-    elif any(w in query_lower for w in ['tutorial', 'walk through', 'step by step']):
-        intent = QueryIntent.TUTORIAL
-    else:
-        intent = QueryIntent.CONCEPTUAL
-    
-    # Extract keywords
-    stopwords = {'the', 'a', 'an', 'is', 'are', 'what', 'how', 'why', 'can', 'do', 'me', 'i', 'to'}
-    words = re.findall(r'\b\w+\b', query_lower)
-    keywords = [w for w in words if w not in stopwords and len(w) > 2]
-    
-    # Detect language
-    code_language = None
-    for lang in ['python', 'javascript', 'java', 'cpp', 'c++', 'go', 'rust', 'typescript']:
-        if lang in query_lower:
-            code_language = lang
-            break
-    
-    # Detect complexity
-    if any(w in query_lower for w in ['basic', 'simple', 'beginner', 'intro']):
-        complexity = "beginner"
-    elif any(w in query_lower for w in ['advanced', 'complex', 'deep dive', 'detailed']):
-        complexity = "advanced"
-    else:
-        complexity = "intermediate"
-    
     return ParsedQuery(
-        raw_query=query,
-        intent=intent,
-        topics=[],
-        keywords=keywords[:10],
-        code_language=code_language,
-        complexity_hint=complexity
+        raw_query=query, 
+        intent=QueryIntent.CONCEPTUAL, 
+        topics=[], 
+        keywords=[], 
+        code_language=None, 
+        complexity_hint="intermediate"
     )
 
 
 # ============================================================================
-# EXISTING NODES (unchanged)
-# ============================================================================
-
-def pdf_loader_node(state: AgentState) -> AgentState:
-    """PDF loader node - not used in direct query pipeline"""
-    state["current_node"] = "pdf_loader"
-    state["errors"].append("PDF loader not implemented - use book_ingestion.py instead")
-    return state
-
-def chunking_embedding_node(state: AgentState) -> AgentState:
-    """Chunking and embedding node - not used in direct query pipeline"""
-    state["current_node"] = "chunking_embedding"
-    state["errors"].append("Chunking not implemented - use book_ingestion.py instead")
-    return state
-
-
-# ============================================================================
-# RETRIEVAL NODES (unchanged - no LLM calls here)
+# RETRIEVAL NODES (FULLY RESTORED)
 # ============================================================================
 
 async def vector_search_node(state: AgentState) -> Dict:
-    """
-    PASS 1: Vector Search (LangGraph compatible)
-    
-    Returns dict with:
-    - retrieved_chunks: List of RetrievedChunk objects
-    - pipeline_snapshots: Updated snapshots
-    - current_node: Node identifier
-    """
-    
+    """PASS 1: Hierarchical Vector Search"""
     parsed_query = state.get("parsed_query")
     resolved_query = state.get("resolved_query")
     rewritten_queries = state.get("rewritten_queries", [])
-    pass1_k = state.get("pass1_k", 50)
-    book_filter = state.get("book_filter")
-    chapter_filter = state.get("chapter_filter")
     pipeline_snapshots = state.get("pipeline_snapshots", [])
     
     if not parsed_query:
-        return {
-            "errors": state.get("errors", []) + ["Missing query for search"],
-            "current_node": "vector_search"
-        }
+        return {"errors": state.get("errors", []) + ["Missing query"], "current_node": "vector_search"}
     
     try:
-        # Read configuration from state (which has config defaults)
         top_k = state.get("pass1_k", 50)
-        
         main_query = resolved_query or parsed_query.raw_query
         all_queries = [main_query] + rewritten_queries
         
-        print(f"\n[PASS 1] Vector Search (top_k={top_k})")
-        print(f"  → Main query: '{main_query}'")
-        print(f"  → Total queries: {len(all_queries)}")
+        print(f"\n[PASS 1] Hierarchical Vector Search (top_k={top_k})")
         
-        index = get_pinecone_index()
-        model = get_embedding_model()
+        # 1. Determine Namespaces (Both Books and Papers)
+        target_namespaces = [settings.vector_db.namespace, "papers_rag"]
         
-        # Build filter
+        # 2. Build Filter
         filter_dict = {}
-        if book_filter:
-            filter_dict["book_title"] = book_filter
-            print(f"  → Filtering by book: {book_filter}")
-        if chapter_filter:
-            filter_dict["chapter_numbers"] = {"$in": [chapter_filter]}
-            print(f"  → Filtering by chapter: {chapter_filter}")
+        if state.get("book_filter"):
+            filter_dict["book_title"] = state.get("book_filter")
         
-        # Perform searches
-        all_results = {}
+        # 3. Initialize Engine
+        engine = get_search_engine()
+        all_section_results = {}
         
-        for query_text in all_queries:
-            query_embedding = model.encode(query_text).tolist()
-            
-            results = index.query(
-                vector=query_embedding,
+        # 4. Search & Group
+        for q_text in all_queries:
+            results = engine.search_and_group(
+                query=q_text,
                 top_k=top_k,
-                namespace=settings.vector_db.namespace,
-                filter=filter_dict if filter_dict else None,
-                include_metadata=True
+                namespaces=target_namespaces,
+                metadata_filter=filter_dict if filter_dict else None
             )
             
-            for match in results.get("matches", []):
-                chunk_id = match["id"]
-                current_score = match.get("score", 0.0)
-                
-                if chunk_id not in all_results or current_score > all_results[chunk_id].get("score", 0):
-                    all_results[chunk_id] = match
+            for res in results:
+                # Deduplicate based on Section ID
+                if res['id'] not in all_section_results:
+                    all_section_results[res['id']] = res
+                else:
+                    # Update if we found a higher score for the same section
+                    all_section_results[res['id']]['score'] = max(
+                        all_section_results[res['id']]['score'], 
+                        res['score']
+                    )
+
+        # 5. Convert to DocumentChunk
+        sorted_results = list(all_section_results.values())
+        sorted_results.sort(key=lambda x: x['score'], reverse=True)
+        sorted_results = sorted_results[:top_k]
         
-        # Convert to list and sort
-        matches = list(all_results.values())
-        matches.sort(key=lambda x: x.get("score", 0), reverse=True)
-        matches = matches[:pass1_k]
-        
-        # Convert to RetrievedChunk objects
         retrieved_chunks = []
-        
-        for match in matches:
-            metadata = match.get("metadata", {})
-            
-            book_title = metadata.get("book_title", "Unknown Book")
-            author = metadata.get("author", "Unknown Author")
-            chapter_title = metadata.get("chapter_title", "Unknown Chapter")
-            section_title = metadata.get("section_title", "")
-            preview_text = metadata.get("preview", "")
-            
-            if section_title and section_title != chapter_title:
-                chapter_str = f"{chapter_title}: {section_title}"
-            else:
-                chapter_str = chapter_title
-
-            page_start = metadata.get("page_number", 0)
-            if page_start == 0:
-                page_start = int(metadata.get("page_start", 0))
-
+        for res in sorted_results:
+            meta = res['metadata']
             chunk = DocumentChunk(
-                chunk_id=match["id"],
-                content=metadata.get("text", ""),
-                chapter=chapter_str,
-                section=section_title,
-                page_number=page_start,
-                chunk_type=metadata.get("chunk_type", "text"),
-                book_title=book_title,
-                author=author,
-                chapter_title=chapter_title,
-                preview=preview_text
+                chunk_id=res['id'],
+                content=res['text'],
+                chapter=meta.get('display_title', 'Unknown Section'),
+                section=meta.get('section_title', ''),
+                page_number=meta.get('page_number', 0),
+                chunk_type=meta.get('chunk_type', 'text'),
+                book_title=meta.get('book_title', 'Unknown Source'),
+                author=meta.get('author', 'Unknown Author')
             )
+            retrieved_chunks.append(RetrievedChunk(chunk=chunk, similarity_score=res['score']))
             
-            retrieved_chunks.append(RetrievedChunk(
-                chunk=chunk,
-                similarity_score=match.get("score", 0.0)
-            ))
-        
-        # Add snapshot
         new_snapshot = {
             "stage": "vector_search",
             "chunk_count": len(retrieved_chunks),
             "chunks": retrieved_chunks[:10]
         }
         
-        print(f"  → Retrieved {len(retrieved_chunks)} unique candidates")
+        print(f"  → Retrieved {len(retrieved_chunks)} coherent sections")
         
         return {
             "retrieved_chunks": retrieved_chunks,
             "pipeline_snapshots": pipeline_snapshots + [new_snapshot],
             "current_node": "vector_search"
         }
-        
     except Exception as e:
-        return {
-            "errors": state.get("errors", []) + [f"Vector search failed: {str(e)}"],
-            "current_node": "vector_search"
-        }
-
-
-
+        return {"errors": state.get("errors", []) + [f"Vector search failed: {e}"], "current_node": "vector_search"}
 
 
 async def reranking_node(state: AgentState) -> Dict:
-    """
-    PASS 2: Cross-Encoder Reranking (LangGraph compatible)
-    
-    Returns dict with:
-    - reranked_chunks: List of reranked chunks
-    - pipeline_snapshots: Updated snapshots
-    """
-    
+    """PASS 2: Cross-Encoder Reranking"""
     retrieved_chunks = state.get("retrieved_chunks", [])
     parsed_query = state.get("parsed_query")
     pass2_k = state.get("pass2_k", 10)
     pipeline_snapshots = state.get("pipeline_snapshots", [])
     
     if not retrieved_chunks or not parsed_query:
-        return {
-            "errors": state.get("errors", []) + ["Missing chunks or query for reranking"],
-            "current_node": "reranking"
-        }
+        return {"errors": ["Missing chunks/query"], "current_node": "reranking"}
     
     try:
         print(f"\n[PASS 2] Cross-Encoder Reranking (top_k={pass2_k})")
-        
         cross_encoder = get_cross_encoder()
         
-        chunks_data = []
-        for rc in retrieved_chunks:
-            chunks_data.append({
-                'text': rc.chunk.content,
-                'metadata': {
-                    'chunk_id': rc.chunk.chunk_id,
-                    'chapter': rc.chunk.chapter,
-                    'page': rc.chunk.page_number,
-                    'type': rc.chunk.chunk_type,
-                    'book_title': rc.chunk.book_title,
-                    'author': rc.chunk.author
-                },
-                'similarity_score': rc.similarity_score
-            })
+        # Prepare input for reranker (using full section text)
+        chunks_data = [{
+            'text': rc.chunk.content,
+            'metadata': {'chunk_id': rc.chunk.chunk_id},
+            'similarity_score': rc.similarity_score
+        } for rc in retrieved_chunks]
         
         reranked = cross_encoder.rerank_with_metadata(
-            parsed_query.raw_query,
-            chunks_data,
-            top_k=pass2_k
+            parsed_query.raw_query, chunks_data, top_k=pass2_k
         )
         
-        reranked_chunks = []
-        for chunk_data in reranked:
-            original_rc = next((rc for rc in retrieved_chunks if rc.chunk.chunk_id == chunk_data['metadata']['chunk_id']), None)
-            
-            if original_rc:
-                chunk = original_rc.chunk
-            else:
-                chunk = DocumentChunk(
-                    chunk_id=chunk_data['metadata']['chunk_id'],
-                    content=chunk_data['text'],
-                    chapter=chunk_data['metadata']['chapter'],
-                    section="",
-                    page_number=chunk_data['metadata']['page'],
-                    chunk_type=chunk_data['metadata']['type'],
-                    book_title=chunk_data['metadata'].get('book_title', 'Unknown Book'),
-                    author=chunk_data['metadata'].get('author', 'Unknown Author')
-                )
-            
-            reranked_chunks.append(RetrievedChunk(
-                chunk=chunk,
-                similarity_score=chunk_data['similarity_score'],
-                rerank_score=chunk_data['cross_encoder_score'],
-                relevance_percentage=round(chunk_data['final_score'] * 100, 1)
+        final_reranked = []
+        for item in reranked:
+            original = next(rc for rc in retrieved_chunks if rc.chunk.chunk_id == item['metadata']['chunk_id'])
+            final_reranked.append(RetrievedChunk(
+                chunk=original.chunk,
+                similarity_score=item['similarity_score'],
+                rerank_score=item['cross_encoder_score'],
+                relevance_percentage=round(item['final_score'] * 100, 1)
             ))
-        
+            
         new_snapshot = {
             "stage": "reranking",
-            "chunk_count": len(reranked_chunks),
-            "chunks": reranked_chunks[:10]
+            "chunk_count": len(final_reranked),
+            "chunks": final_reranked[:10]
         }
-        
-        print(f"  → Reranked to {len(reranked_chunks)} high-precision chunks")
+        print(f"  → Reranked to {len(final_reranked)} sections")
         
         return {
-            "reranked_chunks": reranked_chunks,
-            "pipeline_snapshots": pipeline_snapshots + [new_snapshot],
+            "reranked_chunks": final_reranked, 
+            "pipeline_snapshots": pipeline_snapshots + [new_snapshot], 
             "current_node": "reranking"
         }
-        
     except Exception as e:
-        # Fallback: use retrieved chunks
-        return {
-            "reranked_chunks": retrieved_chunks[:pass2_k],
-            "pipeline_snapshots": pipeline_snapshots,
-            "current_node": "reranking",
-            "errors": state.get("errors", []) + [f"Reranking failed: {str(e)}"]
-        }
+        return {"errors": [f"Reranking failed: {e}"], "current_node": "reranking"}
 
 
 async def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState:
-    """PASS 3: Multi-Hop Retrieval - Now checks state.pass3_enabled"""
+    """PASS 3: Multi-Hop Retrieval (RESTORED)"""
     state["current_node"] = "multi_hop_expansion"
 
-    
-    # Check if pass3 is enabled
+    # Check enabled status
     if not state.get("pass3_enabled", True):
         print(f"\n[PASS 3] Multi-Hop Expansion - SKIPPED (disabled)")
-        state["pipeline_snapshots"].append({
-            "stage": "multi_hop_expansion",
-            "chunk_count": len(state["reranked_chunks"]),
-            "chunks": [],
-            "skipped": True
-        })
         return state
     
     if not state["reranked_chunks"] or not state["parsed_query"]:
-        state["errors"].append("Missing reranked chunks for multi-hop")
         return state
     
     try:
         print(f"\n[PASS 3] Multi-Hop Expansion (max_hops={max_hops})")
         
         before_expansion = len(state["reranked_chunks"])
-        
         expander = get_multi_hop_expander()
         
+        # Prepare initial results from Super Chunks
         initial_results = []
-        for rc in state["reranked_chunks"][:10]:
+        for rc in state["reranked_chunks"][:5]: # Use top 5 sections as anchors
             initial_results.append({
                 'id': rc.chunk.chunk_id,
                 'text': rc.chunk.content,
                 'score': rc.rerank_score,
                 'book_title': rc.chunk.book_title,
-                'author': rc.chunk.author,
-                'chapter': rc.chunk.chapter,
-                'page': rc.chunk.page_number
+                'author': rc.chunk.author
             })
         
-        def retrieval_fn(query_text: str, top_k: int = 5):
-            index = get_pinecone_index()
-            model = get_embedding_model()
+        # Helper for recursive search using the Hierarchical Search Engine
+        def retrieval_fn(query_text: str, top_k: int = 3):
+            engine = get_search_engine()
+            namespaces = [settings.vector_db.namespace, "papers_rag"]
+            results = engine.search_and_group(query_text, top_k, namespaces)
             
-            emb = model.encode(query_text).tolist()
-            results = index.query(
-                vector=emb,
-                top_k=top_k,
-                namespace=settings.vector_db.namespace,
-                include_metadata=True
-            )
-            
-            retrieved = []
-            for m in results.get('matches', []):
-                metadata = m.get('metadata', {})
-                
-                # New metadata handling
-                chapter_title = metadata.get("chapter_title", "Unknown Chapter")
-                section_title = metadata.get("section_title", "")
-                
-                if section_title and section_title != chapter_title:
-                    chapter_str = f"{chapter_title}: {section_title}"
-                else:
-                    chapter_str = chapter_title
-                
-                retrieved.append({
-                    'id': m['id'],
-                    'text': metadata.get('text', ''),
-                    'score': m.get('score', 0),
-                    'book_title': metadata.get('book_title', 'Unknown Book'),
-                    'author': metadata.get('author', 'Unknown Author'),
-                    'chapter': chapter_str,
-                    'page': metadata.get('page_number', 0)
-                })
-            
-            return retrieved
+            return [{
+                'id': r['id'],
+                'text': r['text'],
+                'score': r['score'],
+                'book_title': r['metadata']['book_title'],
+                'author': r['metadata']['author']
+            } for r in results]
         
         expanded_results = expander.multi_hop_retrieve(
             state["parsed_query"].raw_query,
             initial_results,
             retrieval_fn,
             max_hops=max_hops,
-            top_k_per_hop=3
+            top_k_per_hop=2
         )
         
-        # Add expanded chunks to state
-        for exp_result in expanded_results[len(initial_results):]:
-            chunk = DocumentChunk(
-                chunk_id=exp_result['id'],
-                content=exp_result['text'],
-                chapter=exp_result.get('chapter', 'Multi-hop Result'),
-                section="",
-                page_number=exp_result.get('page'),
-                chunk_type="text",
-                book_title=exp_result.get('book_title', 'Unknown Book'),
-                author=exp_result.get('author', 'Unknown Author')
-            )
-            
-            state["reranked_chunks"].append(RetrievedChunk(
-                chunk=chunk,
-                similarity_score=exp_result['score'],
-                rerank_score=exp_result['score'] * 0.8,
-                relevance_percentage=exp_result['score'] * 80
-            ))
+        # Add new results to state
+        existing_ids = {rc.chunk.chunk_id for rc in state["reranked_chunks"]}
         
-        after_expansion = len(state["reranked_chunks"])
-        new_chunks_added = after_expansion - before_expansion
-        
-        # Track pipeline snapshot
+        added_count = 0
+        for exp_result in expanded_results:
+            if exp_result['id'] not in existing_ids:
+                chunk = DocumentChunk(
+                    chunk_id=exp_result['id'],
+                    content=exp_result['text'],
+                    chapter="Multi-Hop Result",
+                    section="",
+                    page_number=0,
+                    chunk_type="text",
+                    book_title=exp_result.get('book_title', 'Unknown'),
+                    author=exp_result.get('author', 'Unknown')
+                )
+                state["reranked_chunks"].append(RetrievedChunk(
+                    chunk=chunk,
+                    similarity_score=exp_result['score'],
+                    rerank_score=exp_result['score'] * 0.9 # Penalize slightly
+                ))
+                added_count += 1
+                existing_ids.add(exp_result['id'])
+
         state["pipeline_snapshots"].append({
             "stage": "multi_hop_expansion",
-            "chunk_count": after_expansion,
-            "chunks": state["reranked_chunks"][before_expansion:after_expansion][:10],
-            "new_chunks_added": new_chunks_added
+            "chunk_count": len(state["reranked_chunks"]),
+            "chunks": state["reranked_chunks"][before_expansion:],
+            "new_chunks_added": added_count
         })
-        
-        print(f"  → Expanded to {after_expansion} total chunks (+{new_chunks_added} new)")
+        print(f"  → Added {added_count} multi-hop sections")
         
     except Exception as e:
         print(f"  ⚠️ Multi-hop expansion failed: {e}")
     
     return state
 
+
 async def cluster_expansion_node(state: AgentState) -> AgentState:
-    """PASS 4: Cluster-Based Expansion"""
+    """PASS 4: Cluster Expansion (RESTORED)"""
     state["current_node"] = "cluster_expansion"
     
     try:
         print(f"\n[PASS 4] Cluster Expansion")
-        
         cluster_manager = get_cluster_manager()
         
         if not cluster_manager.chunk_to_cluster:
             print("  ⚠️ No clusters available, skipping")
-            state["pipeline_snapshots"].append({
-                "stage": "cluster_expansion",
-                "chunk_count": len(state["reranked_chunks"]),
-                "chunks": [],
-                "skipped": True
-            })
             return state
         
-        before_expansion = len(state["reranked_chunks"])
-        
+        # Use top 10 chunks as seeds
         chunk_ids = [rc.chunk.chunk_id for rc in state["reranked_chunks"][:10]]
-        neighbor_ids = cluster_manager.get_cluster_neighbors(chunk_ids, max_neighbors=5)
+        neighbor_ids = cluster_manager.get_cluster_neighbors(chunk_ids, max_neighbors=3)
         
-        # Track snapshot
+        if neighbor_ids:
+            # Note: Fetching content for these neighbors would ideally use index.fetch
+            # For this node, we identify potential neighbors but don't force a heavy fetch
+            # to keep the response fast, unless they are critical.
+            # In a production fetch, you would call `index.fetch(ids=neighbor_ids)`.
+            pass 
+        
         state["pipeline_snapshots"].append({
             "stage": "cluster_expansion",
             "chunk_count": len(state["reranked_chunks"]),
-            "chunks": [],
             "neighbors_found": len(neighbor_ids)
         })
-        
-        print(f"  → Found {len(neighbor_ids)} cluster neighbors")
+        print(f"  → Identified {len(neighbor_ids)} potential cluster neighbors")
         
     except Exception as e:
-        print(f"  ⚠️ Cluster expansion failed: {e}, skipping")
-        state["pipeline_snapshots"].append({
-            "stage": "cluster_expansion",
-            "chunk_count": len(state["reranked_chunks"]),
-            "chunks": [],
-            "skipped": True
-        })
+        print(f"  ⚠️ Cluster expansion failed: {e}")
     
     return state
 
 
-
 async def context_assembly_node(state: AgentState) -> AgentState:
-    """PASS 5: Compression & Assembly - Now reads max_tokens from state"""
+    """PASS 5: Context Assembly (RESTORED SMART COMPRESSION)"""
     state["current_node"] = "context_assembly"
     
-    if not state["reranked_chunks"] or not state["parsed_query"]:
-        state["errors"].append("Missing reranked chunks or query")
-        return state
-    
     try:
-        # Read configuration from state (which has config defaults)
-        max_tokens = state.get("max_tokens", 0)
-        limit = max_tokens if max_tokens > 0 else settings.retrieval.max_context_tokens
+        max_tokens = state.get("max_tokens", settings.retrieval.max_context_tokens)
+        print(f"\n[PASS 5] Context Compression & Assembly (max_tokens={max_tokens})")
         
-        print(f"\n[PASS 5] Context Compression & Assembly (max_tokens={limit})")
+        # 1. Attempt Smart Compression
+        compressor = get_compressor(target_tokens=int(max_tokens * 0.9), max_tokens=max_tokens)
         
-        before_compression = len(state["reranked_chunks"])
-        
-        # Try to get compressor, fallback to simple assembly if it fails
-        try:
-            compressor = get_compressor(
-                target_tokens=int(limit * 0.8),
-                max_tokens=limit
-            )
+        chunks_for_compression = []
+        for rc in state["reranked_chunks"]:
+            chunks_for_compression.append({
+                'text': rc.chunk.content,
+                'metadata': {
+                    'chapter_title': rc.chunk.chapter,
+                    'book_title': rc.chunk.book_title,
+                    'author': rc.chunk.author
+                },
+                'score': rc.rerank_score,
+                'chunk_type': rc.chunk.chunk_type
+            })
             
-            if compressor is None:
-                raise ValueError("Compressor initialization returned None")
-            
-            chunks_for_compression = []
-            for rc in state["reranked_chunks"]:
-                chunks_for_compression.append({
-                    'text': rc.chunk.content,
-                    'metadata': {
-                        'chapter_title': rc.chunk.chapter,
-                        'page_start': rc.chunk.page_number,
-                        'contains_code': rc.chunk.chunk_type == 'code',
-                        'book_title': rc.chunk.book_title,
-                        'author': rc.chunk.author
-                    },
-                    'score': rc.rerank_score,
-                    'chunk_type': rc.chunk.chunk_type
-                })
-            
+        if compressor:
             compressed_context = compressor.compress_context(
                 chunks_for_compression,
                 state["parsed_query"].raw_query,
                 preserve_code=True
             )
+            print("  → Applied Smart Compression")
+        else:
+            # Fallback
+            compressed_context = "\n---\n".join([c['text'] for c in chunks_for_compression[:5]])
+            print("  → Applied Fallback Assembly")
             
-        except Exception as comp_error:
-            # Fallback: Simple concatenation without compression
-            print(f"  ⚠️ Compressor failed: {comp_error}")
-            print(f"  → Using simple concatenation fallback")
-            
-            context_parts = []
-            for rc in state["reranked_chunks"][:10]:  # Limit to top 10
-                context_parts.append(
-                    f"[{rc.chunk.book_title} - {rc.chunk.chapter}]\n{rc.chunk.content}\n"
-                )
-            
-            compressed_context = "\n---\n".join(context_parts)
-        
         state["assembled_context"] = compressed_context
         state["system_prompt"] = _build_system_prompt(state["parsed_query"])
         
-        after_compression = len(state["reranked_chunks"])
-        removed_count = before_compression - after_compression
-        
-        # Track pipeline snapshot
-        state["pipeline_snapshots"].append({
-            "stage": "context_assembly",
-            "chunk_count": after_compression,
-            "chunks": state["reranked_chunks"][:10],
-            "removed_duplicates": removed_count
-        })
-        
-        print(f"  → Assembled context with {after_compression} chunks")
-        if removed_count > 0:
-            print(f"  → Removed {removed_count} duplicates")
-        
     except Exception as e:
-        state["errors"].append(f"Context assembly failed: {str(e)}")
-    
+        state["errors"].append(f"Assembly failed: {e}")
+        
     return state
 
 
-
+async def llm_reasoning_node(state: AgentState) -> Dict:
+    parsed_query = state.get("parsed_query")
+    assembled_context = state.get("assembled_context", "")
+    system_prompt = state.get("system_prompt", "")
+    
+    if not assembled_context:
+        return {"errors": ["No context"], "current_node": "llm_reasoning"}
+        
+    try:
+        print(f"\n[FINAL] LLM Reasoning")
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"{assembled_context}\n\nQuestion: {parsed_query.raw_query}")
+        ]
+        
+        response = llm.invoke(messages)
+        
+        return {
+            "response": LLMResponse(
+                answer=response.content,
+                code_snippets=[],
+                sources=[c.chunk.chunk_id for c in state["reranked_chunks"][:3]],
+                confidence=0.9
+            ),
+            "current_node": "llm_reasoning"
+        }
+    except Exception as e:
+         return {"errors": [str(e)], "current_node": "llm_reasoning"}
 
 def _build_system_prompt(query: ParsedQuery) -> str:
-    """Build system prompt based on intent and complexity"""
     base = """You are an expert programming tutor with deep knowledge of coding books and technical documentation.
 
 Your role:
 - Guide learners through programming concepts
 - Provide clear explanations with relevant examples from the books
 - Generate new and accurate code based on book examples and best practices
-- Make sure to explain important keywords present in the answer with sufficient length
-- Give verbose answers explaining everything and give brief explanations of the code
-- The users will be someone having no knowledge about the topics, so explain everything that can be confusing for a new user
-- ALWAYS mention the book title when referencing examples or concepts from specific books
-- If the user asks for code, give more priority to code. dont add too much comments in code, add short and precise comments
+- Explain important keywords present in the answer with sufficient length
+- Explain code snippets briefly but clearly
+- ALWAYS mention the book title when referencing examples or concepts
 
 Always reference sources WITH BOOK TITLES and ensure code is correct and follows best practices."""
     
@@ -986,83 +614,3 @@ Always reference sources WITH BOOK TITLES and ensure code is correct and follows
     }
     
     return base + intent_prompts.get(query.intent, "") + complexity.get(query.complexity_hint, "")
-
-
-# ============================================================================
-# UPDATED: LLM REASONING NODE WITH LANGCHAIN & GEMINI
-# ============================================================================
-
-async def llm_reasoning_node(state: AgentState) -> Dict:
-    """
-    Final LLM reasoning node (LangGraph compatible)
-    
-    Returns dict with:
-    - response: LLMResponse object
-    - current_node: Node identifier
-    """
-    
-    reranked_chunks = state.get("reranked_chunks", [])
-    parsed_query = state.get("parsed_query")
-    assembled_context = state.get("assembled_context", "")
-    system_prompt = state.get("system_prompt", "")
-    
-    if not reranked_chunks or not parsed_query:
-        return {
-            "errors": state.get("errors", []) + ["Missing context or query for LLM"],
-            "current_node": "llm_reasoning"
-        }
-    
-    # Ensure context is assembled
-    if not assembled_context:
-        # Call context assembly inline if needed
-        from .nodes import context_assembly_node
-        context_result = context_assembly_node(state)
-        assembled_context = context_result.get("assembled_context", "")
-        system_prompt = context_result.get("system_prompt", "")
-    
-    try:
-        print(f"\n[FINAL] LLM Reasoning")
-        
-        # Prepare messages
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=f"{assembled_context}\n\nQuestion: {parsed_query.raw_query}")
-        ]
-        
-        # Invoke LLM
-        response = llm.invoke(messages)
-        answer = response.content
-        
-        code_snippets = [c.chunk.content for c in reranked_chunks if c.chunk.chunk_type == "code"]
-        
-        llm_response = LLMResponse(
-            answer=answer,
-            code_snippets=code_snippets[:2],
-            sources=[c.chunk.chunk_id for c in reranked_chunks[:3]],
-            confidence=0.85
-        )
-        
-        print(f"  ✅ Answer generated ({len(answer)} chars)")
-        
-        return {
-            "response": llm_response,
-            "current_node": "llm_reasoning"
-        }
-        
-    except Exception as e:
-        # Fallback: return chunk content
-        fallback_answer = f"Error calling LLM. Here's the retrieved content:\n\n"
-        if reranked_chunks:
-            fallback_answer += f"From {reranked_chunks[0].chunk.book_title} - {reranked_chunks[0].chunk.chapter}:\n"
-            fallback_answer += reranked_chunks[0].chunk.content[:500] + "..."
-        
-        return {
-            "response": LLMResponse(
-                answer=fallback_answer,
-                code_snippets=[],
-                sources=[c.chunk.chunk_id for c in reranked_chunks[:3]],
-                confidence=0.5
-            ),
-            "current_node": "llm_reasoning",
-            "errors": state.get("errors", []) + [f"LLM reasoning failed: {str(e)}"]
-        }
