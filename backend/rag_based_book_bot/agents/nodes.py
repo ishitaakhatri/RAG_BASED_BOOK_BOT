@@ -150,41 +150,88 @@ async def query_rewriter_node(state: AgentState, num_variations: int = 3) -> Dic
         return {"rewritten_queries": [], "current_node": "query_rewriter"}
 
 
-async def _generate_query_variations(query: str, intent: QueryIntent, num_variations: int = 3) -> list[str]:
-    system_prompt = """You are an expert at reformulating search queries to improve information retrieval.
+async def _generate_query_variations(
+    query: str,
+    intent: QueryIntent,
+    num_variations: int = 3
+) -> list[str]:
+    """Generate alternative query formulations using Gemini"""
 
-Your task: Generate alternative phrasings of the user's query that:
-1. Preserve the original intent and meaning
-2. Use different vocabulary and sentence structures  
-3. Cover different angles or aspects of the same question
-4. Are optimized for semantic search in technical documentation
+    system_prompt = """You are an expert at identifying key concepts and aspects of a technical topic.
 
-Return ONLY a JSON array of strings, nothing else:
-["variation 1", "variation 2", "variation 3"]"""
+Task:
+Given a user query, generate only 3 closely related sub-queries that explore
+IMPORTANT aspects of the same topic and help retrieve comprehensive information.
 
-    user_prompt = f"Original query: \"{query}\"\nIntent: {intent.value}\nGenerate {num_variations} alternative phrasings."
+The goal is to maximize recall without drifting off-topic.
+
+Guidelines:
+- Each sub-query should focus on a different important aspect of the topic
+  (e.g., definition, components, implementation, applications, limitations)
+- Do NOT repeat the original query
+- Do NOT introduce unrelated topics
+- Do NOT add speculative or advanced topics unless implied by the query
+- Keep each sub-query concise and specific
+- Use clear technical phrasing suitable for documentation search
+
+Return ONLY a valid JSON array of strings.
+"""
+
+    intent_hints = {
+        QueryIntent.CONCEPTUAL: "Focus on understanding, explanation, and theoretical aspects.",
+        QueryIntent.CODE_REQUEST: "Vary between implementation details, code examples, and practical usage.",
+        QueryIntent.DEBUGGING: "Include variations about troubleshooting, error fixing, and problem solving.",
+        QueryIntent.COMPARISON: "Rephrase as differences, pros/cons, or when to use each option.",
+        QueryIntent.TUTORIAL: "Vary between step-by-step guides, walkthroughs, and practical examples.",
+    }
+
+    user_prompt = f"""Original query: "{query}"
+
+Intent: {intent.value}
+Hint: {intent_hints.get(intent, "")}
+
+Generate {num_variations} alternative phrasings.
+"""
 
     try:
         messages = [
             SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt)
+            HumanMessage(content=user_prompt),
         ]
-        
+
         response = llm.invoke(messages)
         response_text = response.content.strip()
-        
+
+        # ---- Clean fenced code blocks if present ----
         if response_text.startswith("```"):
-            response_text = response_text.replace("```json", "").replace("```", "")
-        
+            response_text = (
+                response_text
+                .replace("```json", "")
+                .replace("```", "")
+                .strip()
+            )
+
+        # ---- Parse JSON ----
         variations = json.loads(response_text)
-        
-        if isinstance(variations, list) and len(variations) > 0:
-            return variations[:num_variations]
-        else:
-            return _fallback_query_variations(query, num_variations)
-            
+
+        if not isinstance(variations, list):
+            raise ValueError("LLM response is not a JSON list")
+
+        # ---- De-duplicate & remove original query ----
+        filtered_variations = []
+        query_norm = query.strip().lower()
+
+        for v in variations:
+            if isinstance(v, str):
+                v_clean = v.strip()
+                if v_clean.lower() != query_norm:
+                    filtered_variations.append(v_clean)
+
+        # ---- Always return original query first ----
+        return [query] + filtered_variations[:num_variations]
+
     except Exception as e:
-        print(f"  ⚠️ LLM query rewriting failed: {e}")
+        print(f"⚠️ LLM query rewriting failed: {e}")
         return _fallback_query_variations(query, num_variations)
 
 def _fallback_query_variations(query: str, num_variations: int = 3) -> list[str]:
