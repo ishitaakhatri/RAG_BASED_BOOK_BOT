@@ -1,7 +1,9 @@
 """
 GROBID TEI-XML Parser (Safe 2-Level Hierarchy)
-Robust strategy for books with NO numbering and NO consistent capitalization.
-Structure: Book -> Chapter -> [All Sections as Siblings]
+Robust strategy for Books (Strict) and Research Papers (Flat/Abstract-First).
+Structure: 
+  - Books: Book -> Chapter -> [Sections]
+  - Papers: Paper -> Abstract/Intro -> [Sections]
 """
 import re
 import logging
@@ -12,10 +14,11 @@ logger = logging.getLogger("grobid_parser")
 
 class GrobidTEIParser:
     """
-    Parser that enforces a strict 2-Level Hierarchy:
-    1. Level 1 (Anchor): Detected via 'Chapter X', 'Part I'.
+    Parser that enforces a strict 2-Level Hierarchy but adapts for Papers:
+    1. Level 1 (Anchor): Detected via 'Chapter X', 'Part I', or standard Paper headers ('Abstract', 'Introduction').
     2. Level 2 (Content): All other sections are treated as direct children of the current Anchor.
-    3. Skips Front/Back matter (Preface, Index, Copyright).
+    3. Book Mode: Skips Front/Back matter (Preface, Index, Copyright).
+    4. Paper Mode: Preserves Abstract, Introduction, Conclusion.
     """
     
     TEI_NS = {"tei": "http://www.tei-c.org/ns/1.0"}
@@ -24,22 +27,32 @@ class GrobidTEIParser:
         self.sections = []
         self.metadata = {}
         
-        # 1. ANCHOR PATTERN: The only triggers for a new top-level container.
-        # Matches: "Chapter 1", "Part I", "Module 5", "Unit 2", "1. Introduction"
+        # 1. ANCHOR PATTERN: Triggers for a new top-level container.
+        # Matches: "Chapter 1", "Part I", "1. Introduction"
         self.anchor_pattern = re.compile(
             r"^(chapter\s+\d+|part\s+[IVX\d]+|module\s+\d+|unit\s+\d+|^\d+\.\s+([A-Z]|$))", 
             re.IGNORECASE
         )
 
-        # 2. IGNORE PATTERN: Explicitly skip these sections.
-        self.ignore_pattern = re.compile(
-            r"^(preface|foreword|acknowledg+ments?|copyright|table\s+of\s+contents|contents|list\s+of\s+|dedication|abstract|about\s+the\s+author|colophon|index|bibliography|references)", 
+        # 2. IGNORE PATTERNS
+        # Strict ignoring for books (skip front matter)
+        self.book_ignore_pattern = re.compile(
+            r"^(preface|foreword|acknowledg+ments?|copyright|table\s+of\s+contents|contents|list\s+of\s+|dedication|colophon|index|bibliography|references)", 
+            re.IGNORECASE
+        )
+        
+        # Looser ignoring for papers (Keep Abstract, References might be excluded if desired, but we keep text flow)
+        self.paper_ignore_pattern = re.compile(
+            r"^(copyright|table\s+of\s+contents|contents|list\s+of\s+tables|list\s+of\s+figures)", 
             re.IGNORECASE
         )
 
-    def parse_tei_xml(self, tei_content: str) -> Dict:
+    def parse_tei_xml(self, tei_content: str, is_paper: bool = False) -> Dict:
         """
         Parse TEI-XML content from GROBID into a tree structure.
+        Args:
+            tei_content: The XML string from GROBID.
+            is_paper: If True, uses paper-specific extraction (preserves Abstract, etc).
         """
         try:
             # Handle both bytes and string input
@@ -51,8 +64,12 @@ class GrobidTEIParser:
             # Extract metadata
             self.metadata = self._extract_metadata(root)
             
-            # Extract structured tree
-            self.sections = self._extract_book_structure(root)
+            # Extract structured tree based on document type
+            self.sections = self._extract_structure(root, is_paper)
+            
+            # Fallback for Papers: If no sections found, try to grab the whole body as one chunk
+            if is_paper and not self.sections:
+                self.sections = self._extract_flat_body(root)
             
             return {
                 "metadata": self.metadata,
@@ -69,9 +86,9 @@ class GrobidTEIParser:
                 "error": str(e)
             }
     
-    def _extract_book_structure(self, root) -> List[Dict]:
+    def _extract_structure(self, root, is_paper: bool) -> List[Dict]:
         """
-        Iterates through divs to reconstruct the book tree.
+        Iterates through divs to reconstruct the document tree.
         """
         body = root.find(".//tei:text/tei:body", self.TEI_NS)
         if body is None:
@@ -80,11 +97,24 @@ class GrobidTEIParser:
         all_divs = body.findall("tei:div", self.TEI_NS)
         
         structured_chapters = []
-        current_chapter_node = None
+        current_anchor_node = None
         
         # 'Content Started' flag prevents skipping legitimate "Introduction" chapters
-        # just because they appear before "Chapter 1"
         has_content_started = False
+        
+        # Select the correct ignore pattern
+        ignore_pattern = self.paper_ignore_pattern if is_paper else self.book_ignore_pattern
+
+        # FOR PAPERS: Inject Abstract as the first section if it exists in metadata
+        if is_paper and self.metadata.get("abstract"):
+            abstract_node = {
+                "title": "Abstract",
+                "text": self.metadata["abstract"],
+                "path": ["Abstract"],
+                "subsections": []
+            }
+            structured_chapters.append(abstract_node)
+            has_content_started = True
 
         for div in all_divs:
             node = self._process_div_content(div)
@@ -92,49 +122,67 @@ class GrobidTEIParser:
             clean_title = title.strip().lower()
 
             # --- 1. SKIP LOGIC ---
-            # If we haven't hit Chapter 1 yet, be aggressive about skipping junk
             if not has_content_started:
-                if self.ignore_pattern.match(title):
-                    logger.info(f"Skipping Front Matter: {title}")
+                if ignore_pattern.match(title):
+                    logger.info(f"Skipping Matter: {title}")
                     continue
-                # Skip tiny generic snippets at the start (artifacts/page headers)
-                if len(node["text"]) < 50 and "intro" not in clean_title:
+                # For books, skip tiny generic snippets at start. For papers, be more lenient.
+                if not is_paper and len(node["text"]) < 50 and "intro" not in clean_title:
                     continue
 
-            # --- 2. ANCHOR LOGIC (New Chapter) ---
+            # --- 2. ANCHOR LOGIC (New Chapter/Section) ---
+            # For papers, "Introduction", "Methodology" are anchors even if not numbered
+            is_anchor = False
             if self.anchor_pattern.match(title):
+                is_anchor = True
+            elif is_paper and ("introduction" in clean_title or "conclusion" in clean_title or "results" in clean_title):
+                is_anchor = True
+
+            if is_anchor:
                 has_content_started = True
                 
-                # Create NEW Chapter Node
-                current_chapter_node = {
+                # Create NEW Anchor Node
+                current_anchor_node = {
                     "title": title,
                     "text": node["text"],
                     "path": [title],      # Path Context: [Chapter 1]
                     "subsections": [] 
                 }
-                structured_chapters.append(current_chapter_node)
-                logger.info(f"New Chapter Detected: {title}")
+                structured_chapters.append(current_anchor_node)
+                logger.info(f"New Anchor Detected: {title}")
                 
-            # --- 3. CHILD LOGIC (Section inside Chapter) ---
-            elif current_chapter_node:
-                # We are inside a chapter. 
-                # Since we can't distinguish Section vs Subsection, we treat ALL as direct children.
-                # This creates a flat list of sections under the chapter.
+            # --- 3. CHILD LOGIC (Subsection) ---
+            elif current_anchor_node:
+                # We are inside an anchor. Treat as child.
+                node["path"] = current_anchor_node["path"] + [title]
+                current_anchor_node["subsections"].append(node)
                 
-                # Update Path Context: [Chapter 1, Section Title]
-                node["path"] = current_chapter_node["path"] + [title]
-                current_chapter_node["subsections"].append(node)
-                
-            # --- 4. ORPHAN LOGIC (Before Chapter 1) ---
+            # --- 4. ORPHAN LOGIC (Before first anchor) ---
             else:
-                # This handles "Introduction" or "Prologue" that appears before Chapter 1
-                # We treat them as root-level chapters themselves.
+                # This handles "Introduction" in books before Ch1, or initial text in papers
                 has_content_started = True 
                 node["path"] = [title]
                 structured_chapters.append(node)
-                logger.info(f"Root Level Section (Pre-Chapter): {title}")
+                logger.info(f"Root Level Section: {title}")
 
         return structured_chapters
+
+    def _extract_flat_body(self, root) -> List[Dict]:
+        """Fallback for papers with no internal structure (just text)"""
+        body = root.find(".//tei:text/tei:body", self.TEI_NS)
+        if body is None:
+            return []
+            
+        text = self._extract_text_recursive(body).strip()
+        if not text:
+            return []
+            
+        return [{
+            "title": "Full Content", 
+            "text": text, 
+            "path": ["Paper"], 
+            "subsections": []
+        }]
 
     def _process_div_content(self, div_element) -> Dict:
         """

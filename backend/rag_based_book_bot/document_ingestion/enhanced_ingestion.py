@@ -2,7 +2,7 @@
 """
 ENHANCED Ingestor with GROBID + Hierarchical Chunking + Real-time Logging
 Optimized for Memory Efficiency and UI Responsiveness
-[REF] Centralized Configuration
+Now supports: Auto-detection of Books vs. Research Papers
 """
 import os
 import uuid
@@ -46,8 +46,9 @@ from app_config import get_config
 settings = get_config()
 
 # Config
+# Note: Namespace is now dynamic based on document type
 PINECONE_INDEX = settings.vector_db.index_name
-PINECONE_NAMESPACE = settings.vector_db.namespace
+DEFAULT_NAMESPACE = settings.vector_db.namespace
 EMBEDDING_MODEL = settings.vector_db.embedding_model
 
 # ✅ Configure logging at module level
@@ -111,19 +112,26 @@ class SemanticBookIngestor:
         except Exception:
             return False
 
-    def _process_pdf_with_grobid(self, pdf_path: str) -> Optional[Dict]:
+    def _process_pdf_with_grobid(self, pdf_path: str, is_paper: bool = False) -> Optional[Dict]:
+        """
+        Process PDF with GROBID.
+        Args:
+            pdf_path: Path to the PDF file.
+            is_paper: Flag to indicate if the document is a research paper.
+        """
         grobid_url = settings.ingestion.grobid_url
         grobid_timeout = settings.ingestion.grobid_timeout
         
         try:
-            logger.info("🔬 Sending PDF to GROBID...")
+            logger.info(f"🔬 Sending PDF to GROBID (Mode: {'Paper' if is_paper else 'Book'})...")
             url = f"{grobid_url}/processFulltextDocument"
             with open(pdf_path, 'rb') as f:
                 files = {'input': (os.path.basename(pdf_path), f, 'application/pdf')}
                 resp = requests.post(url, files=files, timeout=grobid_timeout)
             
             if resp.status_code == 200:
-                return self.grobid_parser.parse_tei_xml(resp.text)
+                # Pass the is_paper flag to the parser
+                return self.grobid_parser.parse_tei_xml(resp.text, is_paper=is_paper)
             return None
         except Exception as e:
             logger.warning(f"GROBID error: {e}")
@@ -131,7 +139,7 @@ class SemanticBookIngestor:
 
     def ingest_book(self, pdf_path: str, book_title: Optional[str] = None, author: str = "Unknown") -> Dict:
         """
-        Ingest a PDF book with progress tracking and real-time logging
+        Ingest a PDF (Book or Paper) with progress tracking and real-time logging
         """
         try:
             if not os.path.exists(pdf_path):
@@ -148,11 +156,16 @@ class SemanticBookIngestor:
             tracker.reset()
             logger.info(f"📋 Tracker reset - starting fresh ingestion")
             
-            # Get page count first
+            # 1. AUTO-DETECT TYPE via Page Count
             with pdfplumber.open(pdf_path) as pdf:
                 total_pages = len(pdf.pages)
             
-            logger.info(f"📄 PDF loaded: {total_pages} pages")
+            # Heuristic: < 50 pages is likely a research paper
+            is_paper = total_pages < 50
+            doc_type = "Research Paper" if is_paper else "Book"
+            target_namespace = "papers_rag" if is_paper else DEFAULT_NAMESPACE
+            
+            logger.info(f"📄 Detected Type: {doc_type} ({total_pages} pages) -> Namespace: {target_namespace}")
             tracker.start_ingestion(pdf_path, total_pages=total_pages, book_title=book_title, author=author)
             
             chunks = []
@@ -160,9 +173,11 @@ class SemanticBookIngestor:
 
             # Try GROBID first if available
             if self.grobid_available:
-                logger.info("🔬 GROBID is available, attempting hierarchical chunking...")
+                logger.info(f"🔬 GROBID is available, attempting hierarchical chunking for {doc_type}...")
                 try:
-                    grobid_data = self._process_pdf_with_grobid(pdf_path)
+                    # Pass is_paper flag to GROBID processor
+                    grobid_data = self._process_pdf_with_grobid(pdf_path, is_paper=is_paper)
+                    
                     if grobid_data and grobid_data.get("success"):
                         logger.info("🌳 GROBID success! Using Hierarchical Tree Chunking")
                         chunks = self.hierarchical_chunker.process_document_tree(
@@ -170,6 +185,9 @@ class SemanticBookIngestor:
                         )
                         method = "hierarchical"
                         tracker.update_chunks(len(chunks))
+                    else:
+                        logger.warning("GROBID returned success=False or empty data")
+                        
                 except Exception as e:
                     tracker.add_log(f"⚠️ GROBID failed: {str(e)}, using semantic chunking", "WARNING")
                     logger.warning(f"GROBID chunking failed: {e}, falling back to semantic chunking")
@@ -220,12 +238,19 @@ class SemanticBookIngestor:
                 tracker.add_error(error_msg)
                 raise ValueError(error_msg)
 
-            tracker.add_log(f"✅ Generated {len(chunks)} chunks using {method}")
+            tracker.add_log(f"✅ Generated {len(chunks)} chunks using {method} (Target: {target_namespace})")
             logger.info(f"✅ Generated {len(chunks)} chunks using {method}")
             
-            # Embed and upsert (Now using optimized batching)
+            # Embed and upsert (Now using dynamic namespace)
             try:
-                self._embed_and_upsert_batched(chunks, book_id, book_title, author, tracker=tracker)
+                self._embed_and_upsert_batched(
+                    chunks, 
+                    book_id, 
+                    book_title, 
+                    author, 
+                    tracker=tracker,
+                    namespace=target_namespace
+                )
             except Exception as e:
                 error_msg = f"Embedding/upsert failed: {str(e)}"
                 logger.error(error_msg)
@@ -233,14 +258,16 @@ class SemanticBookIngestor:
                 raise
             
             tracker.finish(success=True)
-            tracker.add_log("✅ Ingestion completed successfully")
-            logger.info(f"✅ Book ingestion complete: {len(chunks)} chunks, {book_id}")
+            tracker.add_log(f"✅ Ingestion completed successfully ({doc_type})")
+            logger.info(f"✅ Ingestion complete: {len(chunks)} chunks, {book_id}, namespace={target_namespace}")
             
             return {
                 "book_id": book_id, 
                 "chunks": len(chunks), 
                 "method": method,
                 "total_pages": total_pages,
+                "type": doc_type,
+                "namespace": target_namespace
             }
         
         except Exception as e:
@@ -256,7 +283,8 @@ class SemanticBookIngestor:
         book_id: str, 
         book_title: str, 
         author: str,
-        tracker: Optional[ProgressTracker] = None
+        tracker: Optional[ProgressTracker] = None,
+        namespace: str = DEFAULT_NAMESPACE
     ):
         """
         Memory-optimized generation and upsert
@@ -271,7 +299,7 @@ class SemanticBookIngestor:
         # UPDATED: Use Config Batch Size
         BATCH_SIZE = settings.ingestion.batch_size
         
-        logger.info(f"🧠 Starting stream processing for {total_chunks} chunks...")
+        logger.info(f"🧠 Starting stream processing for {total_chunks} chunks (Namespace: {namespace})...")
         
         if tracker:
             tracker.add_log(f"🧠 Processing {total_chunks} chunks (Embedding + Upserting)...")
@@ -329,10 +357,10 @@ class SemanticBookIngestor:
                         "metadata": clean_meta
                     })
                 
-                # 4. Upsert this batch immediately
+                # 4. Upsert this batch immediately to the specific Namespace
                 self.pinecone_index.upsert(
                     vectors=vectors, 
-                    namespace=PINECONE_NAMESPACE
+                    namespace=namespace
                 )
                 
                 # 5. Update Progress

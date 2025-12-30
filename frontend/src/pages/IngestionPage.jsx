@@ -10,7 +10,8 @@ import {
   Eye,
   EyeOff,
   FileText,
-  X
+  X,
+  Library
 } from "lucide-react";
 
 const API_BASE_URL = "http://localhost:8000";
@@ -63,7 +64,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
 
   // Latch to prevent stale completion signals
   const processingStarted = useRef(false);
-  const currentFileIdRef = useRef(null); // CRITICAL FIX: Tracks the specific ID of the active file
+  const currentFileIdRef = useRef(null); 
   
   const navigate = useNavigate();
 
@@ -496,15 +497,15 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                 <Upload className="w-8 h-8 text-white" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white">Ingest Books</h1>
+                <h1 className="text-2xl font-bold text-white">Ingest Documents</h1>
                 <p className="text-sm text-purple-200">
-                  Add new books to your knowledge base
+                  Add Books or Research Papers to your knowledge base
                 </p>
               </div>
             </div>
             <div className="text-right">
               <p className="text-sm text-purple-300">
-                Books in system:{" "}
+                Documents in system:{" "}
                 <span className="font-bold text-white">{books.length}</span>
               </p>
             </div>
@@ -521,12 +522,12 @@ export default function IngestionPage({ books, onUploadSuccess }) {
               <div className="lg:col-span-1 space-y-6">
                 <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
                   <h3 className="text-lg font-semibold text-white mb-4 flex items-center">
-                    <Book className="w-5 h-5 mr-2" />
-                    Available Books
+                    <Library className="w-5 h-5 mr-2" />
+                    Library
                   </h3>
                   <div className="space-y-2 max-h-96 overflow-y-auto scrollbar-thin">
                     <button className="w-full text-left px-3 py-2 rounded-lg transition-all bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold">
-                      All Books
+                      All Documents
                     </button>
                     {books.map((book, idx) => (
                       <button key={idx} className="w-full text-left px-3 py-2 rounded-lg transition-all bg-white/5 hover:bg-white/10 text-purple-200 hover:text-white">
@@ -541,7 +542,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                 <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
                   <h3 className="text-lg font-semibold text-white mb-4">Stats</h3>
                   <div className="space-y-3">
-                    <div className="flex justify-between items-center"><span className="text-purple-200 text-sm">Total Books:</span><span className="font-bold text-white text-lg">{books.length}</span></div>
+                    <div className="flex justify-between items-center"><span className="text-purple-200 text-sm">Total Docs:</span><span className="font-bold text-white text-lg">{books.length}</span></div>
                     <div className="flex justify-between items-center"><span className="text-blue-200 text-sm">Total Chunks:</span><span className="font-bold text-white text-lg">{books.reduce((sum, b) => sum + (b.total_chunks || 0), 0)}</span></div>
                   </div>
                 </div>
@@ -550,15 +551,15 @@ export default function IngestionPage({ books, onUploadSuccess }) {
               {/* RIGHT SIDE - Upload Form */}
               <div className="lg:col-span-3 space-y-6">
                 <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20">
-                  <h2 className="text-2xl font-bold text-white mb-2">Upload PDF Books</h2>
-                  <p className="text-purple-200 mb-6">Select multiple files to ingest them sequentially.</p>
+                  <h2 className="text-2xl font-bold text-white mb-2">Upload PDFs</h2>
+                  <p className="text-purple-200 mb-6">Select books or research papers. The system will auto-detect the document type.</p>
 
                   <div className="space-y-6">
                     {/* File Input Zone */}
                     {!isIngesting && (
                       <>
                         <div>
-                          <label className="block text-sm font-semibold text-purple-200 mb-3">Select PDF Files</label>
+                          <label className="block text-sm font-semibold text-purple-200 mb-3">Select Files</label>
                           <label 
                             htmlFor="file-upload" 
                             className={`flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-xl cursor-pointer transition-all duration-300 ${

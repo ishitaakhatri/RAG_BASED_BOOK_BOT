@@ -9,7 +9,7 @@ from collections import defaultdict
 
 logger = logging.getLogger("hierarchical_retriever")
 
-class HierarchicalSearchEngine:
+class HierarchicalRetriever:
     def __init__(self, pinecone_index, embedding_model):
         self.index = pinecone_index
         self.embedding_model = embedding_model
@@ -147,4 +147,4 @@ class HierarchicalSearchEngine:
             raise e
 
 def create_retriever(index, model):
-    return HierarchicalSearchEngine(index, model)
+    return HierarchicalRetriever(index, model)
