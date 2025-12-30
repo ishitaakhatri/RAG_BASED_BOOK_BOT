@@ -132,7 +132,7 @@ async def user_query_node(state: AgentState) -> Dict:
         print(f"\n[Query Parsing] Analyzing: '{user_query[:60]}...'")
         
         # Use LLM for intelligent parsing
-        parsed_data = _parse_query_with_llm(user_query)
+        parsed_data = await _parse_query_with_llm(user_query)
         
         parsed_query = ParsedQuery(
             raw_query=user_query,
@@ -185,7 +185,7 @@ async def query_rewriter_node(state: AgentState, num_variations: int = 3) -> Dic
         print(f"\n[Query Rewriting] Generating {num_variations} alternative queries...")
         print(f"  Expanding query: '{query_to_expand}'")
         
-        rewritten = _generate_query_variations(
+        rewritten = await _generate_query_variations(
             query_to_expand,
             parsed_query.intent,
             num_variations
@@ -878,7 +878,8 @@ async def context_assembly_node(state: AgentState) -> AgentState:
     
     try:
         # Read configuration from state (which has config defaults)
-        limit = state.max_tokens if state.max_tokens > 0 else settings.retrieval.max_context_tokens
+        max_tokens = state.get("max_tokens", 0)
+        limit = max_tokens if max_tokens > 0 else settings.retrieval.max_context_tokens
         
         print(f"\n[PASS 5] Context Compression & Assembly (max_tokens={limit})")
         
