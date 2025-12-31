@@ -54,6 +54,7 @@ export default function RAGBookBot() {
   const [books, setBooks] = useState([]);
   const [selectedBook, setSelectedBook] = useState("all");
   const [showSettings, setShowSettings] = useState(false);
+  const [currentLoadingStage, setCurrentLoadingStage] = useState(0);
   const messagesEndRef = useRef(null);
 
   // EDIT MESSAGE STATE
@@ -82,6 +83,30 @@ export default function RAGBookBot() {
 
   const navigate = useNavigate();
 
+  // Loading stages animation
+  const loadingStages = [
+    "Processing your request…",
+    "Preparing your response…",
+    "Analyzing… Please wait",
+    "Working on it…",
+    "Almost ready…",
+    "Fetching results…",
+    "Please hold on, just a moment…",
+  ];
+
+  useEffect(() => {
+    if (!loading) {
+      setCurrentLoadingStage(0);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setCurrentLoadingStage((prev) => (prev + 1) % loadingStages.length);
+    }, 1200);
+
+    return () => clearInterval(interval);
+  }, [loading]);
+
   useEffect(() => {
     fetchBooks();
     fetchSessions();
@@ -109,15 +134,17 @@ export default function RAGBookBot() {
   const { bookList, paperList } = useMemo(() => {
     const b = [];
     const p = [];
-    books.forEach(item => {
-        // Heuristic: If chunks < 100, it's likely a paper. 
-        // If your backend returns a 'type' field, use that instead.
-        const isPaper = item.total_chunks < 100 || (item.title && item.title.toLowerCase().includes("paper"));
-        if (isPaper) {
-            p.push(item);
-        } else {
-            b.push(item);
-        }
+    books.forEach((item) => {
+      // Heuristic: If chunks < 100, it's likely a paper.
+      // If your backend returns a 'type' field, use that instead.
+      const isPaper =
+        item.total_chunks < 100 ||
+        (item.title && item.title.toLowerCase().includes("paper"));
+      if (isPaper) {
+        p.push(item);
+      } else {
+        b.push(item);
+      }
     });
     return { bookList: b, paperList: p };
   }, [books]);
@@ -526,7 +553,10 @@ export default function RAGBookBot() {
     setMessages(updatedMessages);
 
     // Remove the assistant response that followed (if any)
-    if (index + 1 < messages.length && messages[index + 1].role === "assistant") {
+    if (
+      index + 1 < messages.length &&
+      messages[index + 1].role === "assistant"
+    ) {
       updatedMessages.splice(index + 1, 1);
       setMessages(updatedMessages);
     }
@@ -619,22 +649,20 @@ export default function RAGBookBot() {
   // Helper to render a document button
   const renderDocButton = (doc, icon) => (
     <button
-        key={doc.title}
-        onClick={() => setSelectedBook(doc.title)}
-        className={`w-full text-left px-3 py-2 rounded-lg transition-all truncate group ${
+      key={doc.title}
+      onClick={() => setSelectedBook(doc.title)}
+      className={`w-full text-left px-3 py-2 rounded-lg transition-all truncate group ${
         selectedBook === doc.title
-            ? "bg-purple-600 text-white"
-            : "bg-white/5 text-purple-200 hover:bg-white/10"
-        }`}
-        title={`${doc.title} by ${doc.author}`}
+          ? "bg-purple-600 text-white"
+          : "bg-white/5 text-purple-200 hover:bg-white/10"
+      }`}
+      title={`${doc.title} by ${doc.author}`}
     >
-        <div className="flex items-center space-x-2">
-            {icon}
-            <span className="text-sm font-semibold truncate">
-                {doc.title}
-            </span>
-        </div>
-        <div className="text-xs opacity-75 pl-5">by {doc.author}</div>
+      <div className="flex items-center space-x-2">
+        {icon}
+        <span className="text-sm font-semibold truncate">{doc.title}</span>
+      </div>
+      <div className="text-xs opacity-75 pl-5">by {doc.author}</div>
     </button>
   );
 
@@ -840,10 +868,14 @@ export default function RAGBookBot() {
                 <Library className="w-5 h-5 mr-2" />
                 Library
                 <span className="ml-auto text-xs font-normal text-purple-300 bg-black/30 px-2 py-1 rounded">
-                    {searchMode === 'all' ? 'All' : searchMode === 'books' ? 'Books' : 'Papers'}
+                  {searchMode === "all"
+                    ? "All"
+                    : searchMode === "books"
+                    ? "Books"
+                    : "Papers"}
                 </span>
               </h3>
-              
+
               <div className="space-y-2 flex-1 flex flex-col min-h-0">
                 <button
                   onClick={() => setSelectedBook("all")}
@@ -855,43 +887,55 @@ export default function RAGBookBot() {
                 >
                   All Documents
                 </button>
-                
+
                 {/* Scrollable container for documents */}
                 <div className="overflow-y-auto pr-2 space-y-3 custom-scrollbar flex-1">
-                    
-                    {/* SECTION: RESEARCH PAPERS */}
-                    {(searchMode === 'all' || searchMode === 'papers') && paperList.length > 0 && (
-                        <div className="animate-fade-in">
-                            {(searchMode === 'all') && (
-                                <div className="text-xs font-bold text-green-400 uppercase tracking-wider mb-1 mt-2 flex items-center">
-                                    <GraduationCap className="w-3 h-3 mr-1" /> Research Papers
-                                </div>
-                            )}
-                            <div className="space-y-1">
-                                {paperList.map((doc, idx) => renderDocButton(doc, <FileText className="w-3 h-3 flex-shrink-0 text-green-300" />))}
-                            </div>
+                  {/* SECTION: RESEARCH PAPERS */}
+                  {(searchMode === "all" || searchMode === "papers") &&
+                    paperList.length > 0 && (
+                      <div className="animate-fade-in">
+                        {searchMode === "all" && (
+                          <div className="text-xs font-bold text-green-400 uppercase tracking-wider mb-1 mt-2 flex items-center">
+                            <GraduationCap className="w-3 h-3 mr-1" /> Research
+                            Papers
+                          </div>
+                        )}
+                        <div className="space-y-1">
+                          {paperList.map((doc, idx) =>
+                            renderDocButton(
+                              doc,
+                              <FileText className="w-3 h-3 flex-shrink-0 text-green-300" />
+                            )
+                          )}
                         </div>
+                      </div>
                     )}
 
-                    {/* SECTION: BOOKS */}
-                    {(searchMode === 'all' || searchMode === 'books') && bookList.length > 0 && (
-                         <div className="animate-fade-in">
-                            {(searchMode === 'all') && (
-                                <div className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-1 mt-4 flex items-center">
-                                    <Book className="w-3 h-3 mr-1" /> Books
-                                </div>
-                            )}
-                            <div className="space-y-1">
-                                {bookList.map((doc, idx) => renderDocButton(doc, <Book className="w-3 h-3 flex-shrink-0 text-blue-300" />))}
-                            </div>
+                  {/* SECTION: BOOKS */}
+                  {(searchMode === "all" || searchMode === "books") &&
+                    bookList.length > 0 && (
+                      <div className="animate-fade-in">
+                        {searchMode === "all" && (
+                          <div className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-1 mt-4 flex items-center">
+                            <Book className="w-3 h-3 mr-1" /> Books
+                          </div>
+                        )}
+                        <div className="space-y-1">
+                          {bookList.map((doc, idx) =>
+                            renderDocButton(
+                              doc,
+                              <Book className="w-3 h-3 flex-shrink-0 text-blue-300" />
+                            )
+                          )}
                         </div>
+                      </div>
                     )}
-                    
-                    {books.length === 0 && (
-                        <div className="text-center text-purple-300 text-sm py-8 opacity-70">
-                            No documents found. <br/> Upload some!
-                        </div>
-                    )}
+
+                  {books.length === 0 && (
+                    <div className="text-center text-purple-300 text-sm py-8 opacity-70">
+                      No documents found. <br /> Upload some!
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1011,7 +1055,8 @@ export default function RAGBookBot() {
                         : "Ask questions about your uploaded books and research papers. I can distinguish between theoretical proofs and coding implementation!"}
                     </p>
                     <p className="text-purple-300 text-sm mt-4">
-                      💡 Tip: Use the toggle below to switch between Books (Code) and Papers (Theory).
+                      💡 Tip: Use the toggle below to switch between Books
+                      (Code) and Papers (Theory).
                     </p>
                   </div>
                 ) : (
@@ -1032,9 +1077,35 @@ export default function RAGBookBot() {
                   ))
                 )}
                 {loading && (
-                  <div className="flex items-center space-x-2 text-purple-200">
-                    <Loader className="w-5 h-5 animate-spin" />
-                    <span>Searching knowledge base...</span>
+                  <div className="flex justify-start">
+                    <div className="max-w-2xl bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg px-6 py-4 text-white/80 flex items-center space-x-3">
+                      <span className="text-sm font-medium transition-all duration-300 ease-in-out">
+                        {loadingStages[currentLoadingStage]}
+                      </span>
+                      <div className="flex items-center space-x-1.5">
+                        <div
+                          className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                            currentLoadingStage % 3 === 0
+                              ? "bg-blue-400 scale-100"
+                              : "bg-blue-400/40 scale-75"
+                          }`}
+                        />
+                        <div
+                          className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                            currentLoadingStage % 3 === 1
+                              ? "bg-purple-400 scale-100"
+                              : "bg-purple-400/40 scale-75"
+                          }`}
+                        />
+                        <div
+                          className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                            currentLoadingStage % 3 === 2
+                              ? "bg-pink-400 scale-100"
+                              : "bg-pink-400/40 scale-75"
+                          }`}
+                        />
+                      </div>
+                    </div>
                   </div>
                 )}
                 <div ref={messagesEndRef} />
@@ -1042,29 +1113,40 @@ export default function RAGBookBot() {
 
               {/* Input Area */}
               <div className="p-4 border-t border-white/20 space-y-3">
-                
                 {/* Search Scope Toggle */}
                 <div className="flex justify-center">
-                    <div className="bg-black/30 p-1 rounded-lg flex space-x-1">
-                        <button
-                            onClick={() => setSearchMode("all")}
-                            className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${searchMode === "all" ? "bg-purple-600 text-white shadow-lg" : "text-purple-300 hover:bg-white/5"}`}
-                        >
-                            All Sources
-                        </button>
-                        <button
-                            onClick={() => setSearchMode("books")}
-                            className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${searchMode === "books" ? "bg-blue-600 text-white shadow-lg" : "text-purple-300 hover:bg-white/5"}`}
-                        >
-                            <BookOpen className="w-3 h-3 mr-1" /> Books (Code)
-                        </button>
-                        <button
-                            onClick={() => setSearchMode("papers")}
-                            className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${searchMode === "papers" ? "bg-green-600 text-white shadow-lg" : "text-purple-300 hover:bg-white/5"}`}
-                        >
-                            <GraduationCap className="w-3 h-3 mr-1" /> Papers (Theory)
-                        </button>
-                    </div>
+                  <div className="bg-black/30 p-1 rounded-lg flex space-x-1">
+                    <button
+                      onClick={() => setSearchMode("all")}
+                      className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                        searchMode === "all"
+                          ? "bg-purple-600 text-white shadow-lg"
+                          : "text-purple-300 hover:bg-white/5"
+                      }`}
+                    >
+                      All Sources
+                    </button>
+                    <button
+                      onClick={() => setSearchMode("books")}
+                      className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
+                        searchMode === "books"
+                          ? "bg-blue-600 text-white shadow-lg"
+                          : "text-purple-300 hover:bg-white/5"
+                      }`}
+                    >
+                      <BookOpen className="w-3 h-3 mr-1" /> Books (Code)
+                    </button>
+                    <button
+                      onClick={() => setSearchMode("papers")}
+                      className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
+                        searchMode === "papers"
+                          ? "bg-green-600 text-white shadow-lg"
+                          : "text-purple-300 hover:bg-white/5"
+                      }`}
+                    >
+                      <GraduationCap className="w-3 h-3 mr-1" /> Papers (Theory)
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex space-x-3">
@@ -1383,10 +1465,11 @@ function MessageBubble({
                         <div className="relative flex items-start space-x-4">
                           {/* Icon with enhanced styling */}
                           <div className="bg-gradient-to-br from-purple-500 via-purple-600 to-pink-500 rounded-xl p-3 flex-shrink-0 shadow-lg shadow-purple-500/30 group-hover:scale-105 group-hover:rotate-3 transition-all duration-300">
-                            {source.book_title.includes("Paper") || source.total_pages < 50 ? (
-                                <FileText className="w-5 h-5 text-white" />
+                            {source.book_title.includes("Paper") ||
+                            source.total_pages < 50 ? (
+                              <FileText className="w-5 h-5 text-white" />
                             ) : (
-                                <Book className="w-5 h-5 text-white" />
+                              <Book className="w-5 h-5 text-white" />
                             )}
                           </div>
 
@@ -1607,7 +1690,7 @@ function EnhancedPipelineDisplay({ stages, stats }) {
 
 /* Add this style block at the top level of your component file (or in your global CSS) */
 <style>
-{`
+  {`
 input[type="range"]::-webkit-slider-runnable-track {
   height: 6px;
   background: linear-gradient(to right, #8b5cf6, #ec4899);
@@ -1657,4 +1740,5 @@ input[type="range"] {
   background: transparent;
 }
 `}
-</style>
+</style>;
+

@@ -103,6 +103,150 @@ def get_compressor(target_tokens=None, max_tokens=None):
 
 
 # ============================================================================
+# RELEVANCE CHECK NODE
+# ============================================================================
+
+async def relevance_check_node(state: AgentState) -> Dict:
+    user_query = state.get("user_query")
+    print(f"\n[RELEVANCE CHECK] Entering node...")
+    print(f"[RELEVANCE CHECK] Input query: '{user_query}'")
+
+    if not user_query:
+        print(f"[RELEVANCE CHECK] ❌ Empty query detected → intent='reject'")
+        return {
+            "intent": "reject",
+            "current_node": "relevance_check"
+        }
+
+    relevance_result = await _check_query_relevance(user_query)
+    intent = relevance_result["intent"]
+    confidence = relevance_result["confidence"]
+    
+    print(f"[RELEVANCE CHECK] ✓ Classification complete: intent='{intent}', confidence={confidence:.2f}")
+
+    return {
+        "intent": intent,
+        "intent_confidence": confidence,
+        "current_node": "relevance_check"
+    }
+
+
+
+async def _check_query_relevance(query: str) -> dict:
+    print(f"  [CLASSIFY] Starting LLM classification...")
+    
+    system_prompt = """
+You are an INTENT classifier for a technical book-based assistant.
+
+Classify the user's query into ONE of the following intents:
+
+rag:
+- Clear technical or academic questions
+- Programming, AI, ML, systems, debugging
+- Requests for explanations, concepts, or code
+
+chat:
+- Greetings
+- Small talk
+- Personal statements (e.g., "my name is bob")
+- Conversational messages
+
+reject:
+- Empty input
+- Gibberish
+- Meaningless symbols
+
+Return ONLY valid JSON in this exact format:
+{
+  "intent": "rag" | "chat" | "reject",
+  "confidence": 0.0 to 1.0
+}
+"""
+
+    user_prompt = f'Query: "{query}"'
+    print(f"  [CLASSIFY] User prompt: {user_prompt}")
+
+    try:
+        print(f"  [CLASSIFY] Sending request to Gemini LLM...")
+        response = llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ])
+
+        raw = response.content.strip()
+        print(f"  [CLASSIFY] Raw LLM response: {raw}")
+        
+        if raw.startswith("```"):
+            raw = raw.replace("```json", "").replace("```", "").strip()
+            print(f"  [CLASSIFY] Cleaned JSON response: {raw}")
+
+        result = json.loads(raw)
+        print(f"  [CLASSIFY] Parsed JSON result: {result}")
+
+        intent = result.get("intent", "chat")
+        confidence = float(result.get("confidence", 0))
+        print(f"  [CLASSIFY] ✓ Classification successful: intent='{intent}', confidence={confidence}")
+
+        return {
+            "intent": intent,
+            "confidence": confidence
+        }
+
+    except Exception as e:
+        print(f"  [CLASSIFY] ❌ Exception occurred: {type(e).__name__}: {e}")
+        print(f"  [CLASSIFY] Falling back to intent='chat', confidence=0.0")
+        return {
+            "intent": "chat",
+            "confidence": 0.0
+        }
+
+
+
+
+def irrelevant_query_handler_node(state: AgentState) -> Dict:
+    query = state["user_query"]
+    intent = state.get("intent", "chat")
+    print(f"\n[IRRELEVANT HANDLER] Entering node...")
+    print(f"[IRRELEVANT HANDLER] intent='{intent}', query='{query}'")
+
+    try:
+        print(f"[IRRELEVANT HANDLER] Generating friendly response...")
+        response = llm.invoke([
+            SystemMessage(
+                content="You are a friendly conversational assistant. Respond naturally."
+            ),
+            HumanMessage(content=query)
+        ])
+        
+        answer = response.content
+        print(f"[IRRELEVANT HANDLER] ✓ Response generated: {answer[:100]}...")
+
+        return {
+            "response": LLMResponse(
+                answer=answer,
+                code_snippets=[],
+                sources=[],
+                confidence=1.0
+            ),
+            "current_node": "chat_handler"
+        }
+    except Exception as e:
+        print(f"[IRRELEVANT HANDLER] ❌ Error generating response: {e}")
+        fallback_response = "I appreciate your message! While I'm designed to help with technical questions, feel free to ask me anything about programming or software development."
+        print(f"[IRRELEVANT HANDLER] Using fallback response")
+        
+        return {
+            "response": LLMResponse(
+                answer=fallback_response,
+                code_snippets=[],
+                sources=[],
+                confidence=0.5
+            ),
+            "current_node": "chat_handler"
+        }
+
+
+# ============================================================================
 # QUERY PARSING NODES
 # ============================================================================
 

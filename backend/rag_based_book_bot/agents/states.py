@@ -105,6 +105,10 @@ class AgentState(TypedDict, total=False):
     book_filter: Optional[str]
     chapter_filter: Optional[str]
     
+    # ===== Relevance Check (Entry Node) =====
+    intent: Optional[str]  # "rag", "chat", or "reject"
+    intent_confidence: float
+    
     # ===== Processing State =====
     parsed_query: Optional[ParsedQuery]
     rewritten_queries: List[str]
@@ -170,6 +174,10 @@ def create_initial_state(
         max_tokens=kwargs.get("max_tokens", 4000),
         book_filter=kwargs.get("book_filter"),
         chapter_filter=kwargs.get("chapter_filter"),
+        
+        # Relevance Check (initialized)
+        intent=None,
+        intent_confidence=0.0,
         
         # Processing State (initialized)
         parsed_query=None,
