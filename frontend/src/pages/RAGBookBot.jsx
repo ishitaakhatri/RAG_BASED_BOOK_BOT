@@ -34,6 +34,7 @@ import {
   Library,
   GraduationCap, // New icon for Papers
   Edit,
+  LogOut,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
@@ -47,7 +48,7 @@ const BACKEND_DEFAULTS = {
   maxTokens: 30000,
 };
 
-export default function RAGBookBot() {
+export default function RAGBookBot({ onLogout }) {
   const [query, setQuery] = useState("");
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -668,7 +669,7 @@ export default function RAGBookBot() {
 
   // Show Chat View
   return (
-    <div className="h-screen  bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex">
+    <div className="h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex">
       {/* SESSIONS SIDEBAR */}
       <div
         className={`${
@@ -857,9 +858,9 @@ export default function RAGBookBot() {
               </div>
             </div>
           </div>
-        </header>{" "}
+        </header>
+
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-full min-h-0">
-          {" "}
           {/* Sidebar */}
           <div className="lg:col-span-1 space-y-4 overflow-hidden flex flex-col">
             {/* Library List - DYNAMIC FILTERING */}
@@ -877,7 +878,7 @@ export default function RAGBookBot() {
               </h3>
 
               <div className="space-y-2 flex-1 flex flex-col min-h-0">
-                <button
+                {/* <button
                   onClick={() => setSelectedBook("all")}
                   className={`w-full text-left px-3 py-2 rounded-lg transition-all flex-shrink-0 ${
                     selectedBook === "all"
@@ -886,7 +887,43 @@ export default function RAGBookBot() {
                   }`}
                 >
                   All Documents
-                </button>
+                </button> */}
+
+                {/* Search Scope Toggle */}
+                <div className="flex justify-center">
+                  <div className="bg-black/30 p-1 rounded-lg flex space-x-1">
+                    <button
+                      onClick={() => setSearchMode("all")}
+                      className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                        searchMode === "all"
+                          ? "bg-purple-600 text-white shadow-lg"
+                          : "text-purple-300 hover:bg-white/5"
+                      }`}
+                    >
+                      All Sources
+                    </button>
+                    <button
+                      onClick={() => setSearchMode("books")}
+                      className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
+                        searchMode === "books"
+                          ? "bg-blue-600 text-white shadow-lg"
+                          : "text-purple-300 hover:bg-white/5"
+                      }`}
+                    >
+                      <BookOpen className="w-3 h-3 mr-1" /> Books
+                    </button>
+                    <button
+                      onClick={() => setSearchMode("papers")}
+                      className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
+                        searchMode === "papers"
+                          ? "bg-green-600 text-white shadow-lg"
+                          : "text-purple-300 hover:bg-white/5"
+                      }`}
+                    >
+                      <GraduationCap className="w-3 h-3 mr-1" /> Papers
+                    </button>
+                  </div>
+                </div>
 
                 {/* Scrollable container for documents */}
                 <div className="overflow-y-auto pr-2 space-y-3 custom-scrollbar flex-1">
@@ -970,29 +1007,44 @@ export default function RAGBookBot() {
             {/* Settings Panel */}
             {showSettings && (
               <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center justify-between mb-6">
                   <h3 className="text-lg font-semibold text-white flex items-center">
                     <Settings className="w-5 h-5 mr-2" />
                     Retrieval Settings
                   </h3>
 
-                  {/* 4. Toggle Switch for Server Defaults */}
-                  <button
-                    onClick={() => setUseBackendDefaults(!useBackendDefaults)}
-                    className="flex items-center text-sm text-purple-200 hover:text-white transition-colors focus:outline-none"
-                  >
-                    {useBackendDefaults ? (
-                      <ToggleRight className="w-8 h-8 text-purple-500 mr-2" />
-                    ) : (
-                      <ToggleLeft className="w-8 h-8 text-gray-400 mr-2" />
-                    )}
-                    <span>Use Server Defaults</span>
-                  </button>
+                  {/* Toggle Switch for Server Defaults */}
+                  <div className="flex items-center space-x-3">
+                    <button
+                      onClick={() => setUseBackendDefaults(!useBackendDefaults)}
+                      className="flex items-center text-sm text-purple-200 hover:text-white transition-colors focus:outline-none"
+                    >
+                      {useBackendDefaults ? (
+                        <ToggleRight className="w-8 h-8 text-purple-500 mr-2" />
+                      ) : (
+                        <ToggleLeft className="w-8 h-8 text-gray-400 mr-2" />
+                      )}
+                      <span>Use Server Defaults</span>
+                    </button>
+
+                    {/* Separator */}
+                    <div className="w-px h-6 bg-white/20"></div>
+
+                    {/* Logout Button */}
+                    <button
+                      onClick={onLogout}
+                      className="flex items-center space-x-1 px-3 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-300 hover:text-red-200 rounded-lg transition-all border border-red-500/30 hover:border-red-500/50"
+                      title="Logout"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      <span className="text-xs font-semibold">Logout</span>
+                    </button>
+                  </div>
                 </div>
 
-                {/* Conditional Opacity for Settings */}
+                {/* Settings Controls */}
                 <div
-                  className={`grid grid-cols-2 gap-4 transition-opacity duration-300 ${
+                  className={`grid grid-cols-2 gap-4 transition-opacity duration-300 mb-6 ${
                     useBackendDefaults ? "opacity-50" : "opacity-100"
                   }`}
                 >
@@ -1113,42 +1165,6 @@ export default function RAGBookBot() {
 
               {/* Input Area */}
               <div className="p-4 border-t border-white/20 space-y-3">
-                {/* Search Scope Toggle */}
-                <div className="flex justify-center">
-                  <div className="bg-black/30 p-1 rounded-lg flex space-x-1">
-                    <button
-                      onClick={() => setSearchMode("all")}
-                      className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                        searchMode === "all"
-                          ? "bg-purple-600 text-white shadow-lg"
-                          : "text-purple-300 hover:bg-white/5"
-                      }`}
-                    >
-                      All Sources
-                    </button>
-                    <button
-                      onClick={() => setSearchMode("books")}
-                      className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
-                        searchMode === "books"
-                          ? "bg-blue-600 text-white shadow-lg"
-                          : "text-purple-300 hover:bg-white/5"
-                      }`}
-                    >
-                      <BookOpen className="w-3 h-3 mr-1" /> Books (Code)
-                    </button>
-                    <button
-                      onClick={() => setSearchMode("papers")}
-                      className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
-                        searchMode === "papers"
-                          ? "bg-green-600 text-white shadow-lg"
-                          : "text-purple-300 hover:bg-white/5"
-                      }`}
-                    >
-                      <GraduationCap className="w-3 h-3 mr-1" /> Papers (Theory)
-                    </button>
-                  </div>
-                </div>
-
                 <div className="flex space-x-3">
                   <input
                     type="text"
@@ -1741,4 +1757,3 @@ input[type="range"] {
 }
 `}
 </style>;
-
