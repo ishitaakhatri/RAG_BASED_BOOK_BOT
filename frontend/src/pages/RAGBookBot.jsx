@@ -35,6 +35,7 @@ import {
   GraduationCap, // New icon for Papers
   Edit,
   LogOut,
+  Pause,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
@@ -82,17 +83,20 @@ export default function RAGBookBot({ onLogout }) {
   );
   const [maxTokens, setMaxTokens] = useState(BACKEND_DEFAULTS.maxTokens);
 
+  // ABORT CONTROLLER FOR QUERY INTERRUPTION
+  const abortControllerRef = useRef(null);
+
   const navigate = useNavigate();
 
   // Loading stages animation
   const loadingStages = [
-    "Processing your request…",
-    "Preparing your response…",
-    "Analyzing… Please wait",
-    "Working on it…",
-    "Almost ready…",
-    "Fetching results…",
-    "Please hold on, just a moment…",
+    "Processing your requestâ€¦",
+    "Preparing your responseâ€¦",
+    "Analyzingâ€¦ Please wait",
+    "Working on itâ€¦",
+    "Almost readyâ€¦",
+    "Fetching resultsâ€¦",
+    "Please hold on, just a momentâ€¦",
   ];
 
   useEffect(() => {
@@ -454,6 +458,41 @@ export default function RAGBookBot({ onLogout }) {
     }
   };
 
+  const handleInterruptQuery = async () => {
+    // Abort the frontend fetch request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    
+    // Notify backend to cancel the query pipeline
+    if (currentSessionId) {
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/cancel-query?session_id=${encodeURIComponent(
+            currentSessionId
+          )}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log("✅ Query cancelled on backend:", data.message);
+        } else {
+          console.warn("⚠️ Backend cancellation response:", response.status);
+        }
+      } catch (error) {
+        console.error("⚠️ Error notifying backend of cancellation:", error);
+      }
+    }
+    
+    setLoading(false);
+    setQuery("");
+  };
+
   const handleQuerySubmit = async (e) => {
     e.preventDefault();
     if (!query.trim() || loading) return;
@@ -462,6 +501,9 @@ export default function RAGBookBot({ onLogout }) {
     setMessages((prev) => [...prev, userMessage]);
     setLoading(true);
     setQuery("");
+
+    // Create a new AbortController for this request
+    abortControllerRef.current = new AbortController();
 
     // 3. Conditional Request Payload
     // Include search_mode (scope) so backend knows which namespace to use
@@ -486,6 +528,7 @@ export default function RAGBookBot({ onLogout }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestPayload),
+        signal: abortControllerRef.current.signal,
       });
 
       const data = await response.json();
@@ -522,16 +565,20 @@ export default function RAGBookBot({ onLogout }) {
         await fetchSessions();
       }
     } catch (error) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: `Failed to get response: ${error.message}`,
-          error: true,
-        },
-      ]);
+      // Don't show error if request was aborted by user
+      if (error.name !== "AbortError") {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `Failed to get response: ${error.message}`,
+            error: true,
+          },
+        ]);
+      }
     } finally {
       setLoading(false);
+      abortControllerRef.current = null;
     }
   };
 
@@ -566,6 +613,9 @@ export default function RAGBookBot({ onLogout }) {
     setEditingText("");
     setLoading(true);
 
+    // Create a new AbortController for this request
+    abortControllerRef.current = new AbortController();
+
     // Submit the edited query
     const requestPayload = {
       query: editingText,
@@ -588,6 +638,7 @@ export default function RAGBookBot({ onLogout }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestPayload),
+        signal: abortControllerRef.current.signal,
       });
 
       const data = await response.json();
@@ -618,16 +669,20 @@ export default function RAGBookBot({ onLogout }) {
         ]);
       }
     } catch (error) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: `Failed to get response: ${error.message}`,
-          error: true,
-        },
-      ]);
+      // Don't show error if request was aborted by user
+      if (error.name !== "AbortError") {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `Failed to get response: ${error.message}`,
+            error: true,
+          },
+        ]);
+      }
     } finally {
       setLoading(false);
+      abortControllerRef.current = null;
     }
   };
 
@@ -1107,7 +1162,7 @@ export default function RAGBookBot({ onLogout }) {
                         : "Ask questions about your uploaded books and research papers. I can distinguish between theoretical proofs and coding implementation!"}
                     </p>
                     <p className="text-purple-300 text-sm mt-4">
-                      💡 Tip: Use the toggle below to switch between Books
+                      ðŸ’¡ Tip: Use the toggle below to switch between Books
                       (Code) and Papers (Theory).
                     </p>
                   </div>
@@ -1171,7 +1226,7 @@ export default function RAGBookBot({ onLogout }) {
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     onKeyPress={(e) =>
-                      e.key === "Enter" && handleQuerySubmit(e)
+                      e.key === "Enter" && !loading && handleQuerySubmit(e)
                     }
                     placeholder={
                       currentSessionId
@@ -1181,13 +1236,23 @@ export default function RAGBookBot({ onLogout }) {
                     className="flex-1 px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-500"
                     disabled={loading}
                   />
-                  <button
-                    onClick={handleQuerySubmit}
-                    disabled={loading || !query.trim()}
-                    className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                  >
-                    <Search className="w-5 h-5" />
-                  </button>
+                  {!loading ? (
+                    <button
+                      onClick={handleQuerySubmit}
+                      disabled={!query.trim()}
+                      className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    >
+                      <Search className="w-5 h-5" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleInterruptQuery}
+                      className="p-3 bg-yellow-500 hover:bg-yellow-600 text-white rounded-none transition-all flex items-center justify-center shadow-lg hover:shadow-xl"
+                      title="Pause the query processing"
+                    >
+                      <Pause className="w-5 h-5" />
+                    </button>
+                  )}
                 </div>
                 {currentSessionId && (
                   <div className="mt-2 text-xs text-purple-300 flex items-center">
@@ -1512,7 +1577,7 @@ function MessageBubble({
                               {source.page && (
                                 <>
                                   <span className="mx-2 text-purple-400">
-                                    •
+                                    â€¢
                                   </span>
                                   <span className="text-purple-300">
                                     Page {source.page}
@@ -1582,11 +1647,11 @@ function EnhancedPipelineDisplay({ stages, stats }) {
       <div className="flex items-center justify-between text-sm bg-white/5 p-3 rounded border border-white/10">
         <div className="flex items-center space-x-4">
           <span className="text-white font-semibold">{stats?.pass1 || 0}</span>
-          <span className="text-purple-300">→</span>
+          <span className="text-purple-300">â†’</span>
           <span className="text-white font-semibold">{stats?.pass2 || 0}</span>
-          <span className="text-purple-300">→</span>
+          <span className="text-purple-300">â†’</span>
           <span className="text-white font-semibold">{stats?.pass3 || 0}</span>
-          <span className="text-purple-300">→</span>
+          <span className="text-purple-300">â†’</span>
           <span className="text-green-300 font-semibold">
             {stats?.final || 0}
           </span>
@@ -1681,7 +1746,7 @@ function EnhancedPipelineDisplay({ stages, stats }) {
                         </span>
                       </div>
                       <div className="text-purple-300 text-[11px] mb-1">
-                        {chunk.chapter} • {chunk.relevance?.toFixed(0)}%
+                        {chunk.chapter} â€¢ {chunk.relevance?.toFixed(0)}%
                         relevant
                       </div>
                       <div className="text-gray-300 text-[10px] bg-black/30 p-1 rounded">

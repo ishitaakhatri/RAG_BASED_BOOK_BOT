@@ -64,6 +64,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ============================================================================
+# QUERY CANCELLATION TRACKING
+# ============================================================================
+# Dictionary to track active query tasks by session_id
+active_queries: Dict[str, asyncio.Task] = {}
+query_cancellation_events: Dict[str, asyncio.Event] = {}
 
 query_graph_app = None
 # -----------------------------------------------------------
@@ -413,12 +419,16 @@ async def process_query(request: QueryRequest, background_tasks:BackgroundTasks)
     """
     global query_graph_app
     
+    session_id = None
     try:
         print(f"\n{'='*80}")
         print(f"[NEW QUERY] {request.query}")
         
         # Get or create session
         session_id = request.session_id or str(uuid4())
+        
+        # Create cancellation event for this query
+        query_cancellation_events[session_id] = asyncio.Event()
         
         # Load conversation history
         print(f"[SESSION] {session_id}")
@@ -460,8 +470,29 @@ async def process_query(request: QueryRequest, background_tasks:BackgroundTasks)
             }
         }
         
-        # Invoke the graph
-        final_state = await query_graph_app.ainvoke(initial_state, config=config)
+        # Create the query task
+        query_task = asyncio.create_task(query_graph_app.ainvoke(initial_state, config=config))
+        active_queries[session_id] = query_task
+        
+        try:
+            # Wait for the task with cancellation check
+            final_state = await asyncio.wait_for(query_task, timeout=None)
+        except asyncio.CancelledError:
+            print(f"\n{'='*80}")
+            print(f"[CANCELLED] Query cancelled for session: {session_id}")
+            print(f"[STATUS] Pipeline stopped")
+            print(f"{'='*80}\n")
+            
+            # Clean up
+            if session_id in active_queries:
+                del active_queries[session_id]
+            if session_id in query_cancellation_events:
+                del query_cancellation_events[session_id]
+            
+            raise HTTPException(
+                status_code=499,  # Client Closed Request
+                detail="Query was cancelled by user"
+            )
         
         print("[LANGGRAPH] Pipeline completed")
         
@@ -564,6 +595,12 @@ async def process_query(request: QueryRequest, background_tasks:BackgroundTasks)
             print(f"[MEMORY] Answered from conversation history")
         print(f"{'='*80}\n")
         
+        # Clean up tracking
+        if session_id in active_queries:
+            del active_queries[session_id]
+        if session_id in query_cancellation_events:
+            del query_cancellation_events[session_id]
+        
         return QueryResponse(
             answer=final_state["response"].answer,
             sources=sources,
@@ -579,15 +616,83 @@ async def process_query(request: QueryRequest, background_tasks:BackgroundTasks)
         )
         
     except HTTPException:
+        # Clean up on HTTP exceptions
+        if session_id in active_queries:
+            del active_queries[session_id]
+        if session_id in query_cancellation_events:
+            del query_cancellation_events[session_id]
         raise
     except Exception as e:
         import traceback
         print(f"\n{'='*80}")
         print(f"[ERROR] {traceback.format_exc()}")
         print(f"{'='*80}\n")
+        
+        # Clean up on exceptions
+        if session_id in active_queries:
+            del active_queries[session_id]
+        if session_id in query_cancellation_events:
+            del query_cancellation_events[session_id]
+        
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
 
+
+
+@app.post("/cancel-query")
+async def cancel_query(session_id: str = Query(...)):
+    """
+    Cancel an ongoing query for a specific session
+    Stops the pipeline immediately and frees up resources
+    """
+    try:
+        print(f"\n{'='*80}")
+        print(f"[CANCEL] Attempting to cancel query for session: {session_id}")
+        print(f"{'='*80}")
+        
+        # Set the cancellation event
+        if session_id in query_cancellation_events:
+            query_cancellation_events[session_id].set()
+            print(f"✅ Cancellation signal sent for session: {session_id}")
+        else:
+            print(f"⚠️ No active query found for session: {session_id}")
+            return {
+                "status": "not_found",
+                "message": f"No active query for session: {session_id}"
+            }
+        
+        # Cancel the async task if it exists
+        if session_id in active_queries:
+            task = active_queries[session_id]
+            if not task.done():
+                task.cancel()
+                print(f"✅ Task cancelled for session: {session_id}")
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    print(f"✅ Task successfully cancelled for session: {session_id}")
+                except Exception as e:
+                    print(f"⚠️ Exception during cancellation: {e}")
+            
+            # Clean up
+            del active_queries[session_id]
+        
+        # Clean up the event
+        if session_id in query_cancellation_events:
+            del query_cancellation_events[session_id]
+        
+        print(f"{'='*80}\n")
+        return {
+            "status": "cancelled",
+            "message": f"Query cancelled for session: {session_id}"
+        }
+    
+    except Exception as e:
+        print(f"[ERROR] Cancellation failed: {e}")
+        return {
+            "status": "error",
+            "message": f"Failed to cancel query: {str(e)}"
+        }
 
 
 @app.post("/ingest", response_model=IngestResponse)
