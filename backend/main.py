@@ -1,15 +1,8 @@
 """
-FastAPI Backend - Production-Ready RAG with Conversation Memory
-
-Features:
-- Persistent session storage in Pinecone
-- Smart context resolution with LLM
-- Full conversation history management
-- Robust error handling
-- Code/Text chunk separation
+FastAPI Backend - Production-Ready RAG with Conversation Memory & Clerk Authentication
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
@@ -27,8 +20,9 @@ from uuid import uuid4
 from datetime import datetime
 from dotenv import load_dotenv
 
-# NEW: Import Configuration
+# NEW: Import Configuration & Auth
 from app_config import get_config
+from auth_utils import verify_clerk_token
 
 load_dotenv()
 settings = get_config()
@@ -54,7 +48,7 @@ from rag_based_book_bot.memory import (
     search_across_sessions
 )
 
-app = FastAPI(title="RAG Book Bot API", version="4.1.0")
+app = FastAPI(title="RAG Book Bot API", version="4.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -67,11 +61,11 @@ app.add_middleware(
 # ============================================================================
 # QUERY CANCELLATION TRACKING
 # ============================================================================
-# Dictionary to track active query tasks by session_id
 active_queries: Dict[str, asyncio.Task] = {}
 query_cancellation_events: Dict[str, asyncio.Event] = {}
 
 query_graph_app = None
+
 # -----------------------------------------------------------
 # STARTUP EVENTS
 # -----------------------------------------------------------
@@ -86,8 +80,6 @@ async def startup_event():
     logger.info("✅ Initialized progress tracker with main event loop")
     logger.info(f"🚀 RAG Book Bot API started successfully (Env: {settings.environment})")
     query_graph_app = build_query_graph(enable_persistence=True)
-    print("✅ Initialized progress tracker with main event loop")
-
 
 # ============================================================================
 # MODELS
@@ -104,27 +96,23 @@ class ChunkDetail(BaseModel):
     book_title: str = "Unknown Book"
     author: str = "Unknown Author"
 
-
 class QueryRequest(BaseModel):
     query: str
     session_id: Optional[str] = None
     user_id: Optional[str] = None
     book_filter: Optional[str] = None
-    chapter_filter: Optional[str] = None
+    search_mode: Optional[str] = "all" 
     top_k: int = 5
-    # UPDATED: Use Config Defaults
     pass1_k: int = settings.retrieval.pass1_top_k
     pass2_k: int = settings.retrieval.pass2_top_k
     pass3_enabled: bool = settings.retrieval.pass3_enabled
     max_tokens: int = settings.retrieval.max_context_tokens
-    force_retrieval: bool = False  # Override memory detection
-
+    force_retrieval: bool = False 
 
 class PipelineStage(BaseModel):
     stage_name: str
     chunk_count: int
     chunks: List[ChunkDetail]
-
 
 class QueryResponse(BaseModel):
     answer: str
@@ -139,12 +127,10 @@ class QueryResponse(BaseModel):
     answered_from_history: bool = False
     needs_context: bool = False
 
-
 class IngestResponse(BaseModel):
     success: bool
     result: Optional[dict] = None
     error: Optional[str] = None
-
 
 class BookInfo(BaseModel):
     title: str
@@ -154,16 +140,13 @@ class BookInfo(BaseModel):
     text_chunks: int = 0
     indexed_at: Optional[float] = None
 
-
 class BooksResponse(BaseModel):
     books: List[BookInfo]
-
 
 class ConversationHistoryResponse(BaseModel):
     session_id: str
     total_turns: int
     turns: List[dict]
-
 
 class SessionSummary(BaseModel):
     session_id: str
@@ -173,22 +156,17 @@ class SessionSummary(BaseModel):
     created_at: float
     updated_at: float
 
-
 class SessionListResponse(BaseModel):
     sessions: List[SessionSummary]
     total: int
-
-
 
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 
 def parse_book_filename(filename: str) -> tuple[str, str]:
-    """Parse book filename in format: 'Title - Author.pdf'"""
     name_without_ext = filename.rsplit('.', 1)[0] if '.' in filename else filename
     separator = ' - '
-    
     if separator in name_without_ext:
         first_dash_index = name_without_ext.index(separator)
         title = name_without_ext[:first_dash_index].strip()
@@ -196,59 +174,43 @@ def parse_book_filename(filename: str) -> tuple[str, str]:
     else:
         title = name_without_ext.strip()
         author = "Unknown"
-    
     return title, author
 
-
 def get_available_books() -> List[BookInfo]:
-    """Retrieve all books from metadata namespace"""
     try:
         index = get_pinecone_index()
         metadata_namespace = settings.vector_db.metadata_namespace
-        
-        try:
-            # UPDATED: Use Config Dimension
-            results = index.query(
-                vector=[1.0] * settings.vector_db.dimension,
-                top_k=10000,
-                namespace=metadata_namespace,
-                include_metadata=True
-            )
-            
-            books_info = []
-            for match in results.get("matches", []):
-                metadata = match.get("metadata", {})
-                if metadata.get("book_title") and metadata.get("book_title") != "__init__":
-                    books_info.append(BookInfo(
-                        title=metadata.get("book_title", "Unknown"),
-                        author=metadata.get("author", "Unknown"),
-                        total_chunks=metadata.get("total_chunks", 0),
-                        code_chunks=metadata.get("code_chunks", 0),
-                        text_chunks=metadata.get("text_chunks", 0),
-                        indexed_at=metadata.get("indexed_at")
-                    ))
-            
-            if books_info:
-                books_info.sort(key=lambda x: x.indexed_at or 0, reverse=True)
-                return books_info
-        except Exception as e:
-            print(f"Metadata namespace error: {e}")
-        
+        results = index.query(
+            vector=[1.0] * settings.vector_db.dimension,
+            top_k=10000,
+            namespace=metadata_namespace,
+            include_metadata=True
+        )
+        books_info = []
+        for match in results.get("matches", []):
+            metadata = match.get("metadata", {})
+            if metadata.get("book_title") and metadata.get("book_title") != "__init__":
+                books_info.append(BookInfo(
+                    title=metadata.get("book_title", "Unknown"),
+                    author=metadata.get("author", "Unknown"),
+                    total_chunks=metadata.get("total_chunks", 0),
+                    code_chunks=metadata.get("code_chunks", 0),
+                    text_chunks=metadata.get("text_chunks", 0),
+                    indexed_at=metadata.get("indexed_at")
+                ))
+        if books_info:
+            books_info.sort(key=lambda x: x.indexed_at or 0, reverse=True)
+            return books_info
         return []
-        
     except Exception as e:
         print(f"❌ Error fetching books: {e}")
         return []
 
-
 def store_book_metadata(book_title: str, author: str, total_chunks: int, code_chunks: int = 0):
-    """Store book metadata in separate namespace"""
     try:
         index = get_pinecone_index()
         metadata_namespace = settings.vector_db.metadata_namespace
         book_id = hashlib.md5(book_title.encode()).hexdigest()
-        
-        # UPDATED: Use Config Dimension
         index.upsert(
             vectors=[{
                 "id": book_id,
@@ -264,14 +226,10 @@ def store_book_metadata(book_title: str, author: str, total_chunks: int, code_ch
             }],
             namespace=metadata_namespace
         )
-        print(f"✅ Stored metadata for: {book_title}")
     except Exception as e:
         print(f"⚠️ Failed to store metadata: {e}")
 
-
-
 def format_chunk_detail(chunk, source: str) -> ChunkDetail:
-    """Format chunk for API response"""
     return ChunkDetail(
         chunk_id=chunk.chunk.chunk_id,
         chapter=chunk.chunk.chapter,
@@ -284,9 +242,7 @@ def format_chunk_detail(chunk, source: str) -> ChunkDetail:
         author=chunk.chunk.author or "Unknown Author"
     )
 
-
 def extract_pipeline_stages(state: AgentState, executed_nodes: List[str]) -> List[PipelineStage]:
-    """Extract pipeline stages from state snapshots"""
     stage_mapping = {
         "vector_search": "Pass 1: Vector Search",
         "reranking": "Pass 2: Cross-Encoder Reranking",
@@ -295,39 +251,22 @@ def extract_pipeline_stages(state: AgentState, executed_nodes: List[str]) -> Lis
         "context_assembly": "Pass 5: Context Assembly",
         "answer_from_history": "Answered from Memory"
     }
-    
     pipeline_stages = []
     pipeline_snapshots = state.get("pipeline_snapshots", [])
-    
     for snapshot in pipeline_snapshots:
         stage_name = snapshot.get("stage", "")
-        
         display_name = stage_mapping.get(stage_name, stage_name)
-        
-        if snapshot.get("skipped"):
-            display_name += " (SKIPPED)"
-        elif snapshot.get("answered_from_memory"):
-            display_name = "Answered from Conversation Memory"
-        elif snapshot.get("new_chunks_added"):
-            display_name += f" (+{snapshot['new_chunks_added']} new)"
-        elif snapshot.get("removed_duplicates"):
-            display_name += f" (-{snapshot['removed_duplicates']} duplicates)"
-        
         chunks = []
         for chunk in snapshot.get("chunks", [])[:10]:
             chunks.append(format_chunk_detail(chunk, stage_name))
-        
         pipeline_stages.append(PipelineStage(
             stage_name=display_name,
             chunk_count=snapshot.get("chunk_count", 0),
             chunks=chunks
         ))
-    
     return pipeline_stages
 
-
 def convert_pinecone_to_conversation_turns(pinecone_turns: List[dict]) -> List[ConversationTurn]:
-    """Convert Pinecone conversation turns to ConversationTurn objects"""
     return [
         ConversationTurn(
             user_query=turn.get('user_query', ''),
@@ -337,50 +276,8 @@ def convert_pinecone_to_conversation_turns(pinecone_turns: List[dict]) -> List[C
             resolved_query=turn.get('resolved_query'),
             needs_retrieval=turn.get('needs_retrieval', True),
             referenced_turn=turn.get('referenced_turn')
-        )
-        for turn in pinecone_turns
+        ) for turn in pinecone_turns
     ]
-
-
-def generate_session_title(first_query: str) -> str:
-    """Generate a title for the session from first query"""
-    title = first_query[:50]
-    if len(first_query) > 50:
-        title += "..."
-    return title
-
-def fetch_chunk_details_by_ids(chunk_ids: List[str]) -> List[dict]:
-    """Fetch full chunk details from Pinecone by chunk IDs"""
-    if not chunk_ids:
-        return []
-    
-    try:
-        index = get_pinecone_index()
-        
-        # Fetch vectors by ID from Pinecone
-        fetch_response = index.fetch(ids=chunk_ids, namespace=settings.vector_db.namespace)
-        
-        sources = []
-        for chunk_id in chunk_ids:
-            if chunk_id in fetch_response.get('vectors', {}):
-                vector_data = fetch_response['vectors'][chunk_id]
-                metadata = vector_data.get('metadata', {})
-                
-                sources.append({
-                    "chunk_id": chunk_id,
-                    "book_title": metadata.get('book_title', 'Unknown Book'),
-                    "author": metadata.get('author', 'Unknown Author'),
-                    "chapter": metadata.get('chapter', 'Unknown'),
-                    "page": metadata.get('page_number'),
-                    "relevance": metadata.get('relevance', 0),
-                    "type": metadata.get('chunk_type', 'text')
-                })
-        
-        return sources
-    except Exception as e:
-        print(f"⚠️ Error fetching chunk details: {e}")
-        # Return minimal data on error
-        return [{"chunk_id": cid, "book_title": "Unknown", "author": "Unknown"} for cid in chunk_ids]
 
 # ============================================================================
 # API ENDPOINTS
@@ -388,61 +285,31 @@ def fetch_chunk_details_by_ids(chunk_ids: List[str]) -> List[dict]:
 
 @app.get("/")
 async def root():
-    """Health check"""
-    return {
-        "status": "online",
-        "message": "RAG Book Bot API v4.0 - LangGraph Edition",
-        "execution_engine": "LangGraph",
-        "features": [
-            "langgraph_execution",
-            "persistent_conversation_memory",
-            "smart_context_detection",
-            "full_session_management",
-            "code_text_separation",
-            "robust_error_handling"
-        ]
-    }
-
-
+    return {"status": "online", "message": "RAG Book Bot API v4.2 - Secure Edition", "auth": "Clerk (Enabled)"}
 
 @app.get("/books", response_model=BooksResponse)
 async def list_books():
-    """Get list of available books"""
+    """Get list of available books (Public information)"""
     books = get_available_books()
     return BooksResponse(books=books)
 
-
 @app.post("/query", response_model=QueryResponse)
-async def process_query(request: QueryRequest, background_tasks:BackgroundTasks):
-    """
-    Process query with smart conversation memory
-    """
+async def process_query(
+    request: QueryRequest, 
+    background_tasks: BackgroundTasks,
+    user_claims: dict = Depends(verify_clerk_token) # SECURE
+):
     global query_graph_app
-    
     session_id = None
     try:
-        print(f"\n{'='*80}")
-        print(f"[NEW QUERY] {request.query}")
+        user_id = user_claims.get("sub")
+        request.user_id = user_id
         
-        # Get or create session
         session_id = request.session_id or str(uuid4())
-        
-        # Create cancellation event for this query
         query_cancellation_events[session_id] = asyncio.Event()
-        
-        # Load conversation history
-        print(f"[SESSION] {session_id}")
-        print(f"[LOADING] Conversation history...")
         
         pinecone_turns = load_conversation(session_id, max_turns=10)
         conversation_history = convert_pinecone_to_conversation_turns(pinecone_turns)
-        
-        print(f"[HISTORY] Loaded {len(conversation_history)} previous turns")
-        print(f"{'='*80}")
-        
-        # ====================================================================
-        # CREATE INITIAL STATE using LangGraph-compatible format
-        # ====================================================================
         
         initial_state = create_initial_state(
             user_query=request.query,
@@ -458,74 +325,25 @@ async def process_query(request: QueryRequest, background_tasks:BackgroundTasks)
             max_tokens=request.max_tokens
         )
         
-        # ====================================================================
-        # INVOKE LANGGRAPH (replaces custom graph.execute())
-        # ====================================================================
-        
-        print("\n[LANGGRAPH] Invoking pipeline...")
-        
-        config = {
-            "configurable": {
-                "thread_id": session_id  # For persistence
-            }
-        }
-        
-        # Create the query task
+        config = {"configurable": {"thread_id": session_id}}
         query_task = asyncio.create_task(query_graph_app.ainvoke(initial_state, config=config))
         active_queries[session_id] = query_task
         
         try:
-            # Wait for the task with cancellation check
             final_state = await asyncio.wait_for(query_task, timeout=None)
         except asyncio.CancelledError:
-            print(f"\n{'='*80}")
-            print(f"[CANCELLED] Query cancelled for session: {session_id}")
-            print(f"[STATUS] Pipeline stopped")
-            print(f"{'='*80}\n")
-            
-            # Clean up
-            if session_id in active_queries:
-                del active_queries[session_id]
-            if session_id in query_cancellation_events:
-                del query_cancellation_events[session_id]
-            
-            raise HTTPException(
-                status_code=499,  # Client Closed Request
-                detail="Query was cancelled by user"
-            )
+            if session_id in active_queries: del active_queries[session_id]
+            if session_id in query_cancellation_events: del query_cancellation_events[session_id]
+            raise HTTPException(status_code=499, detail="Query was cancelled by user")
         
-        print("[LANGGRAPH] Pipeline completed")
-        
-        # ====================================================================
-        # VALIDATE RESULTS
-        # ====================================================================
-        
-        # Check for errors
         if final_state.get("errors"):
-            raise HTTPException(
-                status_code=500,
-                detail=f"Pipeline errors: {'; '.join(final_state['errors'])}"
-            )
-        
-        # Check for response
-        if not final_state.get("response"):
-            raise HTTPException(
-                status_code=500,
-                detail="Pipeline completed but no response generated"
-            )
-        
-        # ====================================================================
-        # SAVE CONVERSATION TURN (Non-blocking background task)
-        # ====================================================================
+            raise HTTPException(status_code=500, detail=f"Pipeline errors: {'; '.join(final_state['errors'])}")
         
         turn_number = len(conversation_history) + 1
         
-        # Save conversation turn in background (non-blocking)
         def save_turn_task():
-            """Save conversation turn in background to avoid blocking response"""
             try:
-                print(f"\n[SAVING] Conversation turn to Pinecone...")
-                save_result = save_conversation_turn(
+                save_conversation_turn(
                     session_id=session_id,
                     turn_number=turn_number,
                     user_query=request.query,
@@ -536,70 +354,35 @@ async def process_query(request: QueryRequest, background_tasks:BackgroundTasks)
                     sources_used=[c.chunk.chunk_id for c in final_state.get("reranked_chunks", [])[:5]],
                     user_id=request.user_id
                 )
-                
-                if save_result.get('success'):
-                    print(f"✅ Saved turn #{turn_number}: {save_result.get('vector_id')}")
-                else:
-                    print(f"⚠️ Failed to save: {save_result.get('error')}")
             except Exception as e:
                 print(f"[ERROR] Background save failed: {e}")
         
-        # Run save in background thread (non-blocking)
         background_tasks.add_task(save_turn_task)
         
-        # ====================================================================
-        # BUILD RESPONSE
-        # ====================================================================
-        
-        # Extract pipeline stages - need to track executed nodes
-        # LangGraph doesn't provide this directly, so we infer from snapshots
         executed_nodes = [s.get("stage") for s in final_state.get("pipeline_snapshots", [])]
         pipeline_stages = extract_pipeline_stages(final_state, executed_nodes)
         
-        # Build sources
         sources = []
-        reranked_chunks = final_state.get("reranked_chunks", [])
-        if reranked_chunks:
-            for rc in reranked_chunks[:5]:
-                sources.append({
-                    "chunk_id": rc.chunk.chunk_id,
-                    "chapter": rc.chunk.chapter,
-                    "page": rc.chunk.page_number,
-                    "relevance": rc.relevance_percentage,
-                    "type": rc.chunk.chunk_type,
-                    "book_title": rc.chunk.book_title or "Unknown Book",
-                    "author": rc.chunk.author or "Unknown Author"
-                })
+        for rc in final_state.get("reranked_chunks", [])[:5]:
+            sources.append({
+                "chunk_id": rc.chunk.chunk_id,
+                "chapter": rc.chunk.chapter,
+                "page": rc.chunk.page_number,
+                "relevance": rc.relevance_percentage,
+                "type": rc.chunk.chunk_type,
+                "book_title": rc.chunk.book_title or "Unknown Book",
+                "author": rc.chunk.author or "Unknown Author"
+            })
         
-        # Calculate stats
         stats = {
             "total_stages": len(executed_nodes),
             "executed_nodes": executed_nodes,
             "conversation_turn": turn_number,
-            "referenced_turn": final_state.get("referenced_turn"),
-            "answered_from_history": not final_state.get("needs_retrieval", True),
-            "pass1": next((s.get("chunk_count", 0) for s in final_state.get("pipeline_snapshots", []) if s.get("stage") == "vector_search"), 0),
-            "pass2": next((s.get("chunk_count", 0) for s in final_state.get("pipeline_snapshots", []) if s.get("stage") == "reranking"), 0),
-            "final": len(reranked_chunks),
-            "tokens": len(final_state.get("assembled_context", "").split()),
-            "rewritten_queries_count": len(final_state.get("rewritten_queries", []))
+            "tokens": len(final_state.get("assembled_context", "").split())
         }
         
-        print(f"\n{'='*80}")
-        print(f"[SUCCESS] Pipeline completed")
-        print(f"[ANSWER] {len(final_state['response'].answer)} characters")
-        print(f"[SESSION] Saved as turn #{turn_number}")
-        if final_state.get("referenced_turn"):
-            print(f"[CONTEXT] Referenced turn #{final_state['referenced_turn']}")
-        if not final_state.get("needs_retrieval"):
-            print(f"[MEMORY] Answered from conversation history")
-        print(f"{'='*80}\n")
-        
-        # Clean up tracking
-        if session_id in active_queries:
-            del active_queries[session_id]
-        if session_id in query_cancellation_events:
-            del query_cancellation_events[session_id]
+        if session_id in active_queries: del active_queries[session_id]
+        if session_id in query_cancellation_events: del query_cancellation_events[session_id]
         
         return QueryResponse(
             answer=final_state["response"].answer,
@@ -615,133 +398,50 @@ async def process_query(request: QueryRequest, background_tasks:BackgroundTasks)
             needs_context=bool(final_state.get("referenced_turn"))
         )
         
-    except HTTPException:
-        # Clean up on HTTP exceptions
-        if session_id in active_queries:
-            del active_queries[session_id]
-        if session_id in query_cancellation_events:
-            del query_cancellation_events[session_id]
-        raise
     except Exception as e:
-        import traceback
-        print(f"\n{'='*80}")
-        print(f"[ERROR] {traceback.format_exc()}")
-        print(f"{'='*80}\n")
-        
-        # Clean up on exceptions
-        if session_id in active_queries:
-            del active_queries[session_id]
-        if session_id in query_cancellation_events:
-            del query_cancellation_events[session_id]
-        
+        if session_id in active_queries: del active_queries[session_id]
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
-
-
-
 @app.post("/cancel-query")
-async def cancel_query(session_id: str = Query(...)):
-    """
-    Cancel an ongoing query for a specific session
-    Stops the pipeline immediately and frees up resources
-    """
+async def cancel_query(session_id: str = Query(...), user_claims: dict = Depends(verify_clerk_token)):
     try:
-        print(f"\n{'='*80}")
-        print(f"[CANCEL] Attempting to cancel query for session: {session_id}")
-        print(f"{'='*80}")
-        
-        # Set the cancellation event
-        if session_id in query_cancellation_events:
-            query_cancellation_events[session_id].set()
-            print(f"✅ Cancellation signal sent for session: {session_id}")
-        else:
-            print(f"⚠️ No active query found for session: {session_id}")
-            return {
-                "status": "not_found",
-                "message": f"No active query for session: {session_id}"
-            }
-        
-        # Cancel the async task if it exists
+        if session_id in query_cancellation_events: query_cancellation_events[session_id].set()
         if session_id in active_queries:
             task = active_queries[session_id]
             if not task.done():
                 task.cancel()
-                print(f"✅ Task cancelled for session: {session_id}")
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    print(f"✅ Task successfully cancelled for session: {session_id}")
-                except Exception as e:
-                    print(f"⚠️ Exception during cancellation: {e}")
-            
-            # Clean up
+                try: await task
+                except asyncio.CancelledError: pass
             del active_queries[session_id]
-        
-        # Clean up the event
-        if session_id in query_cancellation_events:
-            del query_cancellation_events[session_id]
-        
-        print(f"{'='*80}\n")
-        return {
-            "status": "cancelled",
-            "message": f"Query cancelled for session: {session_id}"
-        }
-    
+        if session_id in query_cancellation_events: del query_cancellation_events[session_id]
+        return {"status": "cancelled", "message": f"Query cancelled for session: {session_id}"}
     except Exception as e:
-        print(f"[ERROR] Cancellation failed: {e}")
-        return {
-            "status": "error",
-            "message": f"Failed to cancel query: {str(e)}"
-        }
-
+        return {"status": "error", "message": str(e)}
 
 @app.post("/ingest", response_model=IngestResponse)
 def ingest_book(
     file: UploadFile = File(...),
     book_title: Optional[str] = None,
-    author: Optional[str] = None
+    author: Optional[str] = None,
+    user_claims: dict = Depends(verify_clerk_token) # SECURE
 ):
-    """
-    Ingest a new PDF book with real-time progress tracking
-    """
     if not file.filename.endswith('.pdf'):
-        logger.warning(f"❌ Rejected non-PDF file: {file.filename}")
         raise HTTPException(status_code=400, detail="Only PDF files supported")
     
     tmp_path = None
     try:
-        logger.info(f"📥 Received upload request: {file.filename}")
-        
         tracker = get_progress_tracker()
         tracker.reset()
-        logger.info("🔄 Progress tracker reset for new ingestion")
         
-        if not book_title or not author:
-            extracted_title, extracted_author = parse_book_filename(file.filename)
-            final_book_title = book_title or extracted_title
-            final_author = author or extracted_author
-            
-            logger.info(f"📖 Auto-extracted: '{final_book_title}' by {final_author}")
-            print(f"📖 Auto-extracted: '{final_book_title}' by {final_author}")
-        else:
-            final_book_title = book_title
-            final_author = author
-            logger.info(f"📖 Using provided metadata: '{final_book_title}' by {final_author}")
+        extracted_title, extracted_author = parse_book_filename(file.filename)
+        final_book_title = book_title or extracted_title
+        final_author = author or extracted_author
         
-        # Save temporarily
-        logger.info("💾 Saving uploaded file to temporary location...")
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
             content = file.file.read()
             tmp_file.write(content)
             tmp_path = tmp_file.name
         
-        logger.info(f"✅ File saved: {tmp_path}")
-        print(f"📥 Received file: {file.filename}")
-        print(f"📊 Starting ingestion for '{final_book_title}'")
-        
-        logger.info("⚙️ Initializing ingestor with configuration...")
-        
-        # UPDATED: Use Config settings for ingestion
         config = IngestorConfig(
             similarity_threshold=settings.ingestion.similarity_threshold,
             min_chunk_size=settings.ingestion.min_chunk_size,
@@ -750,255 +450,69 @@ def ingest_book(
             debug=False
         )
         ingestor = EnhancedBookIngestorPaddle(config=config)
-        logger.info("✅ Ingestor initialized")
+        result = ingestor.ingest_book(pdf_path=tmp_path, book_title=final_book_title, author=final_author)
         
-        logger.info("🔨 Starting book ingestion process...")
-        result = ingestor.ingest_book(
-            pdf_path=tmp_path,
-            book_title=final_book_title,
-            author=final_author
-        )
+        store_book_metadata(final_book_title, final_author, result.get('chunks', 0), result.get('code_chunks', 0))
         
-        logger.info("💾 Storing book metadata...")
-        code_chunks = result.get('code_chunks', 0)
-        total_chunks = result.get('chunks', 0)
-        
-        store_book_metadata(
-            book_title=final_book_title,
-            author=final_author,
-            total_chunks=total_chunks,
-            code_chunks=code_chunks
-        )
-        
-        logger.info("✅ Metadata stored successfully")
-        
-        logger.info("🧹 Cleaning up temporary files...")
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        
-        logger.info(f"✅ Ingestion complete: {total_chunks} chunks from {result.get('total_pages', 0)} pages")
-        print(f"✅ Ingestion complete: {total_chunks} chunks from {result.get('total_pages', 0)} pages")
-        
+        if os.path.exists(tmp_path): os.unlink(tmp_path)
         return IngestResponse(success=True, result=result)
         
     except Exception as e:
-        logger.error(f"❌ Ingestion failed: {str(e)}")
-        logger.exception("Full error traceback:")
-        print(f"❌ Ingest error: {str(e)}")
-        
-        try:
-            tracker = get_progress_tracker()
-            tracker.add_error(str(e))
-            tracker.finish(success=False)
-        except:
-            pass
-        
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                logger.info("🧹 Cleaning up temporary file after error...")
-                os.unlink(tmp_path)
-            except Exception as cleanup_error:
-                logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
-        
+        if tmp_path and os.path.exists(tmp_path): os.unlink(tmp_path)
         return IngestResponse(success=False, error=str(e))
-
 
 @app.websocket("/ws/ingest")
 async def websocket_ingestion_progress(websocket: WebSocket):
-    """
-    WebSocket endpoint for real-time ingestion progress updates
-    """
     await websocket.accept()
     tracker = get_progress_tracker()
-
-    logger.info("🔌 WebSocket client connected for ingestion progress")
-    print("🔌 WebSocket client connected for ingestion progress")
-
     is_connected = True
-    send_failures = 0
-    max_send_failures = 3
-
+    
     async def send_update(state):
-        nonlocal is_connected, send_failures
-        
-        if not is_connected or send_failures >= max_send_failures:
-            return
-        
+        nonlocal is_connected
+        if not is_connected: return
         try:
-            if websocket.client_state.name == "CONNECTED":
-                await websocket.send_json(state.to_dict())
-                send_failures = 0
-            else:
-                is_connected = False
-                logger.info("WebSocket no longer connected, stopping updates")
-        except Exception as e:
-            send_failures += 1
-            if send_failures == 1:
-                logger.warning(f"⚠️ WebSocket send failed: {e}")
-            if send_failures >= max_send_failures:
-                is_connected = False
-                logger.info(f"WebSocket disconnected after {max_send_failures} failed attempts")
+            if websocket.client_state.name == "CONNECTED": await websocket.send_json(state.to_dict())
+            else: is_connected = False
+        except: pass
 
     tracker.on_progress(send_update)
-
-    try:
-        initial_state = tracker.get_state()
-        if initial_state.get("status") != "completed":
-            await websocket.send_json(initial_state)
-    except Exception as e:
-        logger.warning(f"Failed to send initial state: {e}")
-
     try:
         while is_connected:
-            try:
-                await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
-            except asyncio.TimeoutError:
-                continue
-            except WebSocketDisconnect:
-                logger.info("🔌 WebSocket client disconnected")
-                is_connected = False
-                break
-            except Exception as e:
-                logger.warning(f"WebSocket error: {e}")
-                is_connected = False
-                break
-
-    except Exception as e:
-        logger.warning(f"WebSocket connection error: {e}")
-        is_connected = False
-
+            try: await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
+            except (asyncio.TimeoutError, WebSocketDisconnect): continue
     finally:
         is_connected = False
-        logger.info("🧹 Removing WebSocket callback")
         tracker.remove_callback(send_update)
+        try: await websocket.close()
+        except: pass
 
-        try:
-            await websocket.close()
-        except Exception as e:
-            logger.debug(f"Error closing WebSocket: {e}")
-
-
-# Session management endpoints (unchanged)
 @app.get("/sessions", response_model=SessionListResponse)
-async def list_sessions(
-    user_id: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=100)
-):
-    """List all conversation sessions"""
-    try:
-        sessions = list_all_sessions(user_id=user_id, limit=limit)
-        return SessionListResponse(
-            sessions=sessions,
-            total=len(sessions)
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list sessions: {str(e)}")
-
+async def list_sessions(limit: int = Query(50), user_claims: dict = Depends(verify_clerk_token)):
+    user_id = user_claims.get("sub")
+    sessions = list_all_sessions(user_id=user_id, limit=limit)
+    return SessionListResponse(sessions=sessions, total=len(sessions))
 
 @app.get("/conversation/{session_id}", response_model=ConversationHistoryResponse)
-async def get_conversation_history(session_id: str):
-    """Get conversation history for a session"""
-    try:
-        turns = load_conversation(session_id, max_turns=100)
-        
-        if not turns:
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        
-        return ConversationHistoryResponse(
-            session_id=session_id,
-            total_turns=len(turns),
-            turns=turns
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load conversation: {str(e)}")
-
-
-@app.get("/conversation/{session_id}/stats")
-async def get_session_stats(session_id: str):
-    """Get statistics for a conversation session"""
-    try:
-        stats = get_conversation_stats(session_id)
-        
-        if not stats.get('exists'):
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        
-        return stats
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
-
+async def get_conversation_history(session_id: str, user_claims: dict = Depends(verify_clerk_token)):
+    turns = load_conversation(session_id, max_turns=100)
+    if not turns: raise HTTPException(status_code=404, detail="Conversation not found")
+    return ConversationHistoryResponse(session_id=session_id, total_turns=len(turns), turns=turns)
 
 @app.delete("/conversation/{session_id}")
-async def delete_conversation(session_id: str):
-    """Delete a conversation"""
-    try:
-        result = delete_session(session_id)
-        
-        if not result.get('success'):
-            raise HTTPException(status_code=500, detail=result.get('error', 'Unknown error'))
-        
-        return {
-            "message": f"Conversation deleted successfully",
-            "session_id": session_id,
-            "deleted_turns": result.get('deleted_turns', 0)
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete conversation: {str(e)}")
-
+async def delete_conversation(session_id: str, user_claims: dict = Depends(verify_clerk_token)):
+    result = delete_session(session_id)
+    if not result.get('success'): raise HTTPException(status_code=500, detail="Failed")
+    return {"message": "Deleted", "session_id": session_id}
 
 @app.get("/search/sessions")
-async def search_sessions(
-    query: str = Query(..., min_length=1),
-    user_id: Optional[str] = Query(None),
-    limit: int = Query(10, ge=1, le=50)
-):
-    """Search across all conversation sessions"""
-    try:
-        results = search_across_sessions(
-            query=query,
-            user_id=user_id,
-            top_k=limit
-        )
-        return {
-            "query": query,
-            "results": results,
-            "total": len(results)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
-
+async def search_sessions(query: str, limit: int = 10, user_claims: dict = Depends(verify_clerk_token)):
+    user_id = user_claims.get("sub")
+    results = search_across_sessions(query=query, user_id=user_id, top_k=limit)
+    return {"query": query, "results": results, "total": len(results)}
 
 @app.get("/health")
 async def health_check():
-    """Detailed health check"""
-    try:
-        index = get_pinecone_index()
-        stats = index.describe_index_stats()
-        
-        return {
-            "status": "healthy",
-            "version": "4.0.0-langgraph",
-            "execution_mode": "LangGraph",
-            "memory_backend": "pinecone",
-            "pinecone": "connected",
-            "total_vectors": stats.get('total_vector_count', 0),
-            "namespaces": {
-                "books": stats.get('namespaces', {}).get(settings.vector_db.namespace, {}).get('vector_count', 0),
-                "conversations": stats.get('namespaces', {}).get('conversations', {}).get('vector_count', 0),
-                "metadata": stats.get('namespaces', {}).get(settings.vector_db.metadata_namespace, {}).get('vector_count', 0)
-            },
-            "books": len(get_available_books())
-        }
-    except Exception as e:
-        return {
-            "status": "unhealthy",
-            "error": str(e)
-        }
+    return {"status": "healthy"}
 
 if __name__ == "__main__":
     import uvicorn

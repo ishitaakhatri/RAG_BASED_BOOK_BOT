@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+// 1. IMPORT CLERK HOOK
+import { useAuth } from "@clerk/clerk-react"; 
 import {
   Upload,
   ArrowLeft,
@@ -53,6 +55,9 @@ const LogItem = React.memo(({ log, getLogColor }) => (
 ));
 
 export default function IngestionPage({ books, onUploadSuccess }) {
+  // 2. GET TOKEN HOOK
+  const { getToken } = useAuth();
+
   // --- QUEUE STATE MANAGEMENT ---
   const [fileQueue, setFileQueue] = useState([]);
   const [currentFileIndex, setCurrentFileIndex] = useState(-1);
@@ -233,32 +238,37 @@ export default function IngestionPage({ books, onUploadSuccess }) {
       percentage: 5,
     });
 
-    // 1. Start the POST request
-    const requestPromise = fetch(`${API_BASE_URL}/ingest`, {
-      method: "POST",
-      body: formData,
-    });
-
-    // 2. Connect WebSocket - slightly delayed
-    setTimeout(async () => {
-      try {
-        if (
-          isIngestingRef.current &&
-          currentFileIdRef.current === queueItem.id
-        ) {
-          await connectWebSocket();
-        }
-      } catch (error) {
-        addLog("⚠️ Could not connect to live progress", "warning");
-      }
-    }, 500);
-
     try {
+        // 3. GET TOKEN FOR THIS REQUEST
+        const token = await getToken();
+
+        // 4. Start the POST request with Authorization header
+        const requestPromise = fetch(`${API_BASE_URL}/ingest`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${token}` // ATTACH TOKEN
+            },
+            body: formData,
+        });
+
+        // 5. Connect WebSocket - slightly delayed
+        setTimeout(async () => {
+            try {
+                if (
+                isIngestingRef.current &&
+                currentFileIdRef.current === queueItem.id
+                ) {
+                await connectWebSocket();
+                }
+            } catch (error) {
+                addLog("⚠️ Could not connect to live progress", "warning");
+            }
+        }, 500);
+
       const response = await requestPromise;
       const data = await response.json();
 
       // CRITICAL FIX: Guard against stale responses
-      // If the queue has already moved on to the next file, IGNORE this response.
       if (currentFileIdRef.current !== queueItem.id) {
         console.warn(
           `🛑 Ignoring stale response for ${queueItem.file.name} (Current: ${currentFileIdRef.current})`
@@ -526,7 +536,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
       return Math.min(Math.max(Number(liveProgress.percentage), 0), 100);
     }
 
-    // Heuristic fallback
     const status = liveProgress.status;
     if (status === "parsing_pdf") return 15;
     if (status === "chunking")
@@ -566,7 +575,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     [logs]
   );
 
-  // --- CATEGORIZATION LOGIC (same as RAGBookBot) ---
   const { bookList, paperList } = useMemo(() => {
     const b = [];
     const p = [];
@@ -583,7 +591,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     return { bookList: b, paperList: p };
   }, [books]);
 
-  // --- FILTERED BOOKS (based on searchMode) ---
   const filteredBooks = useMemo(() => {
     if (!Array.isArray(books)) return [];
     if (searchMode === "all") return books;
