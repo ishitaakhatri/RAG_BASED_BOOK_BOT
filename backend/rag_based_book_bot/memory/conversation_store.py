@@ -74,6 +74,37 @@ def get_pinecone_index():
             raise
     return _index
 
+@retry_on_failure(max_retries=3)
+def check_turn_exists(session_id: str, turn_number: int) -> bool:
+    """
+    Check if a turn already exists in the database to prevent duplicate saves
+    
+    Args:
+        session_id: Session identifier
+        turn_number: Turn number to check
+    
+    Returns:
+        True if turn exists, False otherwise
+    """
+    try:
+        index = get_pinecone_index()
+        vector_id = f"{session_id}_turn{turn_number}"
+        
+        result = index.fetch(
+            ids=[vector_id],
+            namespace=NAMESPACE_CONVERSATIONS
+        )
+        
+        exists = vector_id in result.get("vectors", {})
+        if exists:
+            logger.info(f"🔍 Turn {vector_id} already exists in database")
+        return exists
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Could not check turn existence: {e}")
+        return False
+
+
 
 @retry_on_failure(max_retries=3)
 def save_conversation_turn(
@@ -88,7 +119,7 @@ def save_conversation_turn(
     user_id: Optional[str] = None
 ) -> Dict:
     """
-    Save a conversation turn to Pinecone with retry logic
+    Save a conversation turn to Pinecone with retry logic and duplicate prevention
     
     Args:
         session_id: Unique session identifier
@@ -106,21 +137,34 @@ def save_conversation_turn(
     """
     try:
         index = get_pinecone_index()
+        vector_id = f"{session_id}_turn{turn_number}"
+        
+        # 🔥 NEW: Check if turn already exists to prevent duplicates
+        if check_turn_exists(session_id, turn_number):
+            logger.info(f"⏭️ Turn {vector_id} already exists, skipping save")
+            return {
+                "success": True,
+                "vector_id": vector_id,
+                "session_id": session_id,
+                "turn_number": turn_number,
+                "skipped": True,
+                "reason": "Turn already exists"
+            }
+        
+        # 🔥 NEW: Add stack trace logging for debugging
+        logger.info(f"💾 Saving new turn: {vector_id}")
         
         # Create embedding
         embedding = embed_conversation_turn(user_query, assistant_response)
-        
-        # Vector ID
-        vector_id = f"{session_id}_turn{turn_number}"
         
         # Build metadata (all strings, ints, or floats for Pinecone)
         metadata = {
             "session_id": session_id,
             "turn_number": int(turn_number),
             "timestamp": float(time.time()),
-            "user_query": user_query,  # Limit length
-            "assistant_response": assistant_response,
-            "resolved_query": (resolved_query or user_query),
+            "user_query": user_query[:1000],  # Limit length to prevent metadata overflow
+            "assistant_response": assistant_response[:2000],  # Limit length
+            "resolved_query": (resolved_query or user_query)[:1000],
             "needs_retrieval": str(needs_retrieval),  # Convert bool to string
             "combined_text": format_turn_for_embedding(user_query, assistant_response, max_response_length=500)
         }
@@ -145,7 +189,7 @@ def save_conversation_turn(
             namespace=NAMESPACE_CONVERSATIONS
         )
         
-        # Update session metadata
+        # Update session metadata (only if this is a new turn)
         update_session_metadata(session_id, user_query, turn_number, user_id)
         
         logger.info(f"✅ Saved: {vector_id}")
@@ -154,7 +198,8 @@ def save_conversation_turn(
             "success": True,
             "vector_id": vector_id,
             "session_id": session_id,
-            "turn_number": turn_number
+            "turn_number": turn_number,
+            "skipped": False
         }
         
     except Exception as e:
@@ -163,7 +208,6 @@ def save_conversation_turn(
             "success": False,
             "error": str(e)
         }
-
 
 @retry_on_failure(max_retries=3)
 def load_conversation(session_id: str, max_turns: int = 10) -> List[Dict]:
@@ -423,9 +467,36 @@ def update_session_metadata(
     turn_number: int,
     user_id: Optional[str] = None
 ):
-    """Update session metadata for listing"""
+    """
+    Update session metadata for listing with duplicate prevention
+    
+    Args:
+        session_id: Session identifier
+        last_message: Last user message
+        turn_number: Current turn number
+        user_id: Optional user identifier
+    """
     try:
         index = get_pinecone_index()
+        
+        # 🔥 NEW: Check if we need to update (fetch existing metadata first)
+        metadata_id = f"session_{session_id}"
+        existing = None
+        
+        try:
+            fetch_result = index.fetch(
+                ids=[metadata_id],
+                namespace=NAMESPACE_SESSION_META
+            )
+            if metadata_id in fetch_result.get("vectors", {}):
+                existing = fetch_result["vectors"][metadata_id].get("metadata", {})
+        except Exception as fetch_error:
+            logger.warning(f"⚠️ Could not fetch existing metadata: {fetch_error}")
+        
+        # 🔥 NEW: Skip update if turn_number hasn't changed
+        if existing and existing.get("message_count") == turn_number:
+            logger.info(f"⏭️ Session metadata for {session_id} already up-to-date (turn {turn_number})")
+            return
         
         # Generate title from first message
         title = last_message[:50]
@@ -442,9 +513,12 @@ def update_session_metadata(
             "updated_at": float(current_time)
         }
         
-        # Add created_at only for first turn
-        if turn_number == 1:
+        # Add created_at only for first turn (or if it doesn't exist)
+        if turn_number == 1 or (existing and "created_at" not in existing):
             metadata["created_at"] = float(current_time)
+        elif existing:
+            # Preserve existing created_at
+            metadata["created_at"] = existing.get("created_at", current_time)
         
         if user_id:
             metadata["user_id"] = str(user_id)
@@ -452,18 +526,17 @@ def update_session_metadata(
         # Upsert metadata
         index.upsert(
             vectors=[{
-                "id": f"session_{session_id}",
+                "id": metadata_id,
                 "values": [1.0] * 1024,  # Dummy vector
                 "metadata": metadata
             }],
             namespace=NAMESPACE_SESSION_META
         )
         
-        logger.info(f"✅ Updated metadata for session {session_id}")
+        logger.info(f"✅ Updated metadata for session {session_id} (turn {turn_number})")
         
     except Exception as e:
         logger.error(f"⚠️ Failed to update metadata: {e}")
-
 
 def get_session_turns(session_id: str) -> List[Dict]:
     """Get all turns for a session (alias)"""

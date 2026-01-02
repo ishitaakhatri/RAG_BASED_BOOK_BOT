@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
 load_dotenv()
+import traceback
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -382,7 +383,17 @@ def _fallback_query_variations(query: str, num_variations: int = 3) -> list[str]
     return [query] * num_variations
 
 
+# Modified _parse_query_with_llm function (COMPLETE REPLACEMENT)
 async def _parse_query_with_llm(query: str) -> dict:
+    """
+    Parse query using LLM with improved validation and error handling
+    
+    Args:
+        query: User query to parse
+    
+    Returns:
+        Dictionary with parsed query components
+    """
     system_prompt = """You are an expert query analyzer. Analyze user queries to help retrieve the most relevant content.
 Extract:
 1. intent (CONCEPTUAL, CODE_REQUEST, DEBUGGING, COMPARISON, TUTORIAL)
@@ -391,7 +402,14 @@ Extract:
 4. code_language (string or null)
 5. complexity_hint (beginner, intermediate, advanced)
 
-Respond with ONLY valid JSON."""
+Respond with ONLY valid JSON in this exact format:
+{
+  "intent": "CONCEPTUAL",
+  "topics": ["topic1", "topic2"],
+  "keywords": ["keyword1", "keyword2"],
+  "code_language": null,
+  "complexity_hint": "intermediate"
+}"""
 
     user_prompt = f'Analyze this query: "{query}"'
 
@@ -404,27 +422,84 @@ Respond with ONLY valid JSON."""
         response = llm.invoke(messages)
         response_text = response.content.strip()
         
+        # 🔥 IMPROVED: Better JSON extraction
         if response_text.startswith("```"):
-            response_text = response_text.replace("```json", "").replace("```", "")
+            response_text = response_text.replace("```json", "").replace("```", "").strip()
         
         parsed = json.loads(response_text)
         
-        return {
-            'intent': parsed.get('intent', 'CONCEPTUAL'),
-            'topics': parsed.get('topics', []),
-            'keywords': parsed.get('keywords', []),
+        # 🔥 NEW: Validate intent against allowed values
+        valid_intents = ['CONCEPTUAL', 'CODE_REQUEST', 'DEBUGGING', 'COMPARISON', 'TUTORIAL']
+        intent = parsed.get('intent', 'CONCEPTUAL').upper()
+        
+        if intent not in valid_intents:
+            print(f"  ⚠️ Invalid intent '{intent}', defaulting to CONCEPTUAL")
+            intent = 'CONCEPTUAL'
+        
+        # 🔥 NEW: Validate and sanitize topics and keywords
+        topics = parsed.get('topics', [])
+        if not isinstance(topics, list):
+            topics = []
+        topics = [str(t) for t in topics if t][:10]  # Limit to 10 topics
+        
+        keywords = parsed.get('keywords', [])
+        if not isinstance(keywords, list):
+            keywords = []
+        keywords = [str(k) for k in keywords if k][:10]  # Limit to 10 keywords
+        
+        # 🔥 NEW: Validate complexity_hint
+        valid_complexity = ['beginner', 'intermediate', 'advanced']
+        complexity = parsed.get('complexity_hint', 'intermediate').lower()
+        if complexity not in valid_complexity:
+            complexity = 'intermediate'
+        
+        result = {
+            'intent': intent,
+            'topics': topics,
+            'keywords': keywords,
             'code_language': parsed.get('code_language'),
-            'complexity_hint': parsed.get('complexity_hint', 'intermediate')
+            'complexity_hint': complexity
         }
+        
+        print(f"  ✅ Query parsed successfully: intent={intent}, topics={len(topics)}, keywords={len(keywords)}")
+        
+        return result
+        
+    except json.JSONDecodeError as je:
+        print(f"  ❌ JSON parsing error: {je}")
+        print(f"  Raw response: {response_text[:200]}...")
+        return _get_fallback_parse()
     except Exception as e:
-        print(f"Parsing error: {e}")
-        return {
-            'intent': 'CONCEPTUAL',
-            'topics': [],
-            'keywords': [],
-            'code_language': None,
-            'complexity_hint': 'intermediate'
-        }
+        print(f"  ❌ Parsing error: {e}")
+        import traceback
+        print(f"  📍 Traceback:\n{traceback.format_exc()}")
+        return _get_fallback_parse()
+
+
+# 🔥 NEW: Separate fallback function for consistency
+def _get_fallback_parse() -> dict:
+    """Return consistent fallback parsing result"""
+    return {
+        'intent': 'CONCEPTUAL',
+        'topics': [],
+        'keywords': [],
+        'code_language': None,
+        'complexity_hint': 'intermediate'
+    }
+
+
+def _fallback_parse_query(query: str) -> ParsedQuery:
+    """Fallback parser using the consistent fallback data"""
+    fallback_data = _get_fallback_parse()
+    return ParsedQuery(
+        raw_query=query, 
+        intent=QueryIntent.CONCEPTUAL, 
+        topics=fallback_data['topics'], 
+        keywords=fallback_data['keywords'], 
+        code_language=fallback_data['code_language'], 
+        complexity_hint=fallback_data['complexity_hint']
+    )
+
 
 def _fallback_parse_query(query: str) -> ParsedQuery:
     return ParsedQuery(
