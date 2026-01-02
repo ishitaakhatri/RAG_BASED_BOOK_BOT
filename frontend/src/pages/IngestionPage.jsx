@@ -18,8 +18,15 @@ import {
   Book,
 } from "lucide-react";
 
-const API_BASE_URL = "http://localhost:8000";
-const WS_URL = "ws://localhost:8000/ws/ingest";
+// Determine the correct protocol (ws or wss) based on the current page
+const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+
+// Dynamically set the URL to match the current domain/IP
+// This works for both localhost AND your EC2 IP automatically
+const WS_URL = `${protocol}//${window.location.host}/api/ws/ingest`;
+
+// For the API URL, we can use a relative path so Nginx proxies it
+const API_BASE_URL = "/api";
 
 // Extract LogItem to a memoized component for performance
 const LogItem = React.memo(({ log, getLogColor }) => (

@@ -1,4 +1,3 @@
-# Stage 1: Build the React Application
 FROM node:18-alpine as build
 
 WORKDIR /app
@@ -6,6 +5,13 @@ WORKDIR /app
 # Copy package files and install dependencies
 COPY package*.json ./
 RUN npm ci
+
+# --- NEW SECTION STARTS ---
+# Declare the build argument
+ARG VITE_CLERK_PUBLISHABLE_KEY
+# Set it as an environment variable for the build command
+ENV VITE_CLERK_PUBLISHABLE_KEY=$VITE_CLERK_PUBLISHABLE_KEY
+# --- NEW SECTION ENDS ---
 
 # Copy source code and build
 COPY . .

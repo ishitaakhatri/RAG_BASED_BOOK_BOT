@@ -14,7 +14,7 @@ import {
 
 import { Library, Sparkles, Lock, Mail, Eye, EyeOff, KeyRound, ArrowLeft } from "lucide-react";
 
-const API_BASE_URL = "http://localhost:8000";
+const API_BASE_URL = "/api";
 
 // Custom Landing/Auth Page with Clerk Backend
 const LandingPage = () => {
