@@ -17,7 +17,8 @@ from rag_based_book_bot.memory.conversation_store import (
     get_conversation_stats,
     list_all_sessions,
     search_across_sessions,
-    update_session_metadata
+    update_session_metadata,
+    get_session_metadata  # <--- Added this
 )
 
 from rag_based_book_bot.memory.embedding_utils import (
@@ -39,6 +40,7 @@ __all__ = [
     'list_all_sessions',
     'search_across_sessions',
     'update_session_metadata',
+    'get_session_metadata', # <--- Added this
     
     # Embedding utilities
     'embed_conversation_turn',
