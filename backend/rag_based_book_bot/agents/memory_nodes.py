@@ -34,6 +34,7 @@ def query_context_resolution_node(state: AgentState) -> Dict:
     Responsibility:
     - Decide if the query depends on prior context
     - Rewrite it into a standalone query if needed
+    - Decide whether retrieval is required (for routing)
     """
 
     parsed_query = state.get("parsed_query")
@@ -45,10 +46,12 @@ def query_context_resolution_node(state: AgentState) -> Dict:
 
     conversation_history = state.get("conversation_history", [])
 
+    # No history → must retrieve
     if not conversation_history:
         return {
             "resolved_query": current_query,
             "needs_context": False,
+            "needs_retrieval": True,   # 🔥 IMPORTANT
             "context_type": "none",
             "current_node": "context_resolution",
         }
@@ -57,7 +60,7 @@ def query_context_resolution_node(state: AgentState) -> Dict:
     context = ""
     for turn in conversation_history[-5:]:
         context += f"User: {turn.user_query}\n"
-        assistant_text = str(turn.assistant_response or "")[:150]
+        assistant_text = str(turn.assistant_response or "")
         context += f"Assistant: {assistant_text}...\n\n"
 
     prompt = f"""
@@ -89,10 +92,14 @@ Return ONLY valid JSON:
 
         analysis = json.loads(text)
 
+        needs_context = analysis.get("needs_context", False)
+        context_type = analysis.get("context_type", "none")
+
         return {
             "resolved_query": analysis.get("standalone_query", current_query),
-            "needs_context": analysis.get("needs_context", False),
-            "context_type": analysis.get("context_type", "none"),
+            "needs_context": needs_context,
+            "needs_retrieval": not needs_context,  # 🔥 CORE FIX
+            "context_type": context_type,
             "current_node": "context_resolution",
         }
 
@@ -101,6 +108,7 @@ Return ONLY valid JSON:
         return {
             "resolved_query": current_query,
             "needs_context": False,
+            "needs_retrieval": True,   # 🔥 fail-safe → retrieve
             "context_type": "none",
             "current_node": "context_resolution",
         }
