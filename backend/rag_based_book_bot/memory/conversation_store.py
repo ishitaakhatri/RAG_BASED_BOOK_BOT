@@ -396,6 +396,25 @@ def search_across_sessions(
         logger.error(f"❌ Cross-session search failed: {e}")
         return []
 
+# --- NEW FUNCTION FOR SECURITY CHECKS ---
+@retry_on_failure(max_retries=3)
+def get_session_metadata(session_id: str) -> Optional[Dict]:
+    """Fetch just the metadata for a session to verify ownership"""
+    try:
+        index = get_pinecone_index()
+        # Fetch the session metadata vector
+        result = index.fetch(
+            ids=[f"session_{session_id}"],
+            namespace=NAMESPACE_SESSION_META
+        )
+        
+        if result and result.get("vectors"):
+            return result["vectors"][f"session_{session_id}"].get("metadata")
+        return None
+    except Exception as e:
+        logger.error(f"❌ Failed to fetch session metadata: {e}")
+        return None
+# ----------------------------------------
 
 @retry_on_failure(max_retries=3)
 def update_session_metadata(
