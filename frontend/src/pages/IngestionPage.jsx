@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 // 1. IMPORT CLERK HOOK
-import { useAuth } from "@clerk/clerk-react"; 
+import { useAuth } from "@clerk/clerk-react";
 import {
   Upload,
   ArrowLeft,
@@ -239,31 +239,31 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     });
 
     try {
-        // 3. GET TOKEN FOR THIS REQUEST
-        const token = await getToken();
+      // 3. GET TOKEN FOR THIS REQUEST
+      const token = await getToken();
 
-        // 4. Start the POST request with Authorization header
-        const requestPromise = fetch(`${API_BASE_URL}/ingest`, {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${token}` // ATTACH TOKEN
-            },
-            body: formData,
-        });
+      // 4. Start the POST request with Authorization header
+      const requestPromise = fetch(`${API_BASE_URL}/ingest`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`, // ATTACH TOKEN
+        },
+        body: formData,
+      });
 
-        // 5. Connect WebSocket - slightly delayed
-        setTimeout(async () => {
-            try {
-                if (
-                isIngestingRef.current &&
-                currentFileIdRef.current === queueItem.id
-                ) {
-                await connectWebSocket();
-                }
-            } catch (error) {
-                addLog("⚠️ Could not connect to live progress", "warning");
-            }
-        }, 500);
+      // 5. Connect WebSocket - slightly delayed
+      setTimeout(async () => {
+        try {
+          if (
+            isIngestingRef.current &&
+            currentFileIdRef.current === queueItem.id
+          ) {
+            await connectWebSocket();
+          }
+        } catch (error) {
+          addLog("⚠️ Could not connect to live progress", "warning");
+        }
+      }, 500);
 
       const response = await requestPromise;
       const data = await response.json();
@@ -625,13 +625,8 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                 </p>
               </div>
             </div>
-            <div className="text-right">
-              <p className="text-sm text-purple-300">
-                Documents in system:{" "}
-                <span className="font-bold text-white">
-                  {filteredBooks.length}
-                </span>
-              </p>
+            <div className="text-right-24">
+              <p className="text-sm text-purple-300"></p>
             </div>
           </div>
         </div>
