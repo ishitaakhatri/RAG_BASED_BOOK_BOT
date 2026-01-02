@@ -101,13 +101,14 @@ class QueryRequest(BaseModel):
     session_id: Optional[str] = None
     user_id: Optional[str] = None
     book_filter: Optional[str] = None
+    chapter_filter: Optional[str] = None  # <--- ADD THIS LINE
     search_mode: Optional[str] = "all" 
     top_k: int = 5
     pass1_k: int = settings.retrieval.pass1_top_k
     pass2_k: int = settings.retrieval.pass2_top_k
     pass3_enabled: bool = settings.retrieval.pass3_enabled
     max_tokens: int = settings.retrieval.max_context_tokens
-    force_retrieval: bool = False 
+    force_retrieval: bool = False
 
 class PipelineStage(BaseModel):
     stage_name: str
