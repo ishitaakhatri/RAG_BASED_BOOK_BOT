@@ -568,7 +568,16 @@ export default function RAGBookBot() {
   );
 
   return (
-    <div className="h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex">
+    <div className="h-screen bg-slate-950 text-white relative overflow-hidden flex">
+      {/* Animated Background Elements - Matching Landing Page */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl animate-pulse" />
+        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-pink-600/20 rounded-full blur-3xl animate-pulse delay-1000" />
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-3xl" />
+      </div>
+      {/* Grid Pattern Overlay */}
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:50px_50px]" />
+      <div className="relative z-10 flex flex-1 w-full">
       {/* Sidebar */}
       <div
         className={`${
@@ -1065,6 +1074,7 @@ export default function RAGBookBot() {
           </div>
         </div>
       </div>
+      </div>
     </div>
   );
 }
@@ -1352,16 +1362,6 @@ function MessageBubble({
                               <span className="font-medium">
                                 {source.chapter}
                               </span>
-                              {source.page && (
-                                <>
-                                  <span className="mx-2 text-purple-400">
-                                    •
-                                  </span>
-                                  <span className="text-purple-300">
-                                    Page {source.page}
-                                  </span>
-                                </>
-                              )}
                             </div>
                           </div>
                           {source.relevance && (

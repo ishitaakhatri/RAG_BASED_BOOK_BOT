@@ -420,7 +420,16 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white overflow-hidden">
+    <div className="min-h-screen bg-slate-950 text-white overflow-hidden relative">
+      {/* Animated Background Elements - Matching Landing Page */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl animate-pulse" />
+        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-pink-600/20 rounded-full blur-3xl animate-pulse delay-1000" />
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-3xl" />
+      </div>
+      {/* Grid Pattern Overlay */}
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:50px_50px]" />
+      <div className="relative z-10">
       {/* ================= SIGNED OUT - CUSTOM UI ================= */}
       <SignedOut>
         <LandingPage />
@@ -454,6 +463,7 @@ export default function App() {
           />
         </Routes>
       </SignedIn>
+      </div>
     </div>
   );
 }
