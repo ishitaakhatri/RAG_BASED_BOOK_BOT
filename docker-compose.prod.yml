@@ -13,6 +13,8 @@ services:
     image: lfoppiano/grobid:0.8.0
     container_name: rag_bot_grobid
     restart: always
+    environment:
+      - JAVA_OPTS=-XX:-UseContainerSupport
 
   frontend:
     build:
