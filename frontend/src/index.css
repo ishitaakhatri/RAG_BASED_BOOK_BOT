@@ -1,6 +1,172 @@
 @import "tailwindcss/base";
 @import "tailwindcss/components";
 @import "tailwindcss/utilities";
+/* ==================== SCROLLBAR FIX - UNIVERSAL ==================== */
+
+/* Apply to any scrollable container */
+.scrollbar-visible {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  scrollbar-width: thin;
+  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.3);
+}
+
+.scrollbar-visible::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.scrollbar-visible::-webkit-scrollbar-track {
+  background: rgba(88, 28, 135, 0.15);
+  border-radius: 10px;
+}
+
+.scrollbar-visible::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
+  border-radius: 10px;
+  min-height: 40px;
+}
+
+.scrollbar-visible::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
+  box-shadow: 0 0 15px rgba(168, 85, 247, 0.6);
+}
+
+/* ==================== LIBRARY SIDEBAR FIX ==================== */
+
+.library-scroll {
+  max-height: 400px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.3);
+}
+
+.library-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.library-scroll::-webkit-scrollbar-track {
+  background: rgba(88, 28, 135, 0.1);
+  border-radius: 8px;
+  margin: 5px 0;
+}
+
+.library-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
+  border-radius: 8px;
+  min-height: 30px;
+}
+
+.library-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
+}
+
+/* ==================== TERMINAL/LOGS AREA FIX ==================== */
+
+.terminal-logs {
+  height: 300px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.4);
+}
+
+.terminal-logs::-webkit-scrollbar {
+  width: 10px;
+}
+
+.terminal-logs::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 8px;
+}
+
+.terminal-logs::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
+  border-radius: 8px;
+  min-height: 40px;
+}
+
+.terminal-logs::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.5);
+}
+
+/* ==================== MAIN CONTENT AREA FIX ==================== */
+
+.ingest-scroll-area {
+  max-height: calc(100vh - 150px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: auto;
+  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.2);
+}
+
+.ingest-scroll-area::-webkit-scrollbar {
+  width: 12px;
+}
+
+.ingest-scroll-area::-webkit-scrollbar-track {
+  background: rgba(88, 28, 135, 0.1);
+  border-radius: 10px;
+  margin: 10px 0;
+}
+
+.ingest-scroll-area::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
+  border-radius: 10px;
+  min-height: 50px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.ingest-scroll-area::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
+  background-clip: content-box;
+}
+
+/* ==================== QUEUE FILE LIST ==================== */
+
+.file-queue-scroll {
+  max-height: 200px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.3);
+}
+
+.file-queue-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.file-queue-scroll::-webkit-scrollbar-track {
+  background: rgba(88, 28, 135, 0.1);
+  border-radius: 6px;
+}
+
+.file-queue-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
+  border-radius: 6px;
+  min-height: 25px;
+}
+
+.file-queue-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
+}
+
+/* ==================== FIREFOX FALLBACK ==================== */
+
+/* Ensures Firefox shows scrollbars even without hover */
+* {
+  scrollbar-width: auto;
+}
+
+/* ==================== IMPORTANT: ENABLE OVERFLOW ==================== */
+
+/* Make sure parent containers allow scrolling */
+.enable-scroll {
+  overflow: auto !important;
+}
 
 /* ==================== CUSTOM SCROLLBAR (PURPLE THEME) ==================== */
 
@@ -34,28 +200,76 @@
 
 /* ==================== THIN SCROLLBAR VARIANT ==================== */
 
+.scrollbar-thin {
+  scrollbar-width: auto;
+  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.3);
+}
+
 .scrollbar-thin::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 12px;
+  height: 12px;
 }
 
 .scrollbar-thin::-webkit-scrollbar-track {
-  background: transparent;
+  background: rgba(88, 28, 135, 0.15);
+  border-radius: 10px;
+  margin: 5px 0;
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
   border-radius: 10px;
+  border: 2px solid rgba(139, 92, 246, 0.2);
+  background-clip: content-box;
+  min-height: 40px;
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
+  background-clip: content-box;
+  box-shadow: 0 0 20px rgba(168, 85, 247, 0.8);
 }
 
-/* Firefox */
-.scrollbar-thin {
-  scrollbar-width: thin;
-  scrollbar-color: #a855f7 transparent;
+.scrollbar-thin::-webkit-scrollbar-corner {
+  background: rgba(88, 28, 135, 0.15);
+}
+
+/* ==================== VISIBLE SCROLLBAR ==================== */
+
+.scrollbar-visible {
+  scrollbar-width: auto;
+  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.4);
+}
+
+.scrollbar-visible::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+
+.scrollbar-visible::-webkit-scrollbar-track {
+  background: rgba(88, 28, 135, 0.2);
+  border-radius: 10px;
+  margin: 10px 0;
+}
+
+.scrollbar-visible::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
+  border-radius: 10px;
+  border: 3px solid rgba(139, 92, 246, 0.3);
+  background-clip: content-box;
+  min-height: 50px;
+}
+
+.scrollbar-visible::-webkit-scrollbar-thumb:active,
+.scrollbar-visible::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
+  background-clip: content-box;
+  box-shadow: 0 0 25px rgba(168, 85, 247, 1);
+  border-color: rgba(168, 85, 247, 0.6);
+}
+
+.scrollbar-visible::-webkit-scrollbar-corner {
+  background: rgba(88, 28, 135, 0.2);
 }
 
 /* ==================== INGESTION PAGE SCROLLBAR ==================== */
@@ -138,7 +352,9 @@ body {
 
   #root {
     height: 100%;
-    overflow: hidden;
+    overflow: hidden; /* keep */
+    display: flex;
+    flex-direction: column;
   }
 }
 

@@ -88,27 +88,10 @@ export default function IngestionPage({ books, onUploadSuccess }) {
 
   const navigate = useNavigate();
 
-  // Add custom scrollbar and animation styles
+  // Add animation styles (progress-circle and terminal-glow)
   useEffect(() => {
     const style = document.createElement("style");
     style.textContent = `
-      .scrollbar-thin::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
-      }
-      .scrollbar-thin::-webkit-scrollbar-track {
-        background: rgba(139, 92, 246, 0.1);
-        border-radius: 4px;
-      }
-      .scrollbar-thin::-webkit-scrollbar-thumb {
-        background: linear-gradient(180deg, #8b5cf6, #ec4899);
-        border-radius: 4px;
-        transition: all 0.3s ease;
-      }
-      .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-        background: linear-gradient(180deg, #7c3aed, #db2777);
-        box-shadow: 0 0 10px rgba(168, 85, 247, 0.5);
-      }
       .progress-circle {
         transition: stroke-dashoffset 0.5s cubic-bezier(0.4, 0, 0.2, 1);
       }
@@ -600,7 +583,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   }, [books, searchMode, bookList, paperList]);
 
   return (
-    <div className="h-screen bg-slate-950 text-white relative overflow-hidden flex flex-col">
+    <div className="h-screen bg-slate-950 text-white relative flex flex-col">
       {/* Animated Background Elements - Matching Landing Page */}
       <div className="absolute inset-0 overflow-hidden">
         <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl animate-pulse" />
@@ -610,510 +593,513 @@ export default function IngestionPage({ books, onUploadSuccess }) {
       {/* Grid Pattern Overlay */}
       <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:50px_50px]" />
       <div className="relative z-10 flex flex-col flex-1 w-full">
-      {/* Header */}
-      <header className="bg-black/20 backdrop-blur-lg border-b border-white/10 sticky top-0 z-10 flex-shrink-0">
-        <div className="px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <button
-                onClick={handleReset}
-                className="p-2 hover:bg-white/10 rounded-lg transition-all text-white disabled:opacity-50"
-                disabled={isIngesting}
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-              <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-2 rounded-lg">
-                <Upload className="w-8 h-8 text-white" />
+        {/* Header */}
+        <header className="bg-black/20 backdrop-blur-lg border-b border-white/10 sticky top-0 z-10 flex-shrink-0">
+          <div className="px-4 sm:px-6 lg:px-8 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <button
+                  onClick={handleReset}
+                  className="p-2 hover:bg-white/10 rounded-lg transition-all text-white disabled:opacity-50"
+                  disabled={isIngesting}
+                >
+                  <ArrowLeft className="w-5 h-5" />
+                </button>
+                <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-2 rounded-lg">
+                  <Upload className="w-8 h-8 text-white" />
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-white">
+                    Ingest Documents
+                  </h1>
+                  <p className="text-sm text-purple-200">
+                    Add Books or Research Papers to your knowledge base
+                  </p>
+                </div>
               </div>
-              <div>
-                <h1 className="text-2xl font-bold text-white">
-                  Ingest Documents
-                </h1>
-                <p className="text-sm text-purple-200">
-                  Add Books or Research Papers to your knowledge base
-                </p>
+              <div className="text-right-24">
+                <p className="text-sm text-purple-300"></p>
               </div>
-            </div>
-            <div className="text-right-24">
-              <p className="text-sm text-purple-300"></p>
             </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Main Content */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin">
-        <div className="px-4 sm:px-6 lg:px-8 py-8">
-          <div className="max-w-7xl mx-auto">
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-              {/* LEFT SIDEBAR */}
-              <div className="lg:col-span-1 space-y-6">
-                <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center">
-                    <Library className="w-5 h-5 mr-2" />
-                    Library
-                  </h3>
-                  <div className="space-y-2">
-                    {/* Search Scope Toggle */}
-                    <div className="flex justify-center mb-4">
-                      <div className="bg-black/30 p-1 rounded-lg flex space-x-1">
-                        <button
-                          onClick={() => setSearchMode("all")}
-                          className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                            searchMode === "all"
-                              ? "bg-purple-600 text-white shadow-lg"
-                              : "text-purple-300 hover:bg-white/5"
-                          }`}
-                        >
-                          All Sources
-                        </button>
-                        <button
-                          onClick={() => setSearchMode("books")}
-                          className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
-                            searchMode === "books"
-                              ? "bg-blue-600 text-white shadow-lg"
-                              : "text-purple-300 hover:bg-white/5"
-                          }`}
-                        >
-                          <BookOpen className="w-3 h-3 mr-1" /> Books
-                        </button>
-                        <button
-                          onClick={() => setSearchMode("papers")}
-                          className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
-                            searchMode === "papers"
-                              ? "bg-green-600 text-white shadow-lg"
-                              : "text-purple-300 hover:bg-white/5"
-                          }`}
-                        >
-                          <GraduationCap className="w-3 h-3 mr-1" /> Papers
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Scrollable library list */}
-                    <div className="max-h-96 overflow-y-auto scrollbar-thin space-y-2">
-                      {/* RESEARCH PAPERS SECTION */}
-                      {(searchMode === "all" || searchMode === "papers") &&
-                        paperList.length > 0 && (
-                          <div>
-                            {searchMode === "all" && (
-                              <div className="text-xs font-bold text-green-400 uppercase tracking-wider mb-2 flex items-center">
-                                <GraduationCap className="w-3 h-3 mr-1" />
-                                Research Papers
-                              </div>
-                            )}
-                            <div className="space-y-1">
-                              {paperList.map((book, idx) => (
-                                <button
-                                  key={idx}
-                                  className="w-full text-left px-3 py-2 rounded-lg transition-all bg-white/5 hover:bg-white/10 text-purple-200 hover:text-white"
-                                >
-                                  <div className="flex items-center space-x-2">
-                                    <FileText className="w-3 h-3 flex-shrink-0 text-green-300" />
-                                    <div className="truncate flex-1">
-                                      <div className="text-sm font-semibold truncate">
-                                        {book.title}
-                                      </div>
-                                      <div className="text-xs opacity-75 truncate">
-                                        by {book.author}
-                                      </div>
-                                      {book.total_chunks > 0 && (
-                                        <div className="text-xs opacity-60 mt-1">
-                                          {book.total_chunks} chunks
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                      {/* BOOKS SECTION */}
-                      {(searchMode === "all" || searchMode === "books") &&
-                        bookList.length > 0 && (
-                          <div>
-                            {searchMode === "all" && (
-                              <div className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2 mt-4 flex items-center">
-                                <Book className="w-3 h-3 mr-1" />
-                                Books
-                              </div>
-                            )}
-                            <div className="space-y-1">
-                              {bookList.map((book, idx) => (
-                                <button
-                                  key={idx}
-                                  className="w-full text-left px-3 py-2 rounded-lg transition-all bg-white/5 hover:bg-white/10 text-purple-200 hover:text-white"
-                                >
-                                  <div className="flex items-center space-x-2">
-                                    <Book className="w-3 h-3 flex-shrink-0 text-blue-300" />
-                                    <div className="truncate flex-1">
-                                      <div className="text-sm font-semibold truncate">
-                                        {book.title}
-                                      </div>
-                                      <div className="text-xs opacity-75 truncate">
-                                        by {book.author}
-                                      </div>
-                                      {book.total_chunks > 0 && (
-                                        <div className="text-xs opacity-60 mt-1">
-                                          {book.total_chunks} chunks
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                      {books.length === 0 && (
-                        <div className="text-center text-purple-300 text-sm py-8 opacity-70">
-                          No documents found. <br /> Upload some!
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                {/* Stats */}
-                <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-                  <h3 className="text-lg font-semibold text-white mb-4">
-                    Stats
-                  </h3>
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="text-purple-200 text-sm">
-                        Total Docs:
-                      </span>
-                      <span className="font-bold text-white text-lg">
-                        {filteredBooks.length}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-blue-200 text-sm">
-                        Total Chunks:
-                      </span>
-                      <span className="font-bold text-white text-lg">
-                        {filteredBooks.reduce(
-                          (sum, b) => sum + (b.total_chunks || 0),
-                          0
-                        )}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* RIGHT SIDE - Upload Form */}
-              <div className="lg:col-span-3 space-y-6">
-                <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20">
-                  <h2 className="text-2xl font-bold text-white mb-2">
-                    Upload PDFs
-                  </h2>
-                  <p className="text-purple-200 mb-6">
-                    Select books or research papers. The system will auto-detect
-                    the document type.
-                  </p>
-
-                  <div className="space-y-6">
-                    {/* File Input Zone */}
-                    {!isIngesting && (
-                      <>
-                        <div>
-                          <label className="block text-sm font-semibold text-purple-200 mb-3">
-                            Select Files
-                          </label>
-                          <label
-                            htmlFor="file-upload"
-                            className={`flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-xl cursor-pointer transition-all duration-300 ${
-                              isDragging
-                                ? "border-pink-400 bg-gradient-to-br from-pink-500/30 to-purple-500/30 scale-[1.02] shadow-lg shadow-pink-500/50"
-                                : "border-purple-400/70 bg-gradient-to-br from-purple-500/10 to-pink-500/10 hover:from-purple-500/20 hover:to-pink-500/20 hover:border-purple-300"
+        {/* Main Content */}
+        <div className="ingest-scroll-area ">
+          <div className="max-w-7xl mx-auto scrollbar-visible ">
+            <div className="max-w-7xl mx-auto">
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                {/* LEFT SIDEBAR */}
+                <div className="lg:col-span-1 space-y-6">
+                  <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
+                    <h3 className="text-lg font-semibold text-white mb-4 flex items-center">
+                      <Library className="w-5 h-5 mr-2" />
+                      Library
+                    </h3>
+                    <div className="space-y-2">
+                      {/* Search Scope Toggle */}
+                      <div className="flex justify-center mb-4">
+                        <div className="bg-black/30 p-1 rounded-lg flex space-x-1">
+                          <button
+                            onClick={() => setSearchMode("all")}
+                            className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                              searchMode === "all"
+                                ? "bg-purple-600 text-white shadow-lg"
+                                : "text-purple-300 hover:bg-white/5"
                             }`}
-                            onDragEnter={handleDragEnter}
-                            onDragLeave={handleDragLeave}
-                            onDragOver={handleDragOver}
-                            onDrop={handleDrop}
                           >
-                            <div className="flex flex-col items-center justify-center pt-8 pb-6">
-                              <Upload
-                                className={`w-12 h-12 mb-2 transition-all duration-300 ${
-                                  isDragging
-                                    ? "text-pink-300 scale-125 rotate-12"
-                                    : "text-purple-300"
-                                }`}
-                              />
-                              <p className="text-sm font-semibold text-white">
-                                {isDragging
-                                  ? "🚀 Drop files here"
-                                  : "Click to upload or drag and drop"}
-                              </p>
-                              <p className="text-xs text-purple-300 mt-1">
-                                Multiple PDFs supported
-                              </p>
-                            </div>
-                            <input
-                              id="file-upload"
-                              type="file"
-                              accept=".pdf"
-                              multiple
-                              onClick={(e) => (e.target.value = null)}
-                              onChange={(e) =>
-                                handleFilesSelected(e.target.files)
-                              }
-                              className="hidden"
-                              disabled={isIngesting}
-                            />
-                          </label>
+                            All Sources
+                          </button>
+                          <button
+                            onClick={() => setSearchMode("books")}
+                            className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
+                              searchMode === "books"
+                                ? "bg-blue-600 text-white shadow-lg"
+                                : "text-purple-300 hover:bg-white/5"
+                            }`}
+                          >
+                            <BookOpen className="w-3 h-3 mr-1" /> Books
+                          </button>
+                          <button
+                            onClick={() => setSearchMode("papers")}
+                            className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
+                              searchMode === "papers"
+                                ? "bg-green-600 text-white shadow-lg"
+                                : "text-purple-300 hover:bg-white/5"
+                            }`}
+                          >
+                            <GraduationCap className="w-3 h-3 mr-1" /> Papers
+                          </button>
+                        </div>
+                      </div>
 
-                          {/* File Queue List */}
-                          {fileQueue.length > 0 && (
-                            <div className="mt-4">
-                              <h4 className="text-sm font-semibold text-purple-200 mb-2">
-                                Selected Files ({fileQueue.length})
-                              </h4>
-                              <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-thin">
-                                {fileQueue.map((item) => (
-                                  <div
-                                    key={item.id}
-                                    className="p-3 bg-white/5 border border-white/10 rounded-lg flex items-center justify-between group hover:bg-white/10 transition-all"
+                      {/* Scrollable library list */}
+                      <div className="max-h-96 overflow-y-auto scrollbar-visible space-y-2">
+                        {/* RESEARCH PAPERS SECTION */}
+                        {(searchMode === "all" || searchMode === "papers") &&
+                          paperList.length > 0 && (
+                            <div>
+                              {searchMode === "all" && (
+                                <div className="text-xs font-bold text-green-400 uppercase tracking-wider mb-2 flex items-center">
+                                  <GraduationCap className="w-3 h-3 mr-1" />
+                                  Research Papers
+                                </div>
+                              )}
+                              <div className="space-y-1">
+                                {paperList.map((book, idx) => (
+                                  <button
+                                    key={idx}
+                                    className="w-full text-left px-3 py-2 rounded-lg transition-all bg-white/5 hover:bg-white/10 text-purple-200 hover:text-white"
                                   >
-                                    <div className="flex items-center space-x-3 truncate">
-                                      <FileText className="w-5 h-5 text-purple-400 flex-shrink-0" />
-                                      <div className="truncate">
-                                        <p className="text-sm font-medium text-white truncate">
-                                          {item.file.name}
-                                        </p>
-                                        <p className="text-xs text-purple-300">
-                                          {(
-                                            item.file.size /
-                                            1024 /
-                                            1024
-                                          ).toFixed(2)}{" "}
-                                          MB
-                                        </p>
+                                    <div className="flex items-center space-x-2">
+                                      <FileText className="w-3 h-3 flex-shrink-0 text-green-300" />
+                                      <div className="truncate flex-1">
+                                        <div className="text-sm font-semibold truncate">
+                                          {book.title}
+                                        </div>
+                                        <div className="text-xs opacity-75 truncate">
+                                          by {book.author}
+                                        </div>
+                                        {book.total_chunks > 0 && (
+                                          <div className="text-xs opacity-60 mt-1">
+                                            {book.total_chunks} chunks
+                                          </div>
+                                        )}
                                       </div>
                                     </div>
-                                    <button
-                                      onClick={() => removeFile(item.id)}
-                                      className="p-1.5 hover:bg-red-500/20 text-gray-400 hover:text-red-400 rounded-lg transition-colors"
-                                    >
-                                      <X className="w-4 h-4" />
-                                    </button>
-                                  </div>
+                                  </button>
                                 ))}
                               </div>
                             </div>
                           )}
-                        </div>
-                      </>
-                    )}
 
-                    {/* Progress Section */}
-                    {(isIngesting || completedCount > 0) && (
-                      <div className="bg-gradient-to-br from-purple-900/30 via-pink-900/20 to-purple-900/30 rounded-xl p-6 border border-purple-400/30 shadow-2xl">
-                        <div className="flex items-center justify-between mb-6">
-                          <h3 className="text-xl font-bold text-white flex items-center">
-                            <div
-                              className={`w-2 h-2 rounded-full mr-3 ${
-                                currentPercentage === 100 && !isIngesting
-                                  ? "bg-green-400"
-                                  : "bg-green-400 animate-pulse"
-                              }`}
-                            ></div>
-                            {isIngesting
-                              ? `Processing File ${currentFileIndex + 1} of ${
-                                  fileQueue.length
-                                }`
-                              : "Ingestion Complete"}
-                          </h3>
-                          <span className="text-xs font-mono bg-black/40 px-2 py-1 rounded text-purple-300">
-                            {completedCount} / {fileQueue.length} Done
-                          </span>
-                        </div>
-
-                        <div className="space-y-6">
-                          {/* Queue Visualizer */}
-                          <div className="flex space-x-2 overflow-x-auto pb-2 scrollbar-thin">
-                            {fileQueue.map((item, idx) => (
-                              <div
-                                key={item.id}
-                                className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border transition-all ${
-                                  idx === currentFileIndex
-                                    ? "bg-purple-500 border-purple-300 text-white animate-pulse"
-                                    : item.status === "success"
-                                    ? "bg-green-500/20 border-green-500/50 text-green-400"
-                                    : item.status === "error"
-                                    ? "bg-red-500/20 border-red-500/50 text-red-400"
-                                    : "bg-white/5 border-white/10 text-gray-500"
-                                }`}
-                              >
-                                {item.status === "success" ? (
-                                  <CheckCircle className="w-5 h-5" />
-                                ) : item.status === "error" ? (
-                                  <AlertCircle className="w-5 h-5" />
-                                ) : (
-                                  idx + 1
-                                )}
-                              </div>
-                            ))}
-                          </div>
-
-                          {/* Circular Progress (Current File) */}
-                          <div className="flex items-center justify-center py-4">
-                            <div className="relative w-32 h-32">
-                              <svg className="w-full h-full transform -rotate-90">
-                                <circle
-                                  cx="64"
-                                  cy="64"
-                                  r="56"
-                                  stroke="rgba(139, 92, 246, 0.2)"
-                                  strokeWidth="8"
-                                  fill="none"
-                                />
-                                <circle
-                                  cx="64"
-                                  cy="64"
-                                  r="56"
-                                  stroke="url(#grad)"
-                                  strokeWidth="8"
-                                  fill="none"
-                                  strokeDasharray={circumference}
-                                  strokeDashoffset={
-                                    circumference -
-                                    (animatedPercentage / 100) * circumference
-                                  }
-                                  strokeLinecap="round"
-                                  className="progress-circle"
-                                  style={{
-                                    filter:
-                                      "drop-shadow(0 0 8px rgba(168, 85, 247, 0.6))",
-                                  }}
-                                />
-                                <defs>
-                                  <linearGradient
-                                    id="grad"
-                                    x1="0%"
-                                    y1="0%"
-                                    x2="100%"
-                                    y2="100%"
-                                  >
-                                    <stop offset="0%" stopColor="#8b5cf6" />
-                                    <stop offset="50%" stopColor="#a855f7" />
-                                    <stop offset="100%" stopColor="#ec4899" />
-                                  </linearGradient>
-                                </defs>
-                              </svg>
-                              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                                <p className="text-3xl font-bold bg-gradient-to-r from-purple-300 to-pink-300 bg-clip-text text-transparent">
-                                  {currentPercentage}%
-                                </p>
-                                <p className="text-xs text-purple-300 mt-1 max-w-[80px] truncate text-center">
-                                  {isIngesting
-                                    ? fileQueue[currentFileIndex]?.file.name
-                                    : "Done"}
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="bg-black/30 rounded-lg p-4 border border-purple-500/30">
-                            <p
-                              className={`text-center text-sm font-semibold ${getStatusColor(
-                                currentStatus
-                              )}`}
-                            >
-                              {liveProgress?.current_task ||
-                                uploadProgress?.message ||
-                                "Ready"}
-                            </p>
-                          </div>
-
-                          {/* Live Logs Terminal */}
-                          <div className="mt-6 bg-black/90 rounded-xl border-2 border-purple-500/50 shadow-2xl terminal-glow overflow-hidden transition-all duration-300">
-                            <div
-                              className={`bg-gradient-to-r from-purple-900/80 via-pink-900/80 to-purple-900/80 px-4 py-3 flex items-center justify-between ${
-                                showLogs ? "border-b border-purple-500/50" : ""
-                              }`}
-                            >
-                              <div className="flex items-center space-x-3">
-                                <div className="flex space-x-2">
-                                  <div className="w-3 h-3 rounded-full bg-red-500"></div>
-                                  <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
-                                  <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse"></div>
+                        {/* BOOKS SECTION */}
+                        {(searchMode === "all" || searchMode === "books") &&
+                          bookList.length > 0 && (
+                            <div>
+                              {searchMode === "all" && (
+                                <div className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2 mt-4 flex items-center">
+                                  <Book className="w-3 h-3 mr-1" />
+                                  Books
                                 </div>
-                                <span className="text-sm text-purple-300 font-mono font-semibold">
-                                  backend@rag-bot:~$
-                                </span>
-                              </div>
-
-                              <div className="flex items-center space-x-3">
-                                <span className="text-xs text-gray-400 font-mono bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/30">
-                                  {logs.length} lines
-                                </span>
-                                <button
-                                  onClick={() => setShowLogs(!showLogs)}
-                                  className="p-1.5 hover:bg-white/10 rounded-md text-purple-300 hover:text-white transition-colors"
-                                  title={showLogs ? "Hide Logs" : "Show Logs"}
-                                >
-                                  {showLogs ? (
-                                    <EyeOff className="w-4 h-4" />
-                                  ) : (
-                                    <Eye className="w-4 h-4" />
-                                  )}
-                                </button>
+                              )}
+                              <div className="space-y-1">
+                                {bookList.map((book, idx) => (
+                                  <button
+                                    key={idx}
+                                    className="w-full text-left px-3 py-2 rounded-lg transition-all bg-white/5 hover:bg-white/10 text-purple-200 hover:text-white"
+                                  >
+                                    <div className="flex items-center space-x-2">
+                                      <Book className="w-3 h-3 flex-shrink-0 text-blue-300" />
+                                      <div className="truncate flex-1">
+                                        <div className="text-sm font-semibold truncate">
+                                          {book.title}
+                                        </div>
+                                        <div className="text-xs opacity-75 truncate">
+                                          by {book.author}
+                                        </div>
+                                        {book.total_chunks > 0 && (
+                                          <div className="text-xs opacity-60 mt-1">
+                                            {book.total_chunks} chunks
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </button>
+                                ))}
                               </div>
                             </div>
+                          )}
 
-                            {showLogs && (
-                              <div className="p-5 h-64 overflow-y-auto scrollbar-thin font-mono text-xs bg-gradient-to-b from-black/95 to-gray-900/95">
-                                {logs.length === 0 ? (
-                                  <div className="flex items-center justify-center h-full flex-col space-y-4">
-                                    <Loader className="w-10 h-10 animate-spin text-purple-400" />
-                                    <p className="text-purple-300">
-                                      Connecting to logger...
-                                    </p>
-                                  </div>
-                                ) : (
-                                  <div className="space-y-1">
-                                    {renderedLogs}
-                                    <div ref={logsEndRef} />
-                                  </div>
-                                )}
+                        {books.length === 0 && (
+                          <div className="text-center text-purple-300 text-sm py-8 opacity-70">
+                            No documents found. <br /> Upload some!
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Stats */}
+                  <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
+                    <h3 className="text-lg font-semibold text-white mb-4">
+                      Stats
+                    </h3>
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-purple-200 text-sm">
+                          Total Docs:
+                        </span>
+                        <span className="font-bold text-white text-lg">
+                          {filteredBooks.length}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-blue-200 text-sm">
+                          Total Chunks:
+                        </span>
+                        <span className="font-bold text-white text-lg">
+                          {filteredBooks.reduce(
+                            (sum, b) => sum + (b.total_chunks || 0),
+                            0
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* RIGHT SIDE - Upload Form */}
+                <div className="lg:col-span-3 space-y-6">
+                  <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20">
+                    <h2 className="text-2xl font-bold text-white mb-2">
+                      Upload PDFs
+                    </h2>
+                    <p className="text-purple-200 mb-6">
+                      Select books or research papers. The system will
+                      auto-detect the document type.
+                    </p>
+
+                    <div className="space-y-6">
+                      {/* File Input Zone */}
+                      {!isIngesting && (
+                        <>
+                          <div>
+                            <label className="block text-sm font-semibold text-purple-200 mb-3">
+                              Select Files
+                            </label>
+                            <label
+                              htmlFor="file-upload"
+                              className={`flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-xl cursor-pointer transition-all duration-300 ${
+                                isDragging
+                                  ? "border-pink-400 bg-gradient-to-br from-pink-500/30 to-purple-500/30 scale-[1.02] shadow-lg shadow-pink-500/50"
+                                  : "border-purple-400/70 bg-gradient-to-br from-purple-500/10 to-pink-500/10 hover:from-purple-500/20 hover:to-pink-500/20 hover:border-purple-300"
+                              }`}
+                              onDragEnter={handleDragEnter}
+                              onDragLeave={handleDragLeave}
+                              onDragOver={handleDragOver}
+                              onDrop={handleDrop}
+                            >
+                              <div className="flex flex-col items-center justify-center pt-8 pb-6">
+                                <Upload
+                                  className={`w-12 h-12 mb-2 transition-all duration-300 ${
+                                    isDragging
+                                      ? "text-pink-300 scale-125 rotate-12"
+                                      : "text-purple-300"
+                                  }`}
+                                />
+                                <p className="text-sm font-semibold text-white">
+                                  {isDragging
+                                    ? "🚀 Drop files here"
+                                    : "Click to upload or drag and drop"}
+                                </p>
+                                <p className="text-xs text-purple-300 mt-1">
+                                  Multiple PDFs supported
+                                </p>
+                              </div>
+                              <input
+                                id="file-upload"
+                                type="file"
+                                accept=".pdf"
+                                multiple
+                                onClick={(e) => (e.target.value = null)}
+                                onChange={(e) =>
+                                  handleFilesSelected(e.target.files)
+                                }
+                                className="hidden"
+                                disabled={isIngesting}
+                              />
+                            </label>
+
+                            {/* File Queue List */}
+                            {fileQueue.length > 0 && (
+                              <div className="mt-4">
+                                <h4 className="text-sm font-semibold text-purple-200 mb-2">
+                                  Selected Files ({fileQueue.length})
+                                </h4>
+                                <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-visible">
+                                  {fileQueue.map((item) => (
+                                    <div
+                                      key={item.id}
+                                      className="p-3 bg-white/5 border border-white/10 rounded-lg flex items-center justify-between group hover:bg-white/10 transition-all"
+                                    >
+                                      <div className="flex items-center space-x-3 truncate">
+                                        <FileText className="w-5 h-5 text-purple-400 flex-shrink-0" />
+                                        <div className="truncate">
+                                          <p className="text-sm font-medium text-white truncate">
+                                            {item.file.name}
+                                          </p>
+                                          <p className="text-xs text-purple-300">
+                                            {(
+                                              item.file.size /
+                                              1024 /
+                                              1024
+                                            ).toFixed(2)}{" "}
+                                            MB
+                                          </p>
+                                        </div>
+                                      </div>
+                                      <button
+                                        onClick={() => removeFile(item.id)}
+                                        className="p-1.5 hover:bg-red-500/20 text-gray-400 hover:text-red-400 rounded-lg transition-colors"
+                                      >
+                                        <X className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                             )}
                           </div>
-                        </div>
-                      </div>
-                    )}
+                        </>
+                      )}
 
-                    {/* Action Buttons */}
-                    <div className="flex gap-3 pt-4">
-                      <button
-                        onClick={startQueueProcessing}
-                        disabled={fileQueue.length === 0 || isIngesting}
-                        className="flex-1 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-semibold flex items-center justify-center space-x-2"
-                      >
-                        {isIngesting ? (
-                          <>
-                            <Loader className="w-5 h-5 animate-spin" />
-                            <span>Processing Queue...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Upload className="w-5 h-5" />
-                            <span>Start Ingestion ({fileQueue.length})</span>
-                          </>
-                        )}
-                      </button>
-                      <button
-                        onClick={handleReset}
-                        disabled={isIngesting && fileQueue.length === 0}
-                        className="px-6 py-3 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {isIngesting ? "Cancel" : "Clear"}
-                      </button>
+                      {/* Progress Section */}
+                      {(isIngesting || completedCount > 0) && (
+                        <div className="bg-gradient-to-br from-purple-900/30 via-pink-900/20 to-purple-900/30 rounded-xl p-6 border border-purple-400/30 shadow-2xl">
+                          <div className="flex items-center justify-between mb-6">
+                            <h3 className="text-xl font-bold text-white flex items-center">
+                              <div
+                                className={`w-2 h-2 rounded-full mr-3 ${
+                                  currentPercentage === 100 && !isIngesting
+                                    ? "bg-green-400"
+                                    : "bg-green-400 animate-pulse"
+                                }`}
+                              ></div>
+                              {isIngesting
+                                ? `Processing File ${currentFileIndex + 1} of ${
+                                    fileQueue.length
+                                  }`
+                                : "Ingestion Complete"}
+                            </h3>
+                            <span className="text-xs font-mono bg-black/40 px-2 py-1 rounded text-purple-300">
+                              {completedCount} / {fileQueue.length} Done
+                            </span>
+                          </div>
+
+                          <div className="space-y-6">
+                            {/* Queue Visualizer */}
+                            <div className="flex space-x-2 overflow-x-auto pb-2 scrollbar-thin">
+                              {fileQueue.map((item, idx) => (
+                                <div
+                                  key={item.id}
+                                  className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border transition-all ${
+                                    idx === currentFileIndex
+                                      ? "bg-purple-500 border-purple-300 text-white animate-pulse"
+                                      : item.status === "success"
+                                      ? "bg-green-500/20 border-green-500/50 text-green-400"
+                                      : item.status === "error"
+                                      ? "bg-red-500/20 border-red-500/50 text-red-400"
+                                      : "bg-white/5 border-white/10 text-gray-500"
+                                  }`}
+                                >
+                                  {item.status === "success" ? (
+                                    <CheckCircle className="w-5 h-5" />
+                                  ) : item.status === "error" ? (
+                                    <AlertCircle className="w-5 h-5" />
+                                  ) : (
+                                    idx + 1
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Circular Progress (Current File) */}
+                            <div className="flex items-center justify-center py-4">
+                              <div className="relative w-32 h-32">
+                                <svg className="w-full h-full transform -rotate-90">
+                                  <circle
+                                    cx="64"
+                                    cy="64"
+                                    r="56"
+                                    stroke="rgba(139, 92, 246, 0.2)"
+                                    strokeWidth="8"
+                                    fill="none"
+                                  />
+                                  <circle
+                                    cx="64"
+                                    cy="64"
+                                    r="56"
+                                    stroke="url(#grad)"
+                                    strokeWidth="8"
+                                    fill="none"
+                                    strokeDasharray={circumference}
+                                    strokeDashoffset={
+                                      circumference -
+                                      (animatedPercentage / 100) * circumference
+                                    }
+                                    strokeLinecap="round"
+                                    className="progress-circle"
+                                    style={{
+                                      filter:
+                                        "drop-shadow(0 0 8px rgba(168, 85, 247, 0.6))",
+                                    }}
+                                  />
+                                  <defs>
+                                    <linearGradient
+                                      id="grad"
+                                      x1="0%"
+                                      y1="0%"
+                                      x2="100%"
+                                      y2="100%"
+                                    >
+                                      <stop offset="0%" stopColor="#8b5cf6" />
+                                      <stop offset="50%" stopColor="#a855f7" />
+                                      <stop offset="100%" stopColor="#ec4899" />
+                                    </linearGradient>
+                                  </defs>
+                                </svg>
+                                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                  <p className="text-3xl font-bold bg-gradient-to-r from-purple-300 to-pink-300 bg-clip-text text-transparent">
+                                    {currentPercentage}%
+                                  </p>
+                                  <p className="text-xs text-purple-300 mt-1 max-w-[80px] truncate text-center">
+                                    {isIngesting
+                                      ? fileQueue[currentFileIndex]?.file.name
+                                      : "Done"}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="bg-black/30 rounded-lg p-4 border border-purple-500/30">
+                              <p
+                                className={`text-center text-sm font-semibold ${getStatusColor(
+                                  currentStatus
+                                )}`}
+                              >
+                                {liveProgress?.current_task ||
+                                  uploadProgress?.message ||
+                                  "Ready"}
+                              </p>
+                            </div>
+
+                            {/* Live Logs Terminal */}
+                            <div className="mt-6 bg-black/90 rounded-xl border-2 border-purple-500/50 shadow-2xl terminal-glow overflow-hidden transition-all duration-300">
+                              <div
+                                className={`bg-gradient-to-r from-purple-900/80 via-pink-900/80 to-purple-900/80 px-4 py-3 flex items-center justify-between ${
+                                  showLogs
+                                    ? "border-b border-purple-500/50"
+                                    : ""
+                                }`}
+                              >
+                                <div className="flex items-center space-x-3">
+                                  <div className="flex space-x-2">
+                                    <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                                    <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+                                    <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse"></div>
+                                  </div>
+                                  <span className="text-sm text-purple-300 font-mono font-semibold">
+                                    backend@rag-bot:~$
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center space-x-3">
+                                  <span className="text-xs text-gray-400 font-mono bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/30">
+                                    {logs.length} lines
+                                  </span>
+                                  <button
+                                    onClick={() => setShowLogs(!showLogs)}
+                                    className="p-1.5 hover:bg-white/10 rounded-md text-purple-300 hover:text-white transition-colors"
+                                    title={showLogs ? "Hide Logs" : "Show Logs"}
+                                  >
+                                    {showLogs ? (
+                                      <EyeOff className="w-4 h-4" />
+                                    ) : (
+                                      <Eye className="w-4 h-4" />
+                                    )}
+                                  </button>
+                                </div>
+                              </div>
+
+                              {showLogs && (
+                                <div className="p-5 h-64 overflow-y-auto scrollbar-visible font-mono text-xs bg-gradient-to-b from-black/95 to-gray-900/95">
+                                  {logs.length === 0 ? (
+                                    <div className="flex items-center justify-center h-full flex-col space-y-4">
+                                      <Loader className="w-10 h-10 animate-spin text-purple-400" />
+                                      <p className="text-purple-300">
+                                        Connecting to logger...
+                                      </p>
+                                    </div>
+                                  ) : (
+                                    <div className="space-y-1">
+                                      {renderedLogs}
+                                      <div ref={logsEndRef} />
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Action Buttons */}
+                      <div className="flex gap-3 pt-4">
+                        <button
+                          onClick={startQueueProcessing}
+                          disabled={fileQueue.length === 0 || isIngesting}
+                          className="flex-1 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-semibold flex items-center justify-center space-x-2"
+                        >
+                          {isIngesting ? (
+                            <>
+                              <Loader className="w-5 h-5 animate-spin" />
+                              <span>Processing Queue...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Upload className="w-5 h-5" />
+                              <span>Start Ingestion ({fileQueue.length})</span>
+                            </>
+                          )}
+                        </button>
+                        <button
+                          onClick={handleReset}
+                          disabled={isIngesting && fileQueue.length === 0}
+                          className="px-6 py-3 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {isIngesting ? "Cancel" : "Clear"}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1121,7 +1107,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
             </div>
           </div>
         </div>
-      </div>
       </div>
     </div>
   );
