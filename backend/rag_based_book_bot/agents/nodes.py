@@ -731,7 +731,7 @@ async def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> Agen
         state["pipeline_snapshots"].append({
             "stage": "multi_hop_expansion",
             "chunk_count": len(state["reranked_chunks"]),
-            "chunks": state["reranked_chunks"][before_expansion:],
+            "chunks": state["reranked_chunks"][:10],  # Show top 10 chunks after expansion
             "new_chunks_added": added_count
         })
         print(f"  → Added {added_count} multi-hop sections")
@@ -768,6 +768,7 @@ async def cluster_expansion_node(state: AgentState) -> AgentState:
         state["pipeline_snapshots"].append({
             "stage": "cluster_expansion",
             "chunk_count": len(state["reranked_chunks"]),
+            "chunks": state["reranked_chunks"][:10],  # Include chunks for display
             "neighbors_found": len(neighbor_ids)
         })
         print(f"  → Identified {len(neighbor_ids)} potential cluster neighbors")
@@ -816,6 +817,16 @@ async def context_assembly_node(state: AgentState) -> AgentState:
             
         state["assembled_context"] = compressed_context
         state["system_prompt"] = _build_system_prompt(state["parsed_query"])
+        
+        # Add pipeline snapshot for Pass 5
+        pipeline_snapshots = state.get("pipeline_snapshots", [])
+        pipeline_snapshots.append({
+            "stage": "context_assembly",
+            "chunk_count": len(state.get("reranked_chunks", [])),
+            "chunks": state.get("reranked_chunks", [])[:10],  # Final chunks used
+            "tokens": len(compressed_context.split())
+        })
+        state["pipeline_snapshots"] = pipeline_snapshots
         
     except Exception as e:
         state["errors"].append(f"Assembly failed: {e}")

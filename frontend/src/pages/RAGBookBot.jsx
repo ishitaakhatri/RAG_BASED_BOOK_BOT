@@ -1401,7 +1401,9 @@ function EnhancedPipelineDisplay({ stages, stats }) {
       "from-purple-500 to-purple-600",
       "from-pink-500 to-pink-600",
       "from-green-500 to-green-600",
-    ][index % 4];
+      "from-yellow-500 to-yellow-600",
+      "from-indigo-500 to-indigo-600",
+    ][index % 6];
   const getChangeIndicator = (currentCount, previousCount) => {
     if (previousCount === null) return null;
     const diff = currentCount - previousCount;
@@ -1490,7 +1492,9 @@ function EnhancedPipelineDisplay({ stages, stats }) {
                     "Precision ranking with cross-encoder to select most relevant."}
                   {index === 2 &&
                     "Intelligent expansion following related concepts."}
-                  {index === 3 && "Final optimization with deduplication."}
+                  {index === 3 && "Cluster-based expansion to find semantically related chunks."}
+                  {index === 4 && "Final context assembly and compression for LLM input."}
+                  {!stage.stage_name.includes("Pass") && "Pipeline stage processing."}
                 </div>
               )}
               {showingChunks[index] && hasChunks && (

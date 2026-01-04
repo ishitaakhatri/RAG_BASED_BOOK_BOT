@@ -240,11 +240,24 @@ def store_book_metadata(book_title: str, author: str, total_chunks: int, code_ch
         print(f"⚠️ Failed to store metadata: {e}")
 
 def format_chunk_detail(chunk, source: str) -> ChunkDetail:
+    # Handle chunks that may not have relevance_percentage (e.g., Pass 1 chunks)
+    # Use relevance_percentage if available, otherwise convert similarity_score to percentage
+    if hasattr(chunk, 'relevance_percentage') and chunk.relevance_percentage is not None and chunk.relevance_percentage > 0:
+        relevance = chunk.relevance_percentage
+    elif hasattr(chunk, 'similarity_score') and chunk.similarity_score is not None:
+        # Convert similarity score (typically 0-1) to percentage
+        relevance = chunk.similarity_score * 100
+    elif hasattr(chunk, 'rerank_score') and chunk.rerank_score is not None:
+        # Use rerank_score as fallback
+        relevance = chunk.rerank_score * 100
+    else:
+        relevance = 0.0
+    
     return ChunkDetail(
         chunk_id=chunk.chunk.chunk_id,
         chapter=chunk.chunk.chapter,
         page=chunk.chunk.page_number,
-        relevance=chunk.relevance_percentage,
+        relevance=relevance,
         type=chunk.chunk.chunk_type,
         content_preview=chunk.chunk.content[:200] + "..." if len(chunk.chunk.content) > 200 else chunk.chunk.content,
         source=source,
@@ -389,11 +402,37 @@ async def process_query(
                 "author": rc.chunk.author or "Unknown Author"
             })
         
+        # Calculate pass counts from pipeline snapshots
+        pass1_count = 0
+        pass2_count = 0
+        pass3_count = 0
+        final_count = 0
+        
+        for snapshot in final_state.get("pipeline_snapshots", []):
+            stage = snapshot.get("stage", "")
+            chunk_count = snapshot.get("chunk_count", 0)
+            if stage == "vector_search":
+                pass1_count = chunk_count
+            elif stage == "reranking":
+                pass2_count = chunk_count
+            elif stage == "multi_hop_expansion":
+                pass3_count = chunk_count
+            elif stage == "context_assembly":
+                final_count = chunk_count
+        
+        # If no context_assembly snapshot, use reranked_chunks count as final
+        if final_count == 0:
+            final_count = len(final_state.get("reranked_chunks", []))
+        
         stats = {
             "total_stages": len(executed_nodes),
             "executed_nodes": executed_nodes,
             "conversation_turn": turn_number,
-            "tokens": len(final_state.get("assembled_context", "").split())
+            "tokens": len(final_state.get("assembled_context", "").split()),
+            "pass1": pass1_count,
+            "pass2": pass2_count,
+            "pass3": pass3_count,
+            "final": final_count
         }
         
         if session_id in active_queries: del active_queries[session_id]
