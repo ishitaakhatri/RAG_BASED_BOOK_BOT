@@ -5,29 +5,33 @@ import "tailwindcss/tailwind.css";
 import RAGBookBot from "./pages/RAGBookBot";
 import IngestionPage from "./pages/IngestionPage";
 
-import {
-  SignedIn,
-  SignedOut,
-  useSignIn,
-  UserButton,
-} from "@clerk/clerk-react";
+import { SignedIn, SignedOut, useSignIn, UserButton } from "@clerk/clerk-react";
 
-import { Library, Sparkles, Lock, Mail, Eye, EyeOff, KeyRound, ArrowLeft } from "lucide-react";
+import {
+  Library,
+  Sparkles,
+  Lock,
+  Mail,
+  Eye,
+  EyeOff,
+  KeyRound,
+  ArrowLeft,
+} from "lucide-react";
 
 const API_BASE_URL = "/api";
 
 // Custom Landing/Auth Page with Clerk Backend
 const LandingPage = () => {
   const { signIn, setActive, isLoaded } = useSignIn();
-  
+
   // States
   // resetStep: null (Login), 'email' (Request Code), 'code' (Verify & Reset)
-  const [resetStep, setResetStep] = useState(null); 
-  const [formData, setFormData] = useState({ 
-    email: "", 
-    password: "", 
-    code: "", 
-    newPassword: "" 
+  const [resetStep, setResetStep] = useState(null);
+  const [formData, setFormData] = useState({
+    email: "",
+    password: "",
+    code: "",
+    newPassword: "",
   });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -41,16 +45,15 @@ const LandingPage = () => {
 
     try {
       // === PASSWORD RESET FLOW ===
-      if (resetStep === 'email') {
+      if (resetStep === "email") {
         // Step 1: Request Reset Code
         await signIn.create({
           strategy: "reset_password_email_code",
           identifier: formData.email,
         });
-        setResetStep('code');
+        setResetStep("code");
         setError("");
-      } 
-      else if (resetStep === 'code') {
+      } else if (resetStep === "code") {
         // Step 2: Verify Code and Set New Password
         const result = await signIn.attemptFirstFactor({
           strategy: "reset_password_email_code",
@@ -63,7 +66,7 @@ const LandingPage = () => {
         } else {
           setError("Verification failed. Please check your code.");
         }
-      } 
+      }
       // === LOGIN FLOW ===
       else {
         const result = await signIn.create({
@@ -81,7 +84,9 @@ const LandingPage = () => {
     } catch (err) {
       console.error("Auth error:", err);
       // Handle specific Clerk error codes if needed
-      setError(err.errors?.[0]?.message || "Authentication failed. Please try again.");
+      setError(
+        err.errors?.[0]?.message || "Authentication failed. Please try again."
+      );
     } finally {
       setLoading(false);
     }
@@ -104,14 +109,15 @@ const LandingPage = () => {
 
   // Helper to render title based on state
   const getTitle = () => {
-    if (resetStep === 'email') return "Reset Password";
-    if (resetStep === 'code') return "New Password";
+    if (resetStep === "email") return "Reset Password";
+    if (resetStep === "code") return "New Password";
     return "Welcome Back";
   };
 
   const getSubtitle = () => {
-    if (resetStep === 'email') return "Enter your email to receive a reset code";
-    if (resetStep === 'code') return "Enter the code sent to your email";
+    if (resetStep === "email")
+      return "Enter your email to receive a reset code";
+    if (resetStep === "code") return "Enter the code sent to your email";
     return "Sign in to access your knowledge library";
   };
 
@@ -130,7 +136,6 @@ const LandingPage = () => {
       <div className="relative z-10 flex items-center justify-center min-h-screen px-4 py-12">
         <div className="w-full max-w-6xl">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
-            
             {/* LEFT PANEL - Enhanced Branding */}
             <div className="flex flex-col justify-center space-y-8">
               {/* Logo Section */}
@@ -145,7 +150,9 @@ const LandingPage = () => {
                   <h1 className="text-5xl font-extrabold bg-gradient-to-r from-purple-400 via-pink-400 to-purple-400 text-transparent bg-clip-text">
                     RAG Bot
                   </h1>
-                  <p className="text-slate-400 text-sm mt-1">Knowledge at your fingertips</p>
+                  <p className="text-slate-400 text-sm mt-1">
+                    Knowledge at your fingertips
+                  </p>
                 </div>
               </div>
 
@@ -158,19 +165,20 @@ const LandingPage = () => {
                   </span>
                 </h2>
                 <p className="text-slate-400 text-lg leading-relaxed max-w-md">
-                  Transform your documents into interactive knowledge bases. Ask questions,
-                  get precise answers, and unlock insights from your research papers and books.
+                  Transform your documents into interactive knowledge bases. Ask
+                  questions, get precise answers, and unlock insights from your
+                  research papers and books.
                 </p>
               </div>
 
               {/* Feature Cards */}
               <div className="grid grid-cols-1 gap-4 max-w-md">
-                <FeatureCard 
+                <FeatureCard
                   icon={<Sparkles className="w-5 h-5" />}
                   title="AI-Powered Search"
                   description="Semantic understanding of your queries"
                 />
-                <FeatureCard 
+                <FeatureCard
                   icon={<Lock className="w-5 h-5" />}
                   title="Private & Secure"
                   description="Your documents stay confidential"
@@ -182,15 +190,20 @@ const LandingPage = () => {
             <div className="w-full max-w-md mx-auto">
               <div className="relative">
                 <div className="absolute inset-0 bg-gradient-to-br from-purple-600/20 to-pink-600/20 rounded-3xl blur-2xl" />
-                
+
                 <div className="relative bg-slate-900/80 backdrop-blur-xl rounded-3xl border border-white/10 shadow-2xl p-8">
                   <div className="text-center mb-8 relative">
                     {resetStep && (
-                      <button 
+                      <button
                         onClick={() => {
                           setResetStep(null);
                           setError("");
-                          setFormData({ email: "", password: "", code: "", newPassword: "" });
+                          setFormData({
+                            email: "",
+                            password: "",
+                            code: "",
+                            newPassword: "",
+                          });
                         }}
                         className="absolute left-0 top-1 text-slate-400 hover:text-white transition"
                         title="Back to Login"
@@ -201,9 +214,7 @@ const LandingPage = () => {
                     <h3 className="text-3xl font-bold text-white mb-2">
                       {getTitle()}
                     </h3>
-                    <p className="text-slate-400 text-sm">
-                      {getSubtitle()}
-                    </p>
+                    <p className="text-slate-400 text-sm">{getSubtitle()}</p>
                   </div>
 
                   {error && (
@@ -213,9 +224,8 @@ const LandingPage = () => {
                   )}
 
                   <form onSubmit={handleSubmit} className="space-y-5">
-                    
                     {/* === EMAIL INPUT (Common to Login & Forgot Password) === */}
-                    {(resetStep === null || resetStep === 'email') && (
+                    {(resetStep === null || resetStep === "email") && (
                       <div className="space-y-2">
                         <label className="text-sm font-medium text-slate-300 block">
                           Email Address
@@ -225,7 +235,12 @@ const LandingPage = () => {
                           <input
                             type="email"
                             value={formData.email}
-                            onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                email: e.target.value,
+                              })
+                            }
                             className="w-full pl-11 pr-4 py-3 bg-slate-950 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
                             placeholder="you@example.com"
                             required
@@ -241,10 +256,10 @@ const LandingPage = () => {
                           <label className="text-sm font-medium text-slate-300 block">
                             Password
                           </label>
-                          <button 
-                            type="button" 
+                          <button
+                            type="button"
                             onClick={() => {
-                              setResetStep('email');
+                              setResetStep("email");
                               setError("");
                             }}
                             className="text-sm text-purple-400 hover:text-purple-300 transition"
@@ -257,7 +272,12 @@ const LandingPage = () => {
                           <input
                             type={showPassword ? "text" : "password"}
                             value={formData.password}
-                            onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                password: e.target.value,
+                              })
+                            }
                             className="w-full pl-11 pr-12 py-3 bg-slate-950 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
                             placeholder="••••••••"
                             required
@@ -279,7 +299,7 @@ const LandingPage = () => {
                     )}
 
                     {/* === RESET CODE INPUT (Forgot Password Step 2) === */}
-                    {resetStep === 'code' && (
+                    {resetStep === "code" && (
                       <div className="space-y-2">
                         <label className="text-sm font-medium text-slate-300 block">
                           Reset Code
@@ -289,7 +309,9 @@ const LandingPage = () => {
                           <input
                             type="text"
                             value={formData.code}
-                            onChange={(e) => setFormData({ ...formData, code: e.target.value })}
+                            onChange={(e) =>
+                              setFormData({ ...formData, code: e.target.value })
+                            }
                             className="w-full pl-11 pr-4 py-3 bg-slate-950 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
                             placeholder="Enter code from email"
                             required
@@ -299,7 +321,7 @@ const LandingPage = () => {
                     )}
 
                     {/* === NEW PASSWORD INPUT (Forgot Password Step 2) === */}
-                    {resetStep === 'code' && (
+                    {resetStep === "code" && (
                       <div className="space-y-2">
                         <label className="text-sm font-medium text-slate-300 block">
                           New Password
@@ -309,7 +331,12 @@ const LandingPage = () => {
                           <input
                             type={showPassword ? "text" : "password"}
                             value={formData.newPassword}
-                            onChange={(e) => setFormData({ ...formData, newPassword: e.target.value })}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                newPassword: e.target.value,
+                              })
+                            }
                             className="w-full pl-11 pr-12 py-3 bg-slate-950 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
                             placeholder="New secure password"
                             required
@@ -335,14 +362,13 @@ const LandingPage = () => {
                       disabled={loading}
                       className="w-full py-3.5 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 rounded-xl font-semibold text-white shadow-lg shadow-purple-500/30 transition-all transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {loading 
-                        ? "Processing..." 
-                        : resetStep === 'email'
-                          ? "Send Reset Code"
-                          : resetStep === 'code'
-                            ? "Reset & Sign In"
-                            : "Sign In"
-                      }
+                      {loading
+                        ? "Processing..."
+                        : resetStep === "email"
+                        ? "Send Reset Code"
+                        : resetStep === "code"
+                        ? "Reset & Sign In"
+                        : "Sign In"}
                     </button>
                   </form>
 
@@ -354,7 +380,9 @@ const LandingPage = () => {
                           <div className="w-full border-t border-white/10"></div>
                         </div>
                         <div className="relative flex justify-center text-xs uppercase">
-                          <span className="bg-slate-900 px-2 text-slate-500">Or continue with</span>
+                          <span className="bg-slate-900 px-2 text-slate-500">
+                            Or continue with
+                          </span>
                         </div>
                       </div>
 
@@ -365,10 +393,22 @@ const LandingPage = () => {
                         className="w-full py-2.5 px-4 bg-slate-950 border border-white/10 rounded-xl text-sm font-medium text-white hover:bg-slate-800 transition flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <svg className="w-5 h-5" viewBox="0 0 24 24">
-                          <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                          <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                          <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                          <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                          <path
+                            d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                            fill="#4285F4"
+                          />
+                          <path
+                            d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                            fill="#34A853"
+                          />
+                          <path
+                            d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                            fill="#FBBC05"
+                          />
+                          <path
+                            d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                            fill="#EA4335"
+                          />
                         </svg>
                         <span>Continue with Google</span>
                       </button>
@@ -420,7 +460,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white overflow-hidden relative">
+    <div className="min-h-screen bg-slate-950 text-white relative">
       {/* Animated Background Elements - Matching Landing Page */}
       <div className="absolute inset-0 overflow-hidden">
         <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl animate-pulse" />
@@ -430,39 +470,39 @@ export default function App() {
       {/* Grid Pattern Overlay */}
       <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:50px_50px]" />
       <div className="relative z-10">
-      {/* ================= SIGNED OUT - CUSTOM UI ================= */}
-      <SignedOut>
-        <LandingPage />
-      </SignedOut>
+        {/* ================= SIGNED OUT - CUSTOM UI ================= */}
+        <SignedOut>
+          <LandingPage />
+        </SignedOut>
 
-      {/* ================= SIGNED IN - ORIGINAL UNCHANGED ================= */}
-      <SignedIn>
-        {/* Original User Button in top right */}
-        <nav className="fixed top-4 right-6 z-50">
-          <UserButton
-            afterSignOutUrl="/"
-            appearance={{
-              elements: {
-                userButtonAvatarBox: "w-9 h-9",
-              },
-            }}
-          />
-        </nav>
+        {/* ================= SIGNED IN - ORIGINAL UNCHANGED ================= */}
+        <SignedIn>
+          {/* Original User Button in top right */}
+          <nav className="fixed top-4 right-6 z-50">
+            <UserButton
+              afterSignOutUrl="/"
+              appearance={{
+                elements: {
+                  userButtonAvatarBox: "w-9 h-9",
+                },
+              }}
+            />
+          </nav>
 
-        {/* Original Routes - Completely Unchanged */}
-        <Routes>
-          <Route path="/" element={<RAGBookBot />} />
-          <Route
-            path="/ingest"
-            element={
-              <IngestionPage
-                books={books}
-                onUploadSuccess={handleUploadSuccess}
-              />
-            }
-          />
-        </Routes>
-      </SignedIn>
+          {/* Original Routes - Completely Unchanged */}
+          <Routes>
+            <Route path="/" element={<RAGBookBot />} />
+            <Route
+              path="/ingest"
+              element={
+                <IngestionPage
+                  books={books}
+                  onUploadSuccess={handleUploadSuccess}
+                />
+              }
+            />
+          </Routes>
+        </SignedIn>
       </div>
     </div>
   );
