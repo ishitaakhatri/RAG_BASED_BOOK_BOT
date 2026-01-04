@@ -37,7 +37,7 @@ class IngestionConfig(BaseModel):
     batch_size: int = 32
     use_grobid: bool = True
     # FIX: Use default_factory with os.getenv
-    grobid_url: str = Field(default_factory=lambda: os.getenv("GROBID_URL", "http://localhost:8070/api"))
+    grobid_url: str = Field(default_factory=lambda: os.getenv("GROBID_URL", "http://grobid:8070/api"))
     grobid_timeout: int = Field(default=300)
 
 class RetrievalConfig(BaseModel):
