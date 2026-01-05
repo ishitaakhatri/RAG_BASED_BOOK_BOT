@@ -251,7 +251,7 @@ Answer: {turn.assistant_response}
                 history_context += f"**Turn {i}:**\n"
                 history_context += f"Q: {turn.user_query}\n"
                 history_context += f"A: {turn.assistant_response}\n\n"
-            print(f"  → Using last 3 turns")
+            print(f"  → Using last 6 turns")
         
         # 🔥 NEW: Add execution marker to prevent race conditions
         print(f"  🔄 Invoking LLM for history-based answer...")
@@ -267,7 +267,8 @@ Extract or synthesize the answer from the conversation above.
 - Only use information from the conversation history
 - Don't make up new information
 - If the conversation doesn't fully answer the question, say so
-- Be concise and direct
+- Explain workflow of code in detail and elaborate as much as possible so user can understand
+- Answer the basics also as users may be inexperianced.
 
 Answer:"""
 

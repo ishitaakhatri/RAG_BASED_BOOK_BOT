@@ -253,7 +253,7 @@ class EnhancedContextCompressor:
         
         # Always include code chunks (high value)
         if preserve_code:
-            for chunk in code_chunks[:3]:  # Top 3 code chunks
+            for chunk in code_chunks:  # Top 3 code chunks
                 text = chunk.get('text', '')
                 tokens = self.count_tokens(text)
                 
@@ -271,7 +271,7 @@ class EnhancedContextCompressor:
             tokens = self.count_tokens(text)
             
             # If chunk is too large, summarize it
-            if tokens > 3000:
+            if tokens > 10000:
                 text = self.extract_key_sentences(text, query, max_sentences=4)
                 tokens = self.count_tokens(text)
             
