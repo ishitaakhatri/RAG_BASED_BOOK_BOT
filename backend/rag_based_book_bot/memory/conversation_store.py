@@ -162,9 +162,9 @@ def save_conversation_turn(
             "session_id": session_id,
             "turn_number": int(turn_number),
             "timestamp": float(time.time()),
-            "user_query": user_query[:1000],  # Limit length to prevent metadata overflow
-            "assistant_response": assistant_response[:2000],  # Limit length
-            "resolved_query": (resolved_query or user_query)[:1000],
+            "user_query": user_query,
+            "assistant_response": assistant_response,  # Limit length
+            "resolved_query": (resolved_query or user_query),
             "needs_retrieval": str(needs_retrieval),  # Convert bool to string
             "combined_text": format_turn_for_embedding(user_query, assistant_response)
         }

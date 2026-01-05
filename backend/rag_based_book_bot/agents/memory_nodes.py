@@ -247,7 +247,7 @@ Answer: {turn.assistant_response}
                     print(f"  ⚠️ Referenced turn #{referenced_turn} has missing attributes")
         else:
             # Use last 3 turns
-            for i, turn in enumerate(conversation_history[-3:], 1):
+            for i, turn in enumerate(conversation_history[-6:], 1):
                 history_context += f"**Turn {i}:**\n"
                 history_context += f"Q: {turn.user_query}\n"
                 history_context += f"A: {turn.assistant_response}\n\n"
