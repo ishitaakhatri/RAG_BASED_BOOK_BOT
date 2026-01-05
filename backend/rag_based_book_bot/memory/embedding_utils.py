@@ -23,7 +23,7 @@ def get_embedding_model() -> SentenceTransformer:
     return _embedding_model
 
 
-def format_turn_for_embedding(user_query: str, assistant_response: str, max_response_length: int = 500) -> str:
+def format_turn_for_embedding(user_query: str, assistant_response: str) -> str:
     """
     Format a conversation turn for embedding
     
@@ -41,13 +41,9 @@ def format_turn_for_embedding(user_query: str, assistant_response: str, max_resp
         Input: "What is CNN?", "Convolutional Neural Networks are..."
         Output: "Q: What is CNN?\nA: Convolutional Neural Networks are..."
     """
-    # Truncate response if too long (keep most relevant part - beginning)
-    truncated_response = assistant_response[:max_response_length]
-    if len(assistant_response) > max_response_length:
-        truncated_response += "..."
     
     # Format as Q&A pair
-    formatted_text = f"Q: {user_query}\nA: {truncated_response}"
+    formatted_text = f"Q: {user_query}\nA: {assistant_response}"
     
     return formatted_text
 
