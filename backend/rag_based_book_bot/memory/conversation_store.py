@@ -166,7 +166,7 @@ def save_conversation_turn(
             "assistant_response": assistant_response[:2000],  # Limit length
             "resolved_query": (resolved_query or user_query)[:1000],
             "needs_retrieval": str(needs_retrieval),  # Convert bool to string
-            "combined_text": format_turn_for_embedding(user_query, assistant_response, max_response_length=500)
+            "combined_text": format_turn_for_embedding(user_query, assistant_response)
         }
         
         # Optional fields
