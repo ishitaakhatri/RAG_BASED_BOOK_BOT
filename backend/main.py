@@ -2,18 +2,19 @@
 FastAPI Backend - Production-Ready RAG with Conversation Memory & Clerk Authentication
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Depends
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.concurrency import run_in_threadpool # <--- NEW IMPORT
-from contextlib import asynccontextmanager # <--- NEW IMPORT
+from fastapi.concurrency import run_in_threadpool 
+from contextlib import asynccontextmanager
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
 from fastapi import WebSocket, WebSocketDisconnect
-# from fastapi import BackgroundTasks # Removed as we need to await save for consistency
 import asyncio
 import json
 import logging
-from rag_based_book_bot.document_ingestion.progress_tracker import get_progress_tracker
+from rag_based_book_bot.document_ingestion.progress_tracker import (
+    create_tracker, get_tracker, remove_tracker
+)
 import os
 import tempfile
 import time
@@ -48,7 +49,7 @@ from rag_based_book_bot.memory import (
     delete_session,
     list_all_sessions,
     search_across_sessions,
-    get_session_metadata # <--- NEW IMPORT
+    get_session_metadata
 )
 
 # ============================================================================
@@ -59,13 +60,12 @@ query_graph_app = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Modern lifespan handler to replace on_event('startup')"""
+    """Modern lifespan handler"""
     global query_graph_app
     
     loop = asyncio.get_running_loop()
-    tracker = get_progress_tracker()
-    tracker.set_loop(loop)
-    logger.info("✅ Initialized progress tracker with main event loop")
+    # Note: We no longer have a single global tracker to initialize with a loop
+    # Trackers are created per request.
     
     query_graph_app = build_query_graph(enable_persistence=True)
     logger.info(f"🚀 RAG Book Bot API started successfully (Env: {settings.environment})")
@@ -240,15 +240,11 @@ def store_book_metadata(book_title: str, author: str, total_chunks: int, code_ch
         print(f"⚠️ Failed to store metadata: {e}")
 
 def format_chunk_detail(chunk, source: str) -> ChunkDetail:
-    # Handle chunks that may not have relevance_percentage (e.g., Pass 1 chunks)
-    # Use relevance_percentage if available, otherwise convert similarity_score to percentage
     if hasattr(chunk, 'relevance_percentage') and chunk.relevance_percentage is not None and chunk.relevance_percentage > 0:
         relevance = chunk.relevance_percentage
     elif hasattr(chunk, 'similarity_score') and chunk.similarity_score is not None:
-        # Convert similarity score (typically 0-1) to percentage
         relevance = chunk.similarity_score * 100
     elif hasattr(chunk, 'rerank_score') and chunk.rerank_score is not None:
-        # Use rerank_score as fallback
         relevance = chunk.rerank_score * 100
     else:
         relevance = 0.0
@@ -312,15 +308,13 @@ async def root():
 
 @app.get("/books", response_model=BooksResponse)
 async def list_books():
-    """Get list of available books (Public information)"""
     books = get_available_books()
     return BooksResponse(books=books)
 
 @app.post("/query", response_model=QueryResponse)
 async def process_query(
     request: QueryRequest, 
-    # background_tasks: BackgroundTasks, # REMOVED: Saving must be awaited to fix race condition
-    user_claims: dict = Depends(verify_clerk_token) # SECURE
+    user_claims: dict = Depends(verify_clerk_token)
 ):
     global query_graph_app
     session_id = None
@@ -330,9 +324,6 @@ async def process_query(
         
         session_id = request.session_id or str(uuid4())
         query_cancellation_events[session_id] = asyncio.Event()
-        
-        # Security: In a stricter implementation, we should also check if session belongs to user
-        # before loading it here, but filtering happens at session list level.
         
         pinecone_turns = load_conversation(session_id, max_turns=10)
         conversation_history = convert_pinecone_to_conversation_turns(pinecone_turns)
@@ -367,9 +358,6 @@ async def process_query(
         
         turn_number = len(conversation_history) + 1
         
-        # --- FIX: EXECUTE SAVE SYNCHRONOUSLY IN THREADPOOL ---
-        # This ensures the session is updated in Pinecone BEFORE we return the response
-        # so the frontend's subsequent fetchSessions() call sees the new turn.
         try:
             await run_in_threadpool(
                 save_conversation_turn,
@@ -385,7 +373,6 @@ async def process_query(
             )
         except Exception as e:
             logger.error(f"[ERROR] History save failed: {e}")
-            # We don't raise an exception here to allow the answer to be returned
         
         executed_nodes = [s.get("stage") for s in final_state.get("pipeline_snapshots", [])]
         pipeline_stages = extract_pipeline_stages(final_state, executed_nodes)
@@ -402,7 +389,6 @@ async def process_query(
                 "author": rc.chunk.author or "Unknown Author"
             })
         
-        # Calculate pass counts from pipeline snapshots
         pass1_count = 0
         pass2_count = 0
         pass3_count = 0
@@ -420,7 +406,6 @@ async def process_query(
             elif stage == "context_assembly":
                 final_count = chunk_count
         
-        # If no context_assembly snapshot, use reranked_chunks count as final
         if final_count == 0:
             final_count = len(final_state.get("reranked_chunks", []))
         
@@ -472,30 +457,11 @@ async def cancel_query(session_id: str = Query(...), user_claims: dict = Depends
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-@app.post("/ingest", response_model=IngestResponse)
-def ingest_book(
-    file: UploadFile = File(...),
-    book_title: Optional[str] = None,
-    author: Optional[str] = None,
-    user_claims: dict = Depends(verify_clerk_token) # SECURE
-):
-    if not file.filename.endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="Only PDF files supported")
-    
-    tmp_path = None
+# --- BACKGROUND INGESTION TASK ---
+def process_ingestion_task(task_id: str, temp_path: str, book_title: str, author: str):
+    """Background task to handle ingestion without blocking the HTTP request"""
     try:
-        tracker = get_progress_tracker()
-        tracker.reset()
-        
-        extracted_title, extracted_author = parse_book_filename(file.filename)
-        final_book_title = book_title or extracted_title
-        final_author = author or extracted_author
-        
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-            content = file.file.read()
-            tmp_file.write(content)
-            tmp_path = tmp_file.name
-        
+        logger.info(f"🧵 Starting background ingestion for {book_title} (Task: {task_id})")
         config = IngestorConfig(
             similarity_threshold=settings.ingestion.similarity_threshold,
             min_chunk_size=settings.ingestion.min_chunk_size,
@@ -504,32 +470,108 @@ def ingest_book(
             debug=False
         )
         ingestor = EnhancedBookIngestorPaddle(config=config)
-        result = ingestor.ingest_book(pdf_path=tmp_path, book_title=final_book_title, author=final_author)
         
-        store_book_metadata(final_book_title, final_author, result.get('chunks', 0), result.get('code_chunks', 0))
+        # Run ingestion with task_id
+        result = ingestor.ingest_book(pdf_path=temp_path, book_title=book_title, author=author, task_id=task_id)
         
-        if os.path.exists(tmp_path): os.unlink(tmp_path)
-        return IngestResponse(success=True, result=result)
+        store_book_metadata(book_title, author, result.get('chunks', 0), result.get('code_chunks', 0))
+        
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+            
+        logger.info(f"✅ Background ingestion finished for {book_title}")
+        
+    except Exception as e:
+        logger.error(f"❌ Background ingestion failed: {e}")
+        # Ensure tracker reports failure to frontend
+        tracker = get_tracker(task_id)
+        if tracker:
+            tracker.add_error(str(e))
+            tracker.finish(success=False)
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+    finally:
+        # Cleanup tracker after delay to allow frontend to receive final message
+        time.sleep(5)
+        remove_tracker(task_id)
+
+@app.post("/ingest", response_model=IngestResponse)
+async def ingest_book(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    book_title: Optional[str] = None,
+    author: Optional[str] = None,
+    user_claims: dict = Depends(verify_clerk_token)
+):
+    if not file.filename.endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files supported")
+    
+    tmp_path = None
+    try:
+        task_id = str(uuid4())
+        
+        # Initialize a tracker for this specific task
+        tracker = create_tracker(task_id)
+        tracker.set_loop(asyncio.get_running_loop())
+        
+        extracted_title, extracted_author = parse_book_filename(file.filename)
+        final_book_title = book_title or extracted_title
+        final_author = author or extracted_author
+        
+        # Create temp file
+        fd, tmp_path = tempfile.mkstemp(suffix='.pdf')
+        os.close(fd)
+        
+        # Write content asynchronously
+        with open(tmp_path, 'wb') as f:
+            content = await file.read()
+            f.write(content)
+            
+        logger.info(f"📥 File received: {final_book_title}. Handing off to background task {task_id}.")
+
+        # Add to background tasks
+        background_tasks.add_task(
+            process_ingestion_task, 
+            task_id=task_id,
+            temp_path=tmp_path, 
+            book_title=final_book_title, 
+            author=final_author
+        )
+        
+        # Return success with task_id for WebSocket connection
+        return IngestResponse(success=True, result={"task_id": task_id, "message": "Ingestion started"})
         
     except Exception as e:
         if tmp_path and os.path.exists(tmp_path): os.unlink(tmp_path)
         return IngestResponse(success=False, error=str(e))
 
-@app.websocket("/ws/ingest")
-async def websocket_ingestion_progress(websocket: WebSocket):
+@app.websocket("/ws/ingest/{task_id}")
+async def websocket_ingestion_progress(websocket: WebSocket, task_id: str):
     await websocket.accept()
-    tracker = get_progress_tracker()
+    
+    # Get the specific tracker for this task
+    tracker = get_tracker(task_id)
+    if not tracker:
+        await websocket.close(code=4004, reason="Task not found or expired")
+        return
+
     is_connected = True
     
     async def send_update(state):
         nonlocal is_connected
         if not is_connected: return
         try:
-            if websocket.client_state.name == "CONNECTED": await websocket.send_json(state.to_dict())
-            else: is_connected = False
+            if websocket.client_state.name == "CONNECTED": 
+                await websocket.send_json(state.to_dict())
+            else: 
+                is_connected = False
         except: pass
 
     tracker.on_progress(send_update)
+    
+    # Send initial state immediately
+    await send_update(tracker.state)
+    
     try:
         while is_connected:
             try: await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
@@ -549,16 +591,11 @@ async def list_sessions(limit: int = Query(50), user_claims: dict = Depends(veri
 @app.get("/conversation/{session_id}", response_model=ConversationHistoryResponse)
 async def get_conversation_history(session_id: str, user_claims: dict = Depends(verify_clerk_token)):
     user_id = user_claims.get("sub")
-    
-    # --- SECURITY CHECK ---
-    # Verify the requesting user owns this session
     meta = get_session_metadata(session_id)
     if meta:
         owner_id = meta.get("user_id")
-        # If the session has an owner and it's not the requester, deny access
         if owner_id and owner_id != user_id:
             raise HTTPException(status_code=403, detail="Unauthorized access to this session")
-    # ----------------------
 
     turns = load_conversation(session_id, max_turns=100)
     if not turns: raise HTTPException(status_code=404, detail="Conversation not found")
@@ -567,14 +604,11 @@ async def get_conversation_history(session_id: str, user_claims: dict = Depends(
 @app.delete("/conversation/{session_id}")
 async def delete_conversation(session_id: str, user_claims: dict = Depends(verify_clerk_token)):
     user_id = user_claims.get("sub")
-    
-    # --- SECURITY CHECK ---
     meta = get_session_metadata(session_id)
     if meta:
         owner_id = meta.get("user_id")
         if owner_id and owner_id != user_id:
             raise HTTPException(status_code=403, detail="Unauthorized to delete this session")
-    # ----------------------
 
     result = delete_session(session_id)
     if not result.get('success'): raise HTTPException(status_code=500, detail="Failed")

@@ -12,22 +12,18 @@ import time
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 from rag_based_book_bot.document_ingestion.progress_tracker import (
-    get_progress_tracker, ProgressTracker
+    get_tracker, ProgressTracker # Changed import
 )
-# PDF processing fallback
 import pdfplumber
 
-# Embeddings
 from sentence_transformers import SentenceTransformer
 
-# Pinecone
 try:
     from pinecone import Pinecone
     _HAS_PINECONE = True
 except Exception:
     _HAS_PINECONE = False
 
-# Import Chunkers
 from rag_based_book_bot.document_ingestion.ingestion.sementic_chunker import (
     SemanticChunker, create_semantic_chunker
 )
@@ -38,20 +34,15 @@ from rag_based_book_bot.document_ingestion.ingestion.grobid_parser import (
     GrobidTEIParser
 )
 
-# Import shared model getter
 from rag_based_book_bot.memory.embedding_utils import get_embedding_model
 
-# NEW: Import Config
 from app_config import get_config
 settings = get_config()
 
-# Config
-# Note: Namespace is now dynamic based on document type
 PINECONE_INDEX = settings.vector_db.index_name
 DEFAULT_NAMESPACE = settings.vector_db.namespace
 EMBEDDING_MODEL = settings.vector_db.embedding_model
 
-# ✅ Configure logging at module level
 logger = logging.getLogger("enhanced_ingestion")
 logger.setLevel(settings.log_level)
 logger.propagate = True
@@ -68,7 +59,6 @@ class SemanticBookIngestor:
     def __init__(self, config: Optional[IngestorConfig] = None):
         self.config = config or IngestorConfig()
         
-        # Initialize or get the shared embedding model
         self.embedding_model = get_embedding_model()
         
         self.hierarchical_chunker = HierarchicalChunker(
@@ -85,12 +75,9 @@ class SemanticBookIngestor:
         self.grobid_parser = GrobidTEIParser()
         self.pinecone_index = self._init_pinecone()
         
-        # Check Grobid
         is_grobid_enabled = (os.getenv("GROBID_ENABLED", "true").lower() == "true") and self.config.use_grobid
         self.grobid_available = self._check_grobid_health() if is_grobid_enabled else False
         
-        # Get tracker
-        self.tracker = get_progress_tracker()
         logger.info("✅ SemanticBookIngestor initialized")
 
     def _init_pinecone(self):
@@ -113,12 +100,6 @@ class SemanticBookIngestor:
             return False
 
     def _process_pdf_with_grobid(self, pdf_path: str, is_paper: bool = False) -> Optional[Dict]:
-        """
-        Process PDF with GROBID.
-        Args:
-            pdf_path: Path to the PDF file.
-            is_paper: Flag to indicate if the document is a research paper.
-        """
         grobid_url = settings.ingestion.grobid_url
         grobid_timeout = settings.ingestion.grobid_timeout
         
@@ -130,16 +111,15 @@ class SemanticBookIngestor:
                 resp = requests.post(url, files=files, timeout=grobid_timeout)
             
             if resp.status_code == 200:
-                # Pass the is_paper flag to the parser
                 return self.grobid_parser.parse_tei_xml(resp.text, is_paper=is_paper)
             return None
         except Exception as e:
             logger.warning(f"GROBID error: {e}")
             return None
 
-    def ingest_book(self, pdf_path: str, book_title: Optional[str] = None, author: str = "Unknown") -> Dict:
+    def ingest_book(self, pdf_path: str, book_title: Optional[str] = None, author: str = "Unknown", task_id: str = None) -> Dict:
         """
-        Ingest a PDF (Book or Paper) with progress tracking and real-time logging
+        Ingest a PDF (Book or Paper) with progress tracking
         """
         try:
             if not os.path.exists(pdf_path):
@@ -149,33 +129,32 @@ class SemanticBookIngestor:
             if not book_title:
                 book_title = os.path.basename(pdf_path).replace('.pdf', '')
             
-            logger.info(f"🚀 Starting ingestion for: '{book_title}'")
+            logger.info(f"🚀 Starting ingestion for: '{book_title}' (Task: {task_id})")
             
-            # Reset tracker for new ingestion
-            tracker = get_progress_tracker()
-            tracker.reset()
-            logger.info(f"📋 Tracker reset - starting fresh ingestion")
+            # Use specific tracker for this task
+            tracker = get_tracker(task_id)
+            if not tracker:
+                logger.warning(f"No tracker found for task {task_id}, logging locally only.")
             
             # 1. AUTO-DETECT TYPE via Page Count
             with pdfplumber.open(pdf_path) as pdf:
                 total_pages = len(pdf.pages)
             
-            # Heuristic: < 50 pages is likely a research paper
             is_paper = total_pages < 50
             doc_type = "Research Paper" if is_paper else "Book"
             target_namespace = "papers_rag" if is_paper else DEFAULT_NAMESPACE
             
             logger.info(f"📄 Detected Type: {doc_type} ({total_pages} pages) -> Namespace: {target_namespace}")
-            tracker.start_ingestion(pdf_path, total_pages=total_pages, book_title=book_title, author=author)
+            
+            if tracker:
+                tracker.start_ingestion(pdf_path, total_pages=total_pages, book_title=book_title, author=author)
             
             chunks = []
             method = "semantic_fallback"
 
-            # Try GROBID first if available
             if self.grobid_available:
                 logger.info(f"🔬 GROBID is available, attempting hierarchical chunking for {doc_type}...")
                 try:
-                    # Pass is_paper flag to GROBID processor
                     grobid_data = self._process_pdf_with_grobid(pdf_path, is_paper=is_paper)
                     
                     if grobid_data and grobid_data.get("success"):
@@ -184,20 +163,16 @@ class SemanticBookIngestor:
                             grobid_data['sections'], book_title, author
                         )
                         method = "hierarchical"
-                        tracker.update_chunks(len(chunks))
+                        if tracker: tracker.update_chunks(len(chunks))
                     else:
                         logger.warning("GROBID returned success=False or empty data")
                         
                 except Exception as e:
-                    tracker.add_log(f"⚠️ GROBID failed: {str(e)}, using semantic chunking", "WARNING")
+                    if tracker: tracker.add_log(f"⚠️ GROBID failed: {str(e)}, using semantic chunking", "WARNING")
                     logger.warning(f"GROBID chunking failed: {e}, falling back to semantic chunking")
-                    tracker.add_error(f"GROBID error: {str(e)}")
 
-            # Fallback to semantic chunking
             if not chunks:
                 logger.info("📊 Falling back to Semantic Chunking")
-                logger.info("⚙️ Initializing semantic chunker...")
-                
                 try:
                     logger.info("📖 Reading PDF pages...")
                     with pdfplumber.open(pdf_path) as pdf:
@@ -206,15 +181,15 @@ class SemanticBookIngestor:
                         total_batches = (total_pages + 19) // 20
                         
                         logger.info(f"📊 Processing {total_pages} pages in {total_batches} batches")
-                        tracker.update_total_pages(total_pages)
+                        if tracker: tracker.update_total_pages(total_pages)
                         
                         def chunking_progress(batch_num: int, current_page: int):
-                            logger.info(f"⚙️ Processing batch {batch_num}/{total_batches} (page {current_page})")
-                            tracker.update_batch(batch_num, total_batches, current_page)
-                            # Yield CPU briefly during heavy chunking to keep WebSocket alive
+                            if tracker:
+                                logger.info(f"⚙️ Processing batch {batch_num}/{total_batches} (page {current_page})")
+                                tracker.update_batch(batch_num, total_batches, current_page)
                             time.sleep(0.01)
 
-                        tracker.start_chunking()
+                        if tracker: tracker.start_chunking()
                         logger.info("🔄 Starting semantic chunking process...")    
                         
                         chunks = self.semantic_chunker.chunk_pages_batched(
@@ -224,24 +199,22 @@ class SemanticBookIngestor:
                             progress_callback=chunking_progress
                         )
                     
-                    tracker.update_chunks(len(chunks))
+                    if tracker: tracker.update_chunks(len(chunks))
                     
                 except Exception as e:
                     error_msg = f"Semantic chunking failed: {str(e)}"
                     logger.error(error_msg)
-                    tracker.add_error(error_msg)
+                    if tracker: tracker.add_error(error_msg)
                     raise
 
             if not chunks:
                 error_msg = "No chunks generated from PDF"
                 logger.error(error_msg)
-                tracker.add_error(error_msg)
+                if tracker: tracker.add_error(error_msg)
                 raise ValueError(error_msg)
 
-            tracker.add_log(f"✅ Generated {len(chunks)} chunks using {method} (Target: {target_namespace})")
-            logger.info(f"✅ Generated {len(chunks)} chunks using {method}")
+            if tracker: tracker.add_log(f"✅ Generated {len(chunks)} chunks using {method} (Target: {target_namespace})")
             
-            # Embed and upsert (Now using dynamic namespace)
             try:
                 self._embed_and_upsert_batched(
                     chunks, 
@@ -254,11 +227,13 @@ class SemanticBookIngestor:
             except Exception as e:
                 error_msg = f"Embedding/upsert failed: {str(e)}"
                 logger.error(error_msg)
-                tracker.add_error(error_msg)
+                if tracker: tracker.add_error(error_msg)
                 raise
             
-            tracker.finish(success=True)
-            tracker.add_log(f"✅ Ingestion completed successfully ({doc_type})")
+            if tracker:
+                tracker.finish(success=True)
+                tracker.add_log(f"✅ Ingestion completed successfully ({doc_type})")
+            
             logger.info(f"✅ Ingestion complete: {len(chunks)} chunks, {book_id}, namespace={target_namespace}")
             
             return {
@@ -272,7 +247,7 @@ class SemanticBookIngestor:
         
         except Exception as e:
             logger.error(f"❌ Ingestion failed for '{book_title}': {str(e)}")
-            if 'tracker' in locals():
+            if tracker:
                 tracker.add_error(str(e))
                 tracker.finish(success=False)
             raise
@@ -286,24 +261,17 @@ class SemanticBookIngestor:
         tracker: Optional[ProgressTracker] = None,
         namespace: str = DEFAULT_NAMESPACE
     ):
-        """
-        Memory-optimized generation and upsert
-        Processes small batches: Encode -> Upsert -> Release Memory
-        """
         if not self.pinecone_index:
             logger.warning("Pinecone index not initialized, skipping upsert")
             return
 
         total_chunks = len(chunks)
-        
-        # UPDATED: Use Config Batch Size
         BATCH_SIZE = settings.ingestion.batch_size
         
         logger.info(f"🧠 Starting stream processing for {total_chunks} chunks (Namespace: {namespace})...")
         
         if tracker:
             tracker.add_log(f"🧠 Processing {total_chunks} chunks (Embedding + Upserting)...")
-            # We stay in "embedding" phase visually to prevent jitter, or toggle between them
             tracker.start_embedding()
         
         try:
@@ -311,18 +279,14 @@ class SemanticBookIngestor:
                 batch_end = min(batch_start + BATCH_SIZE, total_chunks)
                 chunk_batch = chunks[batch_start:batch_end]
                 
-                # 1. Prepare texts (Only for this batch)
                 texts = [c[0] for c in chunk_batch]
                 
-                # 2. Generate embeddings (Only for this batch)
-                # show_progress_bar=False prevents console clutter
                 embeddings = self.embedding_model.encode(
                     texts, 
                     batch_size=BATCH_SIZE, 
                     show_progress_bar=False
                 )
                 
-                # 3. Prepare vectors
                 vectors = []
                 for i, (text, meta) in enumerate(chunk_batch):
                     global_idx = batch_start + i
@@ -357,20 +321,15 @@ class SemanticBookIngestor:
                         "metadata": clean_meta
                     })
                 
-                # 4. Upsert this batch immediately to the specific Namespace
                 self.pinecone_index.upsert(
                     vectors=vectors, 
                     namespace=namespace
                 )
                 
-                # 5. Update Progress
                 if tracker:
-                    # Update counts
                     tracker.update_embeddings(batch_end)
-                    # We can manually set the upsert count to track progress
                     tracker.state.vectors_upserted = batch_end
                     
-                    # Log EVERY batch so the user knows it's working
                     batch_num = (batch_start // BATCH_SIZE) + 1
                     total_batches = (total_chunks + BATCH_SIZE - 1) // BATCH_SIZE
                     
@@ -378,14 +337,11 @@ class SemanticBookIngestor:
                     logger.info(msg)
                     tracker.add_log(msg)
 
-                # 6. CRITICAL: Sleep briefly to yield CPU to the main thread
-                # Increased to 0.1s to ensure WebSocket has enough time to breathe
                 time.sleep(0.1) 
             
-            # Finalize progress state
             if tracker:
-                tracker.start_upsert() # Jump to 85%
-                tracker.update_upsert(total_chunks) # Jump to 95%
+                tracker.start_upsert() 
+                tracker.update_upsert(total_chunks) 
                 tracker.add_log(f"✅ Successfully processed {total_chunks} chunks")
                 
             logger.info("✅ Batch processing complete.")

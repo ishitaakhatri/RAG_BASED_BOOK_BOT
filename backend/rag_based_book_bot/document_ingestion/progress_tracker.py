@@ -64,16 +64,13 @@ class ProgressState:
             "book_title": self.book_title,
             "author": self.author,
             "errors": self.errors,
-            "logs": self.logs  # NEW: Include logs in state
+            "logs": self.logs
         }
 
 
 class ProgressLogHandler(logging.Handler):
     """
     Custom logging handler that forwards logs to ProgressTracker
-    
-    This captures Python logging output and sends it to the frontend
-    via WebSocket in real-time.
     """
     
     def __init__(self, tracker: 'ProgressTracker'):
@@ -92,17 +89,6 @@ class ProgressLogHandler(logging.Handler):
 class ProgressTracker:
     """
     Tracks ingestion progress and broadcasts updates
-    
-    Usage:
-        tracker = ProgressTracker()
-        tracker.on_progress(lambda state: print(f"{state.percentage}%"))
-        
-        tracker.start_ingestion(pdf_path, total_pages=278)
-        tracker.update_batch(batch_num=1, current_page=20)
-        tracker.update_chunks(chunks_count=100)
-        tracker.update_embeddings(count=100)
-        tracker.update_upsert(count=100)
-        tracker.finish()
     """
     
     def __init__(self):
@@ -114,10 +100,10 @@ class ProgressTracker:
         self._main_loop = None  # Reference to the main event loop
         self._log_handlers: List[ProgressLogHandler] = []  # Track handlers for cleanup
         
-        # ✅ FIX: Throttling variables
+        # Throttling variables
         self.last_emit_time = 0.0
         self.emit_interval = 0.1  # Max 10 updates per second
-        self._last_emitted_status = "" # Track last emitted status to force updates on change
+        self._last_emitted_status = "" 
 
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         """Set the main application event loop for scheduling async callbacks"""
@@ -139,15 +125,8 @@ class ProgressTracker:
         
         current_time = time.time()
         
-        # ✅ FIX: Smart Throttling Logic
-        # 1. Always emit if we are in a terminal state (completed/failed)
         is_terminal = self.state.status in ["completed", "failed"]
-        
-        # 2. Always emit if the status string has changed (e.g. "parsing_pdf" -> "chunking")
-        # This ensures the UI doesn't get stuck on an old step even if logs are spamming
         status_changed = self.state.status != self._last_emitted_status
-        
-        # 3. Otherwise, check time interval
         time_elapsed = (current_time - self.last_emit_time) >= self.emit_interval
         
         should_emit = is_terminal or status_changed or time_elapsed
@@ -155,7 +134,6 @@ class ProgressTracker:
         if not should_emit:
             return
 
-        # Snapshot callbacks under lock to prevent modification during iteration
         with self.lock:
             if not self.callbacks:
                 return
@@ -170,17 +148,15 @@ class ProgressTracker:
                 # If it's a coroutine, we must schedule it safely
                 if inspect.iscoroutine(result):
                     try:
-                        # 1. Try to schedule on the stored main loop (Best for worker threads)
+                        # 1. Try to schedule on the stored main loop
                         if self._main_loop and not self._main_loop.is_closed():
                             asyncio.run_coroutine_threadsafe(result, self._main_loop)
-                        
-                        # 2. Fallback: Try getting the running loop (Works if called from main thread)
+                        # 2. Fallback: Try getting the running loop
                         else:
                             try:
                                 loop = asyncio.get_running_loop()
                                 loop.create_task(result)
                             except RuntimeError:
-                                # No running loop available
                                 pass
                     except Exception as e:
                         logger.debug(f"Could not schedule async callback: {e}")
@@ -188,13 +164,7 @@ class ProgressTracker:
                 logger.exception(f"Progress callback failed: {e}")
 
     def add_log(self, message: str, level: str = "INFO") -> None:
-        """
-        Add a log message to the progress state
-        
-        Args:
-            message: Log message
-            level: Log level (INFO, WARNING, ERROR, DEBUG)
-        """
+        """Add a log message to the progress state"""
         timestamp = datetime.now().strftime("%H:%M:%S")
         formatted_log = f"[{timestamp}] {level}: {message}"
         
@@ -387,23 +357,17 @@ class ProgressTracker:
     def setup_logging_handlers(self) -> None:
         """
         Setup custom logging handlers to capture logs from various loggers
-        
-        Call this once during initialization to start capturing logs
         """
-        # Remove old handlers if they exist
         self.cleanup_logging_handlers()
         
-        # Create new handler
         handler = ProgressLogHandler(self)
         handler.setLevel(logging.INFO)
         
-        # ✅ FIX: Updated list of loggers to catch everything
         loggers_to_track = [
-            "main",                # Main application logs (initialization, cleanup)
-            "rag_based_book_bot",  # Root package logger (catches all submodules)
-            "uvicorn",             # Server logs
-            "uvicorn.error",       # Server errors
-            # Redundant but kept for safety if they are initialized independently:
+            "main",                
+            "rag_based_book_bot",  
+            "uvicorn",             
+            "uvicorn.error",       
             "enhanced_ingestion",
             "semantic_chunker",
             "grobid_parser",
@@ -421,7 +385,6 @@ class ProgressTracker:
     def cleanup_logging_handlers(self) -> None:
         """Remove all logging handlers"""
         for handler in self._log_handlers:
-            # Remove from all loggers
             for logger_name in logging.Logger.manager.loggerDict:
                 target_logger = logging.getLogger(logger_name)
                 if handler in target_logger.handlers:
@@ -434,22 +397,34 @@ class ProgressTracker:
         with self.lock:
             self.state = ProgressState()
             self.log_history = []
-        # Notify listeners that state has been reset
         self._notify_callbacks()
 
 
-# Global tracker instance (shared across all requests)
-_global_tracker = ProgressTracker()
+# --- MANAGER FOR MULTIPLE TRACKERS (Race Condition Fix) ---
 
+_active_trackers: Dict[str, ProgressTracker] = {}
+_manager_lock = Lock()
 
-def get_progress_tracker() -> ProgressTracker:
-    """Get the global progress tracker instance and ensure logging is set up"""
-    # Set up logging handlers on first access
-    if not _global_tracker._log_handlers:
-        _global_tracker.setup_logging_handlers()
-    return _global_tracker
+def create_tracker(task_id: str) -> ProgressTracker:
+    """Create a new tracker instance for a specific task ID"""
+    with _manager_lock:
+        tracker = ProgressTracker()
+        # Initialize logging handlers for this tracker instance
+        # Note: All trackers will attach handlers to root loggers, so they will all share system logs.
+        # This is acceptable to preserve functionality of "seeing logs"
+        tracker.setup_logging_handlers()
+        _active_trackers[task_id] = tracker
+        return tracker
 
+def get_tracker(task_id: str) -> Optional[ProgressTracker]:
+    """Get the tracker for a specific task ID"""
+    with _manager_lock:
+        return _active_trackers.get(task_id)
 
-def reset_progress_tracker() -> None:
-    """Reset the global tracker"""
-    _global_tracker.reset()
+def remove_tracker(task_id: str):
+    """Cleanup tracker after task completion"""
+    with _manager_lock:
+        if task_id in _active_trackers:
+            tracker = _active_trackers[task_id]
+            tracker.cleanup_logging_handlers()
+            del _active_trackers[task_id]
