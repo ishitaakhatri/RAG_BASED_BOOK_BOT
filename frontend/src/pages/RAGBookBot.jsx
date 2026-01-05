@@ -974,7 +974,7 @@ export default function RAGBookBot() {
                     </p>
                     <p className="text-purple-300 text-sm mt-4">
                       💡 Tip: Use the toggle below to switch between Books
-                      (Code) and Papers (Theory).
+                      and Papers.
                     </p>
                   </div>
                 ) : (

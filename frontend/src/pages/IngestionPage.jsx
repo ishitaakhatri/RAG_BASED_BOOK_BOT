@@ -241,19 +241,8 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         body: formData,
       });
 
-      // 5. Connect WebSocket - slightly delayed
-      setTimeout(async () => {
-        try {
-          if (
-            isIngestingRef.current &&
-            currentFileIdRef.current === queueItem.id
-          ) {
-            await connectWebSocket();
-          }
-        } catch (error) {
-          addLog("⚠️ Could not connect to live progress", "warning");
-        }
-      }, 500);
+      // --- REMOVED EARLY CONNECTION ATTEMPT ---
+      // We must wait for the task_id from the response before connecting
 
       const response = await requestPromise;
       const data = await response.json();
@@ -267,17 +256,34 @@ export default function IngestionPage({ books, onUploadSuccess }) {
       }
 
       if (data.success) {
-        // Fallback if WS missed completion
-        if (isIngestingRef.current && !finishSequenceStarted.current) {
-          setUploadProgress({
-            status: "success",
-            message: "Ingestion verified. Finalizing...",
-            percentage: 95,
-            result: data.result,
-          });
-          setLiveProgress((prev) => ({ ...prev, status: "success" }));
-          processingStarted.current = true;
+        // --- CHANGED LOGIC START ---
+        
+        // 1. Get the task ID from the backend
+        const taskId = data.result?.task_id;
+
+        if (taskId) {
+            addLog(`✅ Upload complete. Tracking Task ID: ${taskId}`, "success");
+            
+            // 2. Update status to show we are waiting for processing
+            setUploadProgress({
+                status: "processing", // Not success yet!
+                message: "File uploaded. Starting processing...",
+                percentage: 10,
+            });
+            
+            // 3. Connect to WebSocket with the specific Task ID
+            if (isIngestingRef.current) {
+                await connectWebSocket(taskId);
+            }
+        } else {
+            // Fallback if no task_id (shouldn't happen with updated backend)
+            addLog("⚠️ No task ID returned. Assuming immediate completion.", "warning");
+            finishSequenceStarted.current = true;
+            proceedToNextFile();
         }
+        
+        // --- CHANGED LOGIC END ---
+
       } else {
         throw new Error(data.error || "Unknown error");
       }
@@ -298,16 +304,19 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   // WEBSOCKET & LOGIC
   // ==================================================================================
 
-  const connectWebSocket = () => {
+  const connectWebSocket = (taskId) => {
     return new Promise((resolve, reject) => {
       try {
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          resolve();
-          return;
+            // If already connected, close it to switch to new task
+            wsRef.current.close();
         }
-        if (wsRef.current) wsRef.current.close();
 
-        wsRef.current = new WebSocket(WS_URL);
+        // --- UPDATED URL CONSTRUCTION ---
+        // Append the task_id to the URL: /api/ws/ingest/{taskId}
+        const wsUrlWithId = `${WS_URL}/${taskId}`;
+        
+        wsRef.current = new WebSocket(wsUrlWithId);
 
         wsRef.current.onopen = () => {
           addLog("✅ Connected to progress stream", "success");
@@ -343,6 +352,11 @@ export default function IngestionPage({ books, onUploadSuccess }) {
           console.error("WebSocket error:", error);
           reject(error);
         };
+        
+        wsRef.current.onclose = () => {
+            console.log("WebSocket connection closed");
+        };
+
       } catch (error) {
         reject(error);
       }
@@ -512,8 +526,8 @@ export default function IngestionPage({ books, onUploadSuccess }) {
 
   const calculatePercentage = () => {
     if (
-      uploadProgress?.status === "success" ||
-      liveProgress?.status === "completed"
+      uploadProgress?.status === "success" &&
+      (!liveProgress || liveProgress.status === "completed")
     )
       return 100;
     if (liveProgress?.status === "failed") return 0;
