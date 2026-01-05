@@ -73,9 +73,6 @@ def query_context_resolution_node(state: AgentState) -> Dict:
     for turn in conversation_history[-5:]:
         context += f"User: {turn.user_query}\n"
         assistant_text = str(turn.assistant_response or "")
-        # Limit response length to prevent token overflow
-        if len(assistant_text) > 300:
-            assistant_text = assistant_text[:300] + "..."
         context += f"Assistant: {assistant_text}\n\n"
 
     # 🔥 NEW IMPROVED PROMPT - Two separate decisions
