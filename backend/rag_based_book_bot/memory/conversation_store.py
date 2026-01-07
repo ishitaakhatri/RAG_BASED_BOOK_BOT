@@ -213,12 +213,14 @@ async def delete_session(session_id: str):
             return {"success": False, "error": str(e)}
 
 async def list_all_sessions(user_id: Optional[str] = None, limit: int = 50) -> List[Dict]:
-    """List sessions by aggregating turns"""
+    """List sessions by aggregating turns in Postgres"""
     async with AsyncSessionLocal() as session:
         try:
+            # 🔥 UPDATED: Include min(created_at) to satisfy Pydantic models
             stmt = (
                 select(
                     ConversationTurn.session_id,
+                    func.min(ConversationTurn.created_at).label("created_at"),
                     func.max(ConversationTurn.created_at).label("last_update"),
                     func.count(ConversationTurn.id).label("message_count")
                 )
@@ -235,8 +237,10 @@ async def list_all_sessions(user_id: Optional[str] = None, limit: int = 50) -> L
                 sessions.append({
                     "session_id": row.session_id,
                     "updated_at": row.last_update.timestamp() if row.last_update else 0,
+                    "created_at": row.created_at.timestamp() if row.created_at else 0,
                     "message_count": row.message_count,
-                    "title": f"Session {row.session_id[:8]}..." 
+                    "title": f"Session {row.session_id[:8]}...", # Simplified title
+                    "last_message": "View conversation details" # Placeholder for missing field
                 })
             return sessions
         except Exception as e:
