@@ -1,12 +1,12 @@
 """
 Async Conversation Store
 Implementation: "Piggyback" Strategy (Postgres + Pinecone)
+Uses modern Pinecone v5 Client and Async SQLAlchemy
 """
 
 import time
 import logging
 from typing import List, Dict, Optional
-# 🔥 UPDATED: Use the class, not the package level init
 from pinecone import Pinecone
 from sqlalchemy import select, delete, func, desc
 from sqlalchemy.exc import SQLAlchemyError
@@ -27,7 +27,7 @@ def get_pinecone_index():
     """Singleton accessor for Pinecone Index"""
     global _pc, _index
     if _index is None:
-        # 🔥 UPDATED: Modern Pinecone Client Usage (v3.0.0+)
+        # Modern Pinecone Client Usage (v5.0+)
         _pc = Pinecone(api_key=settings.vector_db.api_key)
         _index = _pc.Index(settings.vector_db.index_name)
     return _index
@@ -88,7 +88,6 @@ async def save_conversation_turn(
                             "session_id": session_id,
                             "turn_number": int(turn_number),
                             "timestamp": float(time.time())
-                            # NOTE: No text content stored here (metadata limit safe)
                         }
                     }],
                     namespace="conversations"

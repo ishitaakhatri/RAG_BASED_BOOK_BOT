@@ -97,7 +97,7 @@ llm = ChatGoogleGenerativeAI(
     model=settings.llm.model_name,
     google_api_key=settings.llm.google_api_key,
     temperature=settings.llm.temperature,
-    max_retries=1, 
+    max_retries=0, 
     convert_system_message_to_human=True 
 )
 

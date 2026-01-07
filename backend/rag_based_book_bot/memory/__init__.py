@@ -12,13 +12,10 @@ from rag_based_book_bot.memory.conversation_store import (
     save_conversation_turn,
     load_conversation,
     search_conversation_context,
-    get_session_turns,
     delete_session,
-    get_conversation_stats,
     list_all_sessions,
     search_across_sessions,
-    update_session_metadata,
-    get_session_metadata  # <--- Added this
+    get_session_metadata
 )
 
 from rag_based_book_bot.memory.embedding_utils import (
@@ -32,15 +29,12 @@ __all__ = [
     'save_conversation_turn',
     'load_conversation',
     'search_conversation_context',
-    'get_session_turns',
     'delete_session',
-    'get_conversation_stats',
     
     # Session management
     'list_all_sessions',
     'search_across_sessions',
-    'update_session_metadata',
-    'get_session_metadata', # <--- Added this
+    'get_session_metadata',
     
     # Embedding utilities
     'embed_conversation_turn',
