@@ -1,5 +1,6 @@
 """
 Updated Node implementations with LangChain 0.3, Pinecone v5, and Manual JSON Parsing.
+This file contains the core logic for the RAG graph nodes.
 """
 
 import re
@@ -660,8 +661,8 @@ async def llm_reasoning_node(state: AgentState) -> Dict:
     try:
         print(f"\n[FINAL] LLM Reasoning (Manual JSON Prompting)")
         
-        # 🔥 FIXED: Use explicit prompting instead of structured output API
-        # This makes it compatible with Gemma 3
+        # 🔥 MANUAL JSON PROMPTING (Works with Gemma 3)
+        # We explicitly ask for JSON format in the prompt
         
         messages = [
             SystemMessage(content=system_prompt + "\n\nIMPORTANT: You must return your answer in valid JSON format."),
@@ -681,31 +682,33 @@ Provide your answer in the following JSON format ONLY:
 """)
         ]
         
-        # Plain invoke (no strict schema binding)
+        # Plain invoke (no structured output wrapper)
         response = await llm.ainvoke(messages)
         content = response.content.strip()
         
-        # Manually parse JSON
+        # Manually parse JSON from string response
+        # Clean markdown code blocks if present
         if content.startswith("```"):
             content = content.replace("```json", "").replace("```", "").strip()
             
         try:
             data = json.loads(content)
         except json.JSONDecodeError:
-            # Fallback if model fails to output JSON (rare with Gemma 3 IT)
-            print("⚠️ Failed to parse JSON, using raw content")
+            # Fallback if model fails to output strict JSON
+            print("⚠️ Failed to parse JSON, using raw content as answer")
             data = {
                 "answer": content,
                 "search_summary": "Response generated",
                 "confidence_score": 0.5
             }
         
+        # Extract source IDs from reranked chunks
         sources = [c.chunk.chunk_id for c in state.get("reranked_chunks", [])[:3]]
         
         return {
             "response": LLMResponse(
                 answer=data.get("answer", ""),
-                code_snippets=[], 
+                code_snippets=[], # Parsing could be enhanced here
                 sources=sources,
                 confidence=float(data.get("confidence_score", 0.0)),
                 search_summary=data.get("search_summary", "") 
