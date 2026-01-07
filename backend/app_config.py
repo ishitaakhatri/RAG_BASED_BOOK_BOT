@@ -9,15 +9,13 @@ load_dotenv()
 
 class LLMConfig(BaseModel):
     # Model Settings
-    model_name: str = Field(default="models/gemma-3-27b-it") # Or os.getenv("LLM_MODEL_NAME") if you want that dynamic too
+    model_name: str = Field(default="models/gemma-3-27b-it") 
     temperature: float = 0.7
     
     # Provider keys
-    # FIX: Use default_factory with os.getenv
     google_api_key: Optional[str] = Field(default_factory=lambda: os.getenv("GOOGLE_API_KEY"))
 
 class VectorDBConfig(BaseModel):
-    # FIX: Use default_factory with os.getenv
     api_key: Optional[str] = Field(default_factory=lambda: os.getenv("PINECONE_API_KEY"))
     index_name: str = Field(default_factory=lambda: os.getenv("PINECONE_INDEX_NAME", "coding-books"))
     namespace: str = Field(default_factory=lambda: os.getenv("PINECONE_NAMESPACE", "books_rag"))
@@ -36,7 +34,6 @@ class IngestionConfig(BaseModel):
     # Processing
     batch_size: int = 32
     use_grobid: bool = True
-    # FIX: Use default_factory with os.getenv
     grobid_url: str = Field(default_factory=lambda: os.getenv("GROBID_URL", "http://grobid:8070/api"))
     grobid_timeout: int = Field(default=300)
 
@@ -57,11 +54,17 @@ class RetrievalConfig(BaseModel):
     # Deduplication
     semantic_dedup_threshold: float = 0.92
 
+class DatabaseConfig(BaseModel):
+    # Render provides the full connection string as DATABASE_URL
+    url: str = Field(default_factory=lambda: os.getenv("DATABASE_URL"))
+    echo_sql: bool = False
+
 class AppConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     vector_db: VectorDBConfig = Field(default_factory=VectorDBConfig)
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     
     # Global App Settings
     log_level: str = "INFO"

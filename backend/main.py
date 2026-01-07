@@ -4,28 +4,24 @@ FastAPI Backend - Production-Ready RAG with Conversation Memory & Clerk Authenti
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.concurrency import run_in_threadpool 
 from contextlib import asynccontextmanager
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import Optional, List, Dict
 from fastapi import WebSocket, WebSocketDisconnect
 import asyncio
-import json
 import logging
-from rag_based_book_bot.document_ingestion.progress_tracker import (
-    create_tracker, get_tracker, remove_tracker
-)
 import os
 import tempfile
 import time
 import hashlib
 from uuid import uuid4
-from datetime import datetime
 from dotenv import load_dotenv
 
-# NEW: Import Configuration & Auth
 from app_config import get_config
 from auth_utils import verify_clerk_token
+
+# NEW: Import DB Init
+from rag_based_book_bot.db import init_db 
 
 load_dotenv()
 settings = get_config()
@@ -38,14 +34,16 @@ from rag_based_book_bot.document_ingestion.enhanced_ingestion import (
     EnhancedBookIngestorPaddle,
     IngestorConfig
 )
+from rag_based_book_bot.document_ingestion.progress_tracker import (
+    create_tracker, get_tracker, remove_tracker
+)
 from rag_based_book_bot.agents.states import AgentState, ConversationTurn, create_initial_state
 from rag_based_book_bot.agents.graph import build_query_graph
-from rag_based_book_bot.agents.nodes import get_pinecone_index, get_embedding_model
+from rag_based_book_bot.agents.nodes import get_pinecone_index
 
 from rag_based_book_bot.memory import (
     save_conversation_turn,
     load_conversation,
-    get_conversation_stats,
     delete_session,
     list_all_sessions,
     search_across_sessions,
@@ -63,9 +61,10 @@ async def lifespan(app: FastAPI):
     """Modern lifespan handler"""
     global query_graph_app
     
-    loop = asyncio.get_running_loop()
-    # Note: We no longer have a single global tracker to initialize with a loop
-    # Trackers are created per request.
+    # 🔥 Initialize Database Tables (Async)
+    print("🚀 Initializing Database...")
+    await init_db()
+    print("✅ Database ready.")
     
     query_graph_app = build_query_graph(enable_persistence=True)
     logger.info(f"🚀 RAG Book Bot API started successfully (Env: {settings.environment})")
@@ -188,6 +187,7 @@ def parse_book_filename(filename: str) -> tuple[str, str]:
 
 def get_available_books() -> List[BookInfo]:
     try:
+        # 🔥 UPDATED: Use Pinecone class from nodes.py or re-instantiate
         index = get_pinecone_index()
         metadata_namespace = settings.vector_db.metadata_namespace
         results = index.query(
@@ -304,7 +304,7 @@ def convert_pinecone_to_conversation_turns(pinecone_turns: List[dict]) -> List[C
 
 @app.get("/")
 async def root():
-    return {"status": "online", "message": "RAG Book Bot API v4.3 - Secure & Async Fixes", "auth": "Clerk (Enabled)"}
+    return {"status": "online", "message": "RAG Book Bot API v4.3 - Async Postgres + Pinecone", "auth": "Clerk (Enabled)"}
 
 @app.get("/books", response_model=BooksResponse)
 async def list_books():
@@ -320,18 +320,20 @@ async def process_query(
     session_id = None
     try:
         user_id = user_claims.get("sub")
-        request.user_id = user_id
+        # Ensure we don't modify the Pydantic model in place with extra fields unexpectedly
+        # Just use local variables for logic
         
         session_id = request.session_id or str(uuid4())
         query_cancellation_events[session_id] = asyncio.Event()
         
-        pinecone_turns = load_conversation(session_id, max_turns=10)
+        # 🔥 UPDATED: Async Call to Load History
+        pinecone_turns = await load_conversation(session_id, max_turns=10)
         conversation_history = convert_pinecone_to_conversation_turns(pinecone_turns)
         
         initial_state = create_initial_state(
             user_query=request.query,
             session_id=session_id,
-            user_id=request.user_id,
+            user_id=user_id,
             conversation_history=conversation_history,
             max_history_turns=5,
             book_filter=request.book_filter,
@@ -359,17 +361,18 @@ async def process_query(
         turn_number = len(conversation_history) + 1
         
         try:
-            await run_in_threadpool(
-                save_conversation_turn,
+            # 🔥 UPDATED: Async Save with Search Payload
+            await save_conversation_turn(
                 session_id=session_id,
                 turn_number=turn_number,
                 user_query=request.query,
                 assistant_response=final_state["response"].answer,
+                search_summary=final_state["response"].search_summary, # <--- Pass Summary
                 resolved_query=final_state.get("resolved_query"),
                 needs_retrieval=final_state.get("needs_retrieval", True),
                 referenced_turn=final_state.get("referenced_turn"),
                 sources_used=[c.chunk.chunk_id for c in final_state.get("reranked_chunks", [])[:5]],
-                user_id=request.user_id
+                user_id=user_id
             )
         except Exception as e:
             logger.error(f"[ERROR] History save failed: {e}")
@@ -585,7 +588,8 @@ async def websocket_ingestion_progress(websocket: WebSocket, task_id: str):
 @app.get("/sessions", response_model=SessionListResponse)
 async def list_sessions(limit: int = Query(50), user_claims: dict = Depends(verify_clerk_token)):
     user_id = user_claims.get("sub")
-    sessions = list_all_sessions(user_id=user_id, limit=limit)
+    # 🔥 UPDATED: Async Call
+    sessions = await list_all_sessions(user_id=user_id, limit=limit)
     return SessionListResponse(sessions=sessions, total=len(sessions))
 
 @app.get("/conversation/{session_id}", response_model=ConversationHistoryResponse)
@@ -597,7 +601,8 @@ async def get_conversation_history(session_id: str, user_claims: dict = Depends(
         if owner_id and owner_id != user_id:
             raise HTTPException(status_code=403, detail="Unauthorized access to this session")
 
-    turns = load_conversation(session_id, max_turns=100)
+    # 🔥 UPDATED: Async Call
+    turns = await load_conversation(session_id, max_turns=100)
     if not turns: raise HTTPException(status_code=404, detail="Conversation not found")
     return ConversationHistoryResponse(session_id=session_id, total_turns=len(turns), turns=turns)
 
@@ -610,14 +615,16 @@ async def delete_conversation(session_id: str, user_claims: dict = Depends(verif
         if owner_id and owner_id != user_id:
             raise HTTPException(status_code=403, detail="Unauthorized to delete this session")
 
-    result = delete_session(session_id)
+    # 🔥 UPDATED: Async Call
+    result = await delete_session(session_id)
     if not result.get('success'): raise HTTPException(status_code=500, detail="Failed")
     return {"message": "Deleted", "session_id": session_id}
 
 @app.get("/search/sessions")
 async def search_sessions(query: str, limit: int = 10, user_claims: dict = Depends(verify_clerk_token)):
     user_id = user_claims.get("sub")
-    results = search_across_sessions(query=query, user_id=user_id, top_k=limit)
+    # 🔥 UPDATED: Async Call
+    results = await search_across_sessions(query=query, user_id=user_id, top_k=limit)
     return {"query": query, "results": results, "total": len(results)}
 
 @app.get("/health")

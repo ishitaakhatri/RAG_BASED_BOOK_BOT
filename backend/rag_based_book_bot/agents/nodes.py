@@ -1,26 +1,22 @@
 """
-Updated Node implementations with LangChain and Gemini
-
-CHANGES:
-- Integrated HierarchicalSearchEngine for vector_search_node
-- Added support for multiple namespaces (Books + Papers)
-- RESTORED Multi-Hop Expansion logic
-- RESTORED Cluster Expansion logic
-- RESTORED Enhanced Context Compression
+Updated Node implementations with LangChain 0.3, Pinecone v5, and Structured Outputs.
 """
 
 import re
 import os
 import json
-from typing import List, Dict
+import traceback
+from typing import List, Dict, Optional
 from dotenv import load_dotenv
+
+# 🔥 UPDATED: Class based import for Pinecone v5
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
-load_dotenv()
-import traceback
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
+# 🔥 UPDATED: Standard Pydantic V2
+from pydantic import BaseModel, Field
 
 from rag_based_book_bot.agents.states import (
     AgentState, DocumentChunk, RetrievedChunk, 
@@ -34,26 +30,19 @@ from rag_based_book_bot.retrieval.cluster_manager import ClusterManager
 from rag_based_book_bot.retrieval.context_compressor import EnhancedContextCompressor
 
 from app_config import get_config
+
+load_dotenv()
 settings = get_config()
 
-
 # ============================================================================
-# LANGCHAIN LLM INITIALIZATION
+# GLOBAL SINGLETONS & INITIALIZATION
 # ============================================================================
-
-llm = ChatGoogleGenerativeAI(
-    model=settings.llm.model_name,
-    google_api_key=settings.llm.google_api_key,
-    temperature=settings.llm.temperature,
-    max_retries=0, 
-    convert_system_message_to_human=True 
-)
 
 # Global instances (lazy loading)
 _pc = None
 _index = None
 _model = None
-_search_engine = None  # NEW: Hierarchical Search Engine
+_search_engine = None 
 _cross_encoder = None
 _multi_hop = None
 _cluster_manager = None
@@ -62,6 +51,7 @@ _compressor = None
 def get_pinecone_index():
     global _pc, _index
     if _index is None:
+        # 🔥 UPDATED: Modern Pinecone Client Usage (v5+)
         _pc = Pinecone(api_key=settings.vector_db.api_key)
         _index = _pc.Index(settings.vector_db.index_name)
     return _index
@@ -102,9 +92,17 @@ def get_compressor(target_tokens=None, max_tokens=None):
     m_tokens = max_tokens or settings.retrieval.max_context_tokens
     return EnhancedContextCompressor(target_tokens=t_tokens, max_tokens=m_tokens)
 
+# Initialize LLM
+llm = ChatGoogleGenerativeAI(
+    model=settings.llm.model_name,
+    google_api_key=settings.llm.google_api_key,
+    temperature=settings.llm.temperature,
+    max_retries=1, 
+    convert_system_message_to_human=True 
+)
 
 # ============================================================================
-# RELEVANCE CHECK NODE
+# NODE 1: RELEVANCE CHECK (INTENT CLASSIFICATION)
 # ============================================================================
 
 async def relevance_check_node(state: AgentState) -> Dict:
@@ -130,8 +128,6 @@ async def relevance_check_node(state: AgentState) -> Dict:
         "intent_confidence": confidence,
         "current_node": "relevance_check"
     }
-
-
 
 async def _check_query_relevance(query: str) -> dict:
     print(f"  [CLASSIFY] Starting LLM classification...")
@@ -163,92 +159,79 @@ Return ONLY valid JSON in this exact format:
   "confidence": 0.0 to 1.0
 }
 """
-
     user_prompt = f'Query: "{query}"'
-    print(f"  [CLASSIFY] User prompt: {user_prompt}")
-
+    
     try:
-        print(f"  [CLASSIFY] Sending request to Gemini LLM...")
         response = llm.invoke([
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt)
         ])
 
         raw = response.content.strip()
-        print(f"  [CLASSIFY] Raw LLM response: {raw}")
-        
         if raw.startswith("```"):
             raw = raw.replace("```json", "").replace("```", "").strip()
-            print(f"  [CLASSIFY] Cleaned JSON response: {raw}")
 
         result = json.loads(raw)
-        print(f"  [CLASSIFY] Parsed JSON result: {result}")
-
+        
         intent = result.get("intent", "chat")
         confidence = float(result.get("confidence", 0))
-        print(f"  [CLASSIFY] ✓ Classification successful: intent='{intent}', confidence={confidence}")
-
+        
         return {
             "intent": intent,
             "confidence": confidence
         }
 
     except Exception as e:
-        print(f"  [CLASSIFY] ❌ Exception occurred: {type(e).__name__}: {e}")
-        print(f"  [CLASSIFY] Falling back to intent='chat', confidence=0.0")
+        print(f"  [CLASSIFY] ❌ Exception: {e}")
         return {
             "intent": "chat",
             "confidence": 0.0
         }
 
-
-
+# ============================================================================
+# NODE 2: IRRELEVANT HANDLER (CHIT-CHAT)
+# ============================================================================
 
 def irrelevant_query_handler_node(state: AgentState) -> Dict:
     query = state["user_query"]
     intent = state.get("intent", "chat")
     print(f"\n[IRRELEVANT HANDLER] Entering node...")
-    print(f"[IRRELEVANT HANDLER] intent='{intent}', query='{query}'")
-
+    
     try:
-        print(f"[IRRELEVANT HANDLER] Generating friendly response...")
         response = llm.invoke([
             SystemMessage(
-                content="You are a friendly conversational assistant. Respond naturally."
+                content="You are a friendly conversational assistant. Respond naturally and politely. If the user asks technical questions, politely suggest they ask about programming or technical topics."
             ),
             HumanMessage(content=query)
         ])
         
         answer = response.content
-        print(f"[IRRELEVANT HANDLER] ✓ Response generated: {answer[:100]}...")
-
+        
         return {
             "response": LLMResponse(
                 answer=answer,
                 code_snippets=[],
                 sources=[],
-                confidence=1.0
+                confidence=1.0,
+                search_summary=f"Chit-chat interaction: {query[:50]}"
             ),
             "current_node": "chat_handler"
         }
     except Exception as e:
-        print(f"[IRRELEVANT HANDLER] ❌ Error generating response: {e}")
-        fallback_response = "I appreciate your message! While I'm designed to help with technical questions, feel free to ask me anything about programming or software development."
-        print(f"[IRRELEVANT HANDLER] Using fallback response")
-        
+        fallback = "I appreciate your message! I'm designed to help with technical questions."
         return {
             "response": LLMResponse(
-                answer=fallback_response,
+                answer=fallback,
                 code_snippets=[],
                 sources=[],
-                confidence=0.5
+                confidence=0.5,
+                search_summary="Fallback chit-chat response"
             ),
             "current_node": "chat_handler"
         }
 
-
 # ============================================================================
-# QUERY PARSING NODES
+# NODE 3: QUERY PARSING
 # ============================================================================
 
 async def user_query_node(state: AgentState) -> Dict:
@@ -275,125 +258,7 @@ async def user_query_node(state: AgentState) -> Dict:
         print(f"  ⚠️ LLM parsing failed: {e} -> Using fallback")
         return {"parsed_query": _fallback_parse_query(user_query), "current_node": "user_query"}
 
-
-async def query_rewriter_node(state: AgentState, num_variations: int = 3) -> Dict:
-    parsed_query = state.get("parsed_query")
-    resolved_query = state.get("resolved_query")
-    
-    if not parsed_query:
-        return {"errors": state.get("errors", []) + ["Missing parsed query"], "current_node": "query_rewriter"}
-    
-    try:
-        query_to_expand = resolved_query or parsed_query.raw_query
-        print(f"\n[Query Rewriting] Expanding: '{query_to_expand}'")
-        
-        rewritten = await _generate_query_variations(query_to_expand, parsed_query.intent, num_variations)
-        
-        return {"rewritten_queries": rewritten, "current_node": "query_rewriter"}
-    except Exception as e:
-        print(f"  ⚠️ Query rewriting failed: {e}")
-        return {"rewritten_queries": [], "current_node": "query_rewriter"}
-
-
-async def _generate_query_variations(
-    query: str,
-    intent: QueryIntent,
-    num_variations: int = 3
-) -> list[str]:
-    """Generate alternative query formulations using Gemini"""
-
-    system_prompt = """You are an expert at identifying key concepts and aspects of a technical topic.
-
-Task:
-Given a user query, generate only 3 closely related sub-queries that explore
-IMPORTANT aspects of the same topic and help retrieve comprehensive information.
-
-The goal is to maximize recall without drifting off-topic.
-
-Guidelines:
-- Each sub-query should focus on a different important aspect of the topic
-  (e.g., definition, components, implementation, applications, limitations)
-- Do NOT repeat the original query
-- Do NOT introduce unrelated topics
-- Do NOT add speculative or advanced topics unless implied by the query
-- Keep each sub-query concise and specific
-- Use clear technical phrasing suitable for documentation search
-
-Return ONLY a valid JSON array of strings.
-"""
-
-    intent_hints = {
-        QueryIntent.CONCEPTUAL: "Focus on understanding, explanation, and theoretical aspects.",
-        QueryIntent.CODE_REQUEST: "Vary between implementation details, code examples, and practical usage.",
-        QueryIntent.DEBUGGING: "Include variations about troubleshooting, error fixing, and problem solving.",
-        QueryIntent.COMPARISON: "Rephrase as differences, pros/cons, or when to use each option.",
-        QueryIntent.TUTORIAL: "Vary between step-by-step guides, walkthroughs, and practical examples.",
-    }
-
-    user_prompt = f"""Original query: "{query}"
-
-Intent: {intent.value}
-Hint: {intent_hints.get(intent, "")}
-
-Generate {num_variations} alternative phrasings.
-"""
-
-    try:
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt),
-        ]
-
-        response = llm.invoke(messages)
-        response_text = response.content.strip()
-
-        # ---- Clean fenced code blocks if present ----
-        if response_text.startswith("```"):
-            response_text = (
-                response_text
-                .replace("```json", "")
-                .replace("```", "")
-                .strip()
-            )
-
-        # ---- Parse JSON ----
-        variations = json.loads(response_text)
-
-        if not isinstance(variations, list):
-            raise ValueError("LLM response is not a JSON list")
-
-        # ---- De-duplicate & remove original query ----
-        filtered_variations = []
-        query_norm = query.strip().lower()
-
-        for v in variations:
-            if isinstance(v, str):
-                v_clean = v.strip()
-                if v_clean.lower() != query_norm:
-                    filtered_variations.append(v_clean)
-
-        # ---- Always return original query first ----
-        return [query] + filtered_variations[:num_variations]
-
-    except Exception as e:
-        print(f"⚠️ LLM query rewriting failed: {e}")
-        return _fallback_query_variations(query, num_variations)
-
-def _fallback_query_variations(query: str, num_variations: int = 3) -> list[str]:
-    return [query] * num_variations
-
-
-# Modified _parse_query_with_llm function (COMPLETE REPLACEMENT)
 async def _parse_query_with_llm(query: str) -> dict:
-    """
-    Parse query using LLM with improved validation and error handling
-    
-    Args:
-        query: User query to parse
-    
-    Returns:
-        Dictionary with parsed query components
-    """
     system_prompt = """You are an expert query analyzer. Analyze user queries to help retrieve the most relevant content.
 Extract:
 1. intent (CONCEPTUAL, CODE_REQUEST, DEBUGGING, COMPARISON, TUTORIAL)
@@ -411,74 +276,34 @@ Respond with ONLY valid JSON in this exact format:
   "complexity_hint": "intermediate"
 }"""
 
-    user_prompt = f'Analyze this query: "{query}"'
-
     try:
-        messages = [
+        response = llm.invoke([
             SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt)
-        ]
+            HumanMessage(content=f'Analyze this query: "{query}"')
+        ])
         
-        response = llm.invoke(messages)
-        response_text = response.content.strip()
+        text = response.content.strip()
+        if text.startswith("```"):
+            text = text.replace("```json", "").replace("```", "").strip()
         
-        # 🔥 IMPROVED: Better JSON extraction
-        if response_text.startswith("```"):
-            response_text = response_text.replace("```json", "").replace("```", "").strip()
+        parsed = json.loads(text)
         
-        parsed = json.loads(response_text)
-        
-        # 🔥 NEW: Validate intent against allowed values
+        # Validation
         valid_intents = ['CONCEPTUAL', 'CODE_REQUEST', 'DEBUGGING', 'COMPARISON', 'TUTORIAL']
         intent = parsed.get('intent', 'CONCEPTUAL').upper()
+        if intent not in valid_intents: intent = 'CONCEPTUAL'
         
-        if intent not in valid_intents:
-            print(f"  ⚠️ Invalid intent '{intent}', defaulting to CONCEPTUAL")
-            intent = 'CONCEPTUAL'
-        
-        # 🔥 NEW: Validate and sanitize topics and keywords
-        topics = parsed.get('topics', [])
-        if not isinstance(topics, list):
-            topics = []
-        topics = [str(t) for t in topics if t][:10]  # Limit to 10 topics
-        
-        keywords = parsed.get('keywords', [])
-        if not isinstance(keywords, list):
-            keywords = []
-        keywords = [str(k) for k in keywords if k][:10]  # Limit to 10 keywords
-        
-        # 🔥 NEW: Validate complexity_hint
-        valid_complexity = ['beginner', 'intermediate', 'advanced']
-        complexity = parsed.get('complexity_hint', 'intermediate').lower()
-        if complexity not in valid_complexity:
-            complexity = 'intermediate'
-        
-        result = {
+        return {
             'intent': intent,
-            'topics': topics,
-            'keywords': keywords,
+            'topics': parsed.get('topics', [])[:10],
+            'keywords': parsed.get('keywords', [])[:10],
             'code_language': parsed.get('code_language'),
-            'complexity_hint': complexity
+            'complexity_hint': parsed.get('complexity_hint', 'intermediate')
         }
-        
-        print(f"  ✅ Query parsed successfully: intent={intent}, topics={len(topics)}, keywords={len(keywords)}")
-        
-        return result
-        
-    except json.JSONDecodeError as je:
-        print(f"  ❌ JSON parsing error: {je}")
-        print(f"  Raw response: {response_text[:200]}...")
-        return _get_fallback_parse()
-    except Exception as e:
-        print(f"  ❌ Parsing error: {e}")
-        import traceback
-        print(f"  📍 Traceback:\n{traceback.format_exc()}")
+    except Exception:
         return _get_fallback_parse()
 
-
-# 🔥 NEW: Separate fallback function for consistency
 def _get_fallback_parse() -> dict:
-    """Return consistent fallback parsing result"""
     return {
         'intent': 'CONCEPTUAL',
         'topics': [],
@@ -487,44 +312,67 @@ def _get_fallback_parse() -> dict:
         'complexity_hint': 'intermediate'
     }
 
-
 def _fallback_parse_query(query: str) -> ParsedQuery:
-    """Fallback parser using the consistent fallback data"""
-    fallback_data = _get_fallback_parse()
+    data = _get_fallback_parse()
     return ParsedQuery(
         raw_query=query, 
         intent=QueryIntent.CONCEPTUAL, 
-        topics=fallback_data['topics'], 
-        keywords=fallback_data['keywords'], 
-        code_language=fallback_data['code_language'], 
-        complexity_hint=fallback_data['complexity_hint']
+        topics=data['topics'], 
+        keywords=data['keywords'], 
+        code_language=data['code_language'], 
+        complexity_hint=data['complexity_hint']
     )
-
-
-def _fallback_parse_query(query: str) -> ParsedQuery:
-    return ParsedQuery(
-        raw_query=query, 
-        intent=QueryIntent.CONCEPTUAL, 
-        topics=[], 
-        keywords=[], 
-        code_language=None, 
-        complexity_hint="intermediate"
-    )
-
 
 # ============================================================================
-# RETRIEVAL NODES (FULLY RESTORED)
+# NODE 4: QUERY REWRITING
+# ============================================================================
+
+async def query_rewriter_node(state: AgentState, num_variations: int = 3) -> Dict:
+    parsed_query = state.get("parsed_query")
+    resolved_query = state.get("resolved_query")
+    
+    if not parsed_query:
+        return {"errors": ["Missing parsed query"], "current_node": "query_rewriter"}
+    
+    try:
+        query_to_expand = resolved_query or parsed_query.raw_query
+        print(f"\n[Query Rewriting] Expanding: '{query_to_expand}'")
+        
+        system_prompt = """Generate 3 closely related sub-queries that explore different aspects of the topic.
+Return ONLY a valid JSON array of strings."""
+        
+        response = llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"Original: {query_to_expand}")
+        ])
+        
+        text = response.content.strip()
+        if text.startswith("```"):
+            text = text.replace("```json", "").replace("```", "").strip()
+            
+        variations = json.loads(text)
+        if not isinstance(variations, list): variations = []
+        
+        # Always include original first
+        rewritten = [query_to_expand] + variations[:num_variations]
+        return {"rewritten_queries": rewritten, "current_node": "query_rewriter"}
+        
+    except Exception as e:
+        print(f"  ⚠️ Rewriting failed: {e}")
+        return {"rewritten_queries": [parsed_query.raw_query], "current_node": "query_rewriter"}
+
+# ============================================================================
+# NODE 5: VECTOR SEARCH (PASS 1)
 # ============================================================================
 
 async def vector_search_node(state: AgentState) -> Dict:
-    """PASS 1: Hierarchical Vector Search"""
     parsed_query = state.get("parsed_query")
     resolved_query = state.get("resolved_query")
     rewritten_queries = state.get("rewritten_queries", [])
     pipeline_snapshots = state.get("pipeline_snapshots", [])
     
     if not parsed_query:
-        return {"errors": state.get("errors", []) + ["Missing query"], "current_node": "vector_search"}
+        return {"errors": ["Missing query"], "current_node": "vector_search"}
     
     try:
         top_k = state.get("pass1_k", 50)
@@ -533,19 +381,15 @@ async def vector_search_node(state: AgentState) -> Dict:
         
         print(f"\n[PASS 1] Hierarchical Vector Search (top_k={top_k})")
         
-        # 1. Determine Namespaces (Both Books and Papers)
         target_namespaces = [settings.vector_db.namespace, "papers_rag"]
         
-        # 2. Build Filter
         filter_dict = {}
         if state.get("book_filter"):
             filter_dict["book_title"] = state.get("book_filter")
         
-        # 3. Initialize Engine
         engine = get_search_engine()
         all_section_results = {}
         
-        # 4. Search & Group
         for q_text in all_queries:
             results = engine.search_and_group(
                 query=q_text,
@@ -555,17 +399,14 @@ async def vector_search_node(state: AgentState) -> Dict:
             )
             
             for res in results:
-                # Deduplicate based on Section ID
                 if res['id'] not in all_section_results:
                     all_section_results[res['id']] = res
                 else:
-                    # Update if we found a higher score for the same section
                     all_section_results[res['id']]['score'] = max(
                         all_section_results[res['id']]['score'], 
                         res['score']
                     )
 
-        # 5. Convert to DocumentChunk
         sorted_results = list(all_section_results.values())
         sorted_results.sort(key=lambda x: x['score'], reverse=True)
         sorted_results = sorted_results[:top_k]
@@ -591,19 +432,19 @@ async def vector_search_node(state: AgentState) -> Dict:
             "chunks": retrieved_chunks[:10]
         }
         
-        print(f"  → Retrieved {len(retrieved_chunks)} coherent sections")
-        
         return {
             "retrieved_chunks": retrieved_chunks,
             "pipeline_snapshots": pipeline_snapshots + [new_snapshot],
             "current_node": "vector_search"
         }
     except Exception as e:
-        return {"errors": state.get("errors", []) + [f"Vector search failed: {e}"], "current_node": "vector_search"}
+        return {"errors": [f"Vector search failed: {e}"], "current_node": "vector_search"}
 
+# ============================================================================
+# NODE 6: RERANKING (PASS 2)
+# ============================================================================
 
 async def reranking_node(state: AgentState) -> Dict:
-    """PASS 2: Cross-Encoder Reranking"""
     retrieved_chunks = state.get("retrieved_chunks", [])
     parsed_query = state.get("parsed_query")
     pass2_k = state.get("pass2_k", 10)
@@ -616,7 +457,6 @@ async def reranking_node(state: AgentState) -> Dict:
         print(f"\n[PASS 2] Cross-Encoder Reranking (top_k={pass2_k})")
         cross_encoder = get_cross_encoder()
         
-        # Prepare input for reranker (using full section text)
         chunks_data = [{
             'text': rc.chunk.content,
             'metadata': {'chunk_id': rc.chunk.chunk_id},
@@ -642,7 +482,6 @@ async def reranking_node(state: AgentState) -> Dict:
             "chunk_count": len(final_reranked),
             "chunks": final_reranked[:10]
         }
-        print(f"  → Reranked to {len(final_reranked)} sections")
         
         return {
             "reranked_chunks": final_reranked, 
@@ -652,28 +491,22 @@ async def reranking_node(state: AgentState) -> Dict:
     except Exception as e:
         return {"errors": [f"Reranking failed: {e}"], "current_node": "reranking"}
 
+# ============================================================================
+# NODE 7: MULTI-HOP EXPANSION (PASS 3)
+# ============================================================================
 
 async def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState:
-    """PASS 3: Multi-Hop Retrieval (RESTORED)"""
     state["current_node"] = "multi_hop_expansion"
 
-    # Check enabled status
-    if not state.get("pass3_enabled", True):
-        print(f"\n[PASS 3] Multi-Hop Expansion - SKIPPED (disabled)")
-        return state
-    
-    if not state["reranked_chunks"] or not state["parsed_query"]:
+    if not state.get("pass3_enabled", True) or not state["reranked_chunks"]:
         return state
     
     try:
-        print(f"\n[PASS 3] Multi-Hop Expansion (max_hops={max_hops})")
-        
-        before_expansion = len(state["reranked_chunks"])
+        print(f"\n[PASS 3] Multi-Hop Expansion")
         expander = get_multi_hop_expander()
         
-        # Prepare initial results from Super Chunks
         initial_results = []
-        for rc in state["reranked_chunks"][:5]: # Use top 5 sections as anchors
+        for rc in state["reranked_chunks"][:5]: 
             initial_results.append({
                 'id': rc.chunk.chunk_id,
                 'text': rc.chunk.content,
@@ -682,18 +515,13 @@ async def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> Agen
                 'author': rc.chunk.author
             })
         
-        # Helper for recursive search using the Hierarchical Search Engine
         def retrieval_fn(query_text: str, top_k: int = 3):
             engine = get_search_engine()
             namespaces = [settings.vector_db.namespace, "papers_rag"]
             results = engine.search_and_group(query_text, top_k, namespaces)
-            
             return [{
-                'id': r['id'],
-                'text': r['text'],
-                'score': r['score'],
-                'book_title': r['metadata']['book_title'],
-                'author': r['metadata']['author']
+                'id': r['id'], 'text': r['text'], 'score': r['score'],
+                'book_title': r['metadata']['book_title'], 'author': r['metadata']['author']
             } for r in results]
         
         expanded_results = expander.multi_hop_retrieve(
@@ -704,26 +532,22 @@ async def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> Agen
             top_k_per_hop=2
         )
         
-        # Add new results to state
         existing_ids = {rc.chunk.chunk_id for rc in state["reranked_chunks"]}
-        
         added_count = 0
+        
         for exp_result in expanded_results:
             if exp_result['id'] not in existing_ids:
                 chunk = DocumentChunk(
                     chunk_id=exp_result['id'],
                     content=exp_result['text'],
-                    chapter="Multi-Hop Result",
-                    section="",
-                    page_number=0,
-                    chunk_type="text",
+                    chapter="Multi-Hop Result", section="", page_number=0, chunk_type="text",
                     book_title=exp_result.get('book_title', 'Unknown'),
                     author=exp_result.get('author', 'Unknown')
                 )
                 state["reranked_chunks"].append(RetrievedChunk(
                     chunk=chunk,
                     similarity_score=exp_result['score'],
-                    rerank_score=exp_result['score'] * 0.9 # Penalize slightly
+                    rerank_score=exp_result['score'] * 0.9
                 ))
                 added_count += 1
                 existing_ids.add(exp_result['id'])
@@ -731,63 +555,56 @@ async def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> Agen
         state["pipeline_snapshots"].append({
             "stage": "multi_hop_expansion",
             "chunk_count": len(state["reranked_chunks"]),
-            "chunks": state["reranked_chunks"][:10],  # Show top 10 chunks after expansion
+            "chunks": state["reranked_chunks"][:10],
             "new_chunks_added": added_count
         })
-        print(f"  → Added {added_count} multi-hop sections")
         
     except Exception as e:
-        print(f"  ⚠️ Multi-hop expansion failed: {e}")
+        print(f"  ⚠️ Multi-hop failed: {e}")
     
     return state
 
+# ============================================================================
+# NODE 8: CLUSTER EXPANSION (PASS 4)
+# ============================================================================
 
 async def cluster_expansion_node(state: AgentState) -> AgentState:
-    """PASS 4: Cluster Expansion (RESTORED)"""
     state["current_node"] = "cluster_expansion"
-    
     try:
         print(f"\n[PASS 4] Cluster Expansion")
         cluster_manager = get_cluster_manager()
         
         if not cluster_manager.chunk_to_cluster:
-            print("  ⚠️ No clusters available, skipping")
             return state
         
-        # Use top 10 chunks as seeds
         chunk_ids = [rc.chunk.chunk_id for rc in state["reranked_chunks"][:10]]
         neighbor_ids = cluster_manager.get_cluster_neighbors(chunk_ids, max_neighbors=3)
         
-        if neighbor_ids:
-            # Note: Fetching content for these neighbors would ideally use index.fetch
-            # For this node, we identify potential neighbors but don't force a heavy fetch
-            # to keep the response fast, unless they are critical.
-            # In a production fetch, you would call `index.fetch(ids=neighbor_ids)`.
-            pass 
+        # NOTE: Actual hydration skipped for performance in this demo, usually entails index.fetch
         
         state["pipeline_snapshots"].append({
             "stage": "cluster_expansion",
             "chunk_count": len(state["reranked_chunks"]),
-            "chunks": state["reranked_chunks"][:10],  # Include chunks for display
+            "chunks": state["reranked_chunks"][:10],
             "neighbors_found": len(neighbor_ids)
         })
-        print(f"  → Identified {len(neighbor_ids)} potential cluster neighbors")
         
     except Exception as e:
         print(f"  ⚠️ Cluster expansion failed: {e}")
     
     return state
 
+# ============================================================================
+# NODE 9: CONTEXT ASSEMBLY (PASS 5)
+# ============================================================================
 
 async def context_assembly_node(state: AgentState) -> AgentState:
-    """PASS 5: Context Assembly (RESTORED SMART COMPRESSION)"""
     state["current_node"] = "context_assembly"
     
     try:
         max_tokens = state.get("max_tokens", settings.retrieval.max_context_tokens)
-        print(f"\n[PASS 5] Context Compression & Assembly (max_tokens={max_tokens})")
+        print(f"\n[PASS 5] Context Assembly (max_tokens={max_tokens})")
         
-        # 1. Attempt Smart Compression
         compressor = get_compressor(target_tokens=int(max_tokens * 0.9), max_tokens=max_tokens)
         
         chunks_for_compression = []
@@ -809,59 +626,23 @@ async def context_assembly_node(state: AgentState) -> AgentState:
                 state["parsed_query"].raw_query,
                 preserve_code=True
             )
-            print("  → Applied Smart Compression")
         else:
-            # Fallback
             compressed_context = "\n---\n".join([c['text'] for c in chunks_for_compression[:5]])
-            print("  → Applied Fallback Assembly")
             
         state["assembled_context"] = compressed_context
         state["system_prompt"] = _build_system_prompt(state["parsed_query"])
         
-        # Add pipeline snapshot for Pass 5
-        pipeline_snapshots = state.get("pipeline_snapshots", [])
-        pipeline_snapshots.append({
+        state["pipeline_snapshots"].append({
             "stage": "context_assembly",
             "chunk_count": len(state.get("reranked_chunks", [])),
-            "chunks": state.get("reranked_chunks", [])[:10],  # Final chunks used
+            "chunks": state.get("reranked_chunks", [])[:10],
             "tokens": len(compressed_context.split())
         })
-        state["pipeline_snapshots"] = pipeline_snapshots
         
     except Exception as e:
         state["errors"].append(f"Assembly failed: {e}")
         
     return state
-
-
-async def llm_reasoning_node(state: AgentState) -> Dict:
-    parsed_query = state.get("parsed_query")
-    assembled_context = state.get("assembled_context", "")
-    system_prompt = state.get("system_prompt", "")
-    
-    if not assembled_context:
-        return {"errors": ["No context"], "current_node": "llm_reasoning"}
-        
-    try:
-        print(f"\n[FINAL] LLM Reasoning")
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=f"{assembled_context}\n\nQuestion: {parsed_query.raw_query}")
-        ]
-        
-        response = llm.invoke(messages)
-        
-        return {
-            "response": LLMResponse(
-                answer=response.content,
-                code_snippets=[],
-                sources=[c.chunk.chunk_id for c in state["reranked_chunks"][:3]],
-                confidence=0.9
-            ),
-            "current_node": "llm_reasoning"
-        }
-    except Exception as e:
-         return {"errors": [str(e)], "current_node": "llm_reasoning"}
 
 def _build_system_prompt(query: ParsedQuery) -> str:
     base = """You are an expert programming tutor with deep knowledge of coding books and technical documentation.
@@ -891,3 +672,69 @@ Always reference sources WITH BOOK TITLES and ensure code is correct and follows
     }
     
     return base + intent_prompts.get(query.intent, "") + complexity.get(query.complexity_hint, "")
+
+# ============================================================================
+# NODE 10: LLM REASONING (STRUCTURED OUTPUT)
+# ============================================================================
+
+# 🔥 NEW: Structured Output Schema (Pydantic V2)
+class ResponseSchema(BaseModel):
+    answer: str = Field(
+        description="The detailed, comprehensive answer to the user's question, formatted in Markdown."
+    )
+    search_summary: str = Field(
+        description="A concise 1-2 sentence summary of the answer for search indexing. Include key technical terms."
+    )
+    confidence_score: float = Field(
+        description="A score between 0.0 and 1.0 indicating confidence in the answer."
+    )
+
+async def llm_reasoning_node(state: AgentState) -> Dict:
+    parsed_query = state.get("parsed_query")
+    assembled_context = state.get("assembled_context", "")
+    system_prompt = state.get("system_prompt", "")
+    
+    if not assembled_context:
+        return {"errors": ["No context"], "current_node": "llm_reasoning"}
+        
+    try:
+        print(f"\n[FINAL] LLM Reasoning (Structured Output)")
+        
+        # 1. Bind the schema to the LLM (LangChain 0.2+ style)
+        structured_llm = llm.with_structured_output(ResponseSchema)
+        
+        # 2. Construct the prompt
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"""
+Context:
+{assembled_context}
+
+Question: 
+{parsed_query.raw_query}
+
+Provide your answer based ONLY on the context above.
+""")
+        ]
+        
+        # 3. Invoke
+        # The result will be an instance of ResponseSchema
+        result: ResponseSchema = await structured_llm.ainvoke(messages)
+        
+        # 4. Extract data
+        sources = [c.chunk.chunk_id for c in state.get("reranked_chunks", [])[:3]]
+        
+        return {
+            "response": LLMResponse(
+                answer=result.answer,
+                code_snippets=[], # Optional extraction logic
+                sources=sources,
+                confidence=result.confidence_score,
+                search_summary=result.search_summary # <--- The Zero-Latency Payload
+            ),
+            "current_node": "llm_reasoning"
+        }
+        
+    except Exception as e:
+        print(f"❌ Structured Output Failed: {e}")
+        return {"errors": [str(e)], "current_node": "llm_reasoning"}
