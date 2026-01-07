@@ -1,5 +1,5 @@
 """
-Updated Node implementations with LangChain 0.3, Pinecone v5, and Structured Outputs.
+Updated Node implementations with LangChain 0.3, Pinecone v5, and Manual JSON Parsing.
 """
 
 import re
@@ -9,13 +9,12 @@ import traceback
 from typing import List, Dict, Optional
 from dotenv import load_dotenv
 
-# 🔥 UPDATED: Class based import for Pinecone v5
+# Class based import for Pinecone v5
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
-# 🔥 UPDATED: Standard Pydantic V2
 from pydantic import BaseModel, Field
 
 from rag_based_book_bot.agents.states import (
@@ -38,7 +37,6 @@ settings = get_config()
 # GLOBAL SINGLETONS & INITIALIZATION
 # ============================================================================
 
-# Global instances (lazy loading)
 _pc = None
 _index = None
 _model = None
@@ -51,7 +49,6 @@ _compressor = None
 def get_pinecone_index():
     global _pc, _index
     if _index is None:
-        # 🔥 UPDATED: Modern Pinecone Client Usage (v5+)
         _pc = Pinecone(api_key=settings.vector_db.api_key)
         _index = _pc.Index(settings.vector_db.index_name)
     return _index
@@ -63,7 +60,6 @@ def get_embedding_model():
     return _model
 
 def get_search_engine():
-    """Get the Hierarchical Search Engine"""
     global _search_engine
     if _search_engine is None:
         _search_engine = create_retriever(get_pinecone_index(), get_embedding_model())
@@ -97,12 +93,12 @@ llm = ChatGoogleGenerativeAI(
     model=settings.llm.model_name,
     google_api_key=settings.llm.google_api_key,
     temperature=settings.llm.temperature,
-    max_retries=0, 
+    max_retries=1, 
     convert_system_message_to_human=True 
 )
 
 # ============================================================================
-# NODE 1: RELEVANCE CHECK (INTENT CLASSIFICATION)
+# NODE 1: RELEVANCE CHECK
 # ============================================================================
 
 async def relevance_check_node(state: AgentState) -> Dict:
@@ -189,12 +185,11 @@ Return ONLY valid JSON in this exact format:
         }
 
 # ============================================================================
-# NODE 2: IRRELEVANT HANDLER (CHIT-CHAT)
+# NODE 2: IRRELEVANT HANDLER
 # ============================================================================
 
 def irrelevant_query_handler_node(state: AgentState) -> Dict:
     query = state["user_query"]
-    intent = state.get("intent", "chat")
     print(f"\n[IRRELEVANT HANDLER] Entering node...")
     
     try:
@@ -288,7 +283,6 @@ Respond with ONLY valid JSON in this exact format:
         
         parsed = json.loads(text)
         
-        # Validation
         valid_intents = ['CONCEPTUAL', 'CODE_REQUEST', 'DEBUGGING', 'COMPARISON', 'TUTORIAL']
         intent = parsed.get('intent', 'CONCEPTUAL').upper()
         if intent not in valid_intents: intent = 'CONCEPTUAL'
@@ -353,7 +347,6 @@ Return ONLY a valid JSON array of strings."""
         variations = json.loads(text)
         if not isinstance(variations, list): variations = []
         
-        # Always include original first
         rewritten = [query_to_expand] + variations[:num_variations]
         return {"rewritten_queries": rewritten, "current_node": "query_rewriter"}
         
@@ -362,7 +355,7 @@ Return ONLY a valid JSON array of strings."""
         return {"rewritten_queries": [parsed_query.raw_query], "current_node": "query_rewriter"}
 
 # ============================================================================
-# NODE 5: VECTOR SEARCH (PASS 1)
+# NODE 5: VECTOR SEARCH
 # ============================================================================
 
 async def vector_search_node(state: AgentState) -> Dict:
@@ -382,7 +375,6 @@ async def vector_search_node(state: AgentState) -> Dict:
         print(f"\n[PASS 1] Hierarchical Vector Search (top_k={top_k})")
         
         target_namespaces = [settings.vector_db.namespace, "papers_rag"]
-        
         filter_dict = {}
         if state.get("book_filter"):
             filter_dict["book_title"] = state.get("book_filter")
@@ -397,7 +389,6 @@ async def vector_search_node(state: AgentState) -> Dict:
                 namespaces=target_namespaces,
                 metadata_filter=filter_dict if filter_dict else None
             )
-            
             for res in results:
                 if res['id'] not in all_section_results:
                     all_section_results[res['id']] = res
@@ -441,7 +432,7 @@ async def vector_search_node(state: AgentState) -> Dict:
         return {"errors": [f"Vector search failed: {e}"], "current_node": "vector_search"}
 
 # ============================================================================
-# NODE 6: RERANKING (PASS 2)
+# NODE 6: RERANKING
 # ============================================================================
 
 async def reranking_node(state: AgentState) -> Dict:
@@ -492,7 +483,7 @@ async def reranking_node(state: AgentState) -> Dict:
         return {"errors": [f"Reranking failed: {e}"], "current_node": "reranking"}
 
 # ============================================================================
-# NODE 7: MULTI-HOP EXPANSION (PASS 3)
+# NODE 7: MULTI-HOP EXPANSION
 # ============================================================================
 
 async def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> AgentState:
@@ -565,7 +556,7 @@ async def multi_hop_expansion_node(state: AgentState, max_hops: int = 2) -> Agen
     return state
 
 # ============================================================================
-# NODE 8: CLUSTER EXPANSION (PASS 4)
+# NODE 8: CLUSTER EXPANSION
 # ============================================================================
 
 async def cluster_expansion_node(state: AgentState) -> AgentState:
@@ -580,8 +571,6 @@ async def cluster_expansion_node(state: AgentState) -> AgentState:
         chunk_ids = [rc.chunk.chunk_id for rc in state["reranked_chunks"][:10]]
         neighbor_ids = cluster_manager.get_cluster_neighbors(chunk_ids, max_neighbors=3)
         
-        # NOTE: Actual hydration skipped for performance in this demo, usually entails index.fetch
-        
         state["pipeline_snapshots"].append({
             "stage": "cluster_expansion",
             "chunk_count": len(state["reranked_chunks"]),
@@ -595,7 +584,7 @@ async def cluster_expansion_node(state: AgentState) -> AgentState:
     return state
 
 # ============================================================================
-# NODE 9: CONTEXT ASSEMBLY (PASS 5)
+# NODE 9: CONTEXT ASSEMBLY
 # ============================================================================
 
 async def context_assembly_node(state: AgentState) -> AgentState:
@@ -645,49 +634,20 @@ async def context_assembly_node(state: AgentState) -> AgentState:
     return state
 
 def _build_system_prompt(query: ParsedQuery) -> str:
-    base = """You are an expert programming tutor with deep knowledge of coding books and technical documentation.
+    base = """You are an expert programming tutor with deep knowledge of coding books.
 
 Your role:
 - Guide learners through programming concepts
 - Provide clear explanations with relevant examples from the books
-- Generate new and accurate code based on book examples and best practices
-- Explain important keywords present in the answer with sufficient length
-- Explain code snippets briefly but clearly
-- ALWAYS mention the book title when referencing examples or concepts
+- Generate new and accurate code based on book examples
+- ALWAYS mention the book title when referencing examples
 
-Always reference sources WITH BOOK TITLES and ensure code is correct and follows best practices."""
-    
-    intent_prompts = {
-        QueryIntent.CODE_REQUEST: "\n\n**Focus**: Provide working, well-commented code with explanations and cite the source book.",
-        QueryIntent.CONCEPTUAL: "\n\n**Focus**: Explain concepts clearly with examples and mention which books they come from.",
-        QueryIntent.COMPARISON: "\n\n**Focus**: Compare systematically with pros/cons, citing specific books.",
-        QueryIntent.DEBUGGING: "\n\n**Focus**: Identify issues and provide fixes with book references.",
-        QueryIntent.TUTORIAL: "\n\n**Focus**: Provide step-by-step guidance with book citations."
-    }
-    
-    complexity = {
-        "beginner": " Use simple language and basic examples.",
-        "intermediate": " Balance theory and practice.",
-        "advanced": " Include technical details and edge cases."
-    }
-    
-    return base + intent_prompts.get(query.intent, "") + complexity.get(query.complexity_hint, "")
+"""
+    return base
 
 # ============================================================================
-# NODE 10: LLM REASONING (STRUCTURED OUTPUT)
+# NODE 10: LLM REASONING (MANUAL JSON)
 # ============================================================================
-
-# 🔥 NEW: Structured Output Schema (Pydantic V2)
-class ResponseSchema(BaseModel):
-    answer: str = Field(
-        description="The detailed, comprehensive answer to the user's question, formatted in Markdown."
-    )
-    search_summary: str = Field(
-        description="A concise 1-2 sentence summary of the answer for search indexing. Include key technical terms."
-    )
-    confidence_score: float = Field(
-        description="A score between 0.0 and 1.0 indicating confidence in the answer."
-    )
 
 async def llm_reasoning_node(state: AgentState) -> Dict:
     parsed_query = state.get("parsed_query")
@@ -698,14 +658,13 @@ async def llm_reasoning_node(state: AgentState) -> Dict:
         return {"errors": ["No context"], "current_node": "llm_reasoning"}
         
     try:
-        print(f"\n[FINAL] LLM Reasoning (Structured Output)")
+        print(f"\n[FINAL] LLM Reasoning (Manual JSON Prompting)")
         
-        # 1. Bind the schema to the LLM (LangChain 0.2+ style)
-        structured_llm = llm.with_structured_output(ResponseSchema)
+        # 🔥 FIXED: Use explicit prompting instead of structured output API
+        # This makes it compatible with Gemma 3
         
-        # 2. Construct the prompt
         messages = [
-            SystemMessage(content=system_prompt),
+            SystemMessage(content=system_prompt + "\n\nIMPORTANT: You must return your answer in valid JSON format."),
             HumanMessage(content=f"""
 Context:
 {assembled_context}
@@ -713,28 +672,47 @@ Context:
 Question: 
 {parsed_query.raw_query}
 
-Provide your answer based ONLY on the context above.
+Provide your answer in the following JSON format ONLY:
+{{
+  "answer": "Your detailed Markdown response here...",
+  "search_summary": "A short 1-sentence summary of the topic",
+  "confidence_score": 0.95
+}}
 """)
         ]
         
-        # 3. Invoke
-        # The result will be an instance of ResponseSchema
-        result: ResponseSchema = await structured_llm.ainvoke(messages)
+        # Plain invoke (no strict schema binding)
+        response = await llm.ainvoke(messages)
+        content = response.content.strip()
         
-        # 4. Extract data
+        # Manually parse JSON
+        if content.startswith("```"):
+            content = content.replace("```json", "").replace("```", "").strip()
+            
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            # Fallback if model fails to output JSON (rare with Gemma 3 IT)
+            print("⚠️ Failed to parse JSON, using raw content")
+            data = {
+                "answer": content,
+                "search_summary": "Response generated",
+                "confidence_score": 0.5
+            }
+        
         sources = [c.chunk.chunk_id for c in state.get("reranked_chunks", [])[:3]]
         
         return {
             "response": LLMResponse(
-                answer=result.answer,
-                code_snippets=[], # Optional extraction logic
+                answer=data.get("answer", ""),
+                code_snippets=[], 
                 sources=sources,
-                confidence=result.confidence_score,
-                search_summary=result.search_summary # <--- The Zero-Latency Payload
+                confidence=float(data.get("confidence_score", 0.0)),
+                search_summary=data.get("search_summary", "") 
             ),
             "current_node": "llm_reasoning"
         }
         
     except Exception as e:
-        print(f"❌ Structured Output Failed: {e}")
+        print(f"❌ Generation Failed: {e}")
         return {"errors": [str(e)], "current_node": "llm_reasoning"}
