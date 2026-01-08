@@ -23,6 +23,7 @@ settings = get_config()
 _pc = None
 _index = None
 
+
 def get_pinecone_index():
     """Singleton accessor for Pinecone Index"""
     global _pc, _index
@@ -32,7 +33,9 @@ def get_pinecone_index():
         _index = _pc.Index(settings.vector_db.index_name)
     return _index
 
+
 # --- ASYNC STORE IMPLEMENTATION ---
+
 
 async def save_conversation_turn(
     session_id: str,
@@ -41,15 +44,19 @@ async def save_conversation_turn(
     assistant_response: str,
     search_summary: Optional[str] = None,
     sources_used: Optional[List[str]] = None,
-    **kwargs
+    **kwargs,
 ) -> Dict:
     """
     Saves a turn to Postgres (Content) and Pinecone (Index).
     """
     vector_id = f"{session_id}_turn{turn_number}"
-    
+
     # Fallback if no summary provided
-    payload_to_embed = search_summary if search_summary else f"Q: {user_query}\nA: {assistant_response[:200]}..."
+    payload_to_embed = (
+        search_summary
+        if search_summary
+        else f"Q: {user_query}\nA: {assistant_response[:200]}..."
+    )
 
     async with AsyncSessionLocal() as session:
         try:
@@ -66,10 +73,7 @@ async def save_conversation_turn(
                 user_query=user_query,
                 assistant_response=assistant_response,
                 search_payload=payload_to_embed,
-                raw_metadata={
-                    "sources_used": sources_used or [],
-                    **kwargs
-                }
+                raw_metadata={"sources_used": sources_used or [], **kwargs},
             )
             session.add(new_turn)
             await session.commit()
@@ -79,21 +83,23 @@ async def save_conversation_turn(
             try:
                 embedding = embed_query_for_search(payload_to_embed)
                 index = get_pinecone_index()
-                
+
                 index.upsert(
-                    vectors=[{
-                        "id": vector_id,
-                        "values": embedding,
-                        "metadata": {
-                            "session_id": session_id,
-                            "turn_number": int(turn_number),
-                            "timestamp": float(time.time())
+                    vectors=[
+                        {
+                            "id": vector_id,
+                            "values": embedding,
+                            "metadata": {
+                                "session_id": session_id,
+                                "turn_number": int(turn_number),
+                                "timestamp": float(time.time()),
+                            },
                         }
-                    }],
-                    namespace="conversations"
+                    ],
+                    namespace="conversations",
                 )
                 logger.info(f"✅ [Pinecone] Indexed {vector_id}")
-                
+
             except Exception as e:
                 # Non-blocking failure for vector index
                 logger.error(f"⚠️ [Pinecone] Indexing failed for {vector_id}: {e}")
@@ -104,6 +110,7 @@ async def save_conversation_turn(
             await session.rollback()
             logger.error(f"❌ [DB] Failed to save turn: {e}")
             return {"success": False, "error": str(e)}
+
 
 async def load_conversation(session_id: str, max_turns: int = 10) -> List[Dict]:
     """Load history directly from Postgres (Fast & Cheap)"""
@@ -116,30 +123,31 @@ async def load_conversation(session_id: str, max_turns: int = 10) -> List[Dict]:
             )
             result = await session.execute(stmt)
             turns = result.scalars().all()
-            
+
             history = []
             for t in turns[-max_turns:]:
                 # Safe metadata extraction
                 meta = t.raw_metadata or {}
-                history.append({
-                    "turn_number": t.turn_number,
-                    "user_query": t.user_query,
-                    "assistant_response": t.assistant_response,
-                    "timestamp": t.created_at.timestamp() if t.created_at else 0,
-                    "sources_used": meta.get("sources_used", []),
-                    "needs_retrieval": meta.get("needs_retrieval", True),
-                    "referenced_turn": meta.get("referenced_turn")
-                })
-            
+                history.append(
+                    {
+                        "turn_number": t.turn_number,
+                        "user_query": t.user_query,
+                        "assistant_response": t.assistant_response,
+                        "timestamp": t.created_at.timestamp() if t.created_at else 0,
+                        "sources_used": meta.get("sources_used", []),
+                        "needs_retrieval": meta.get("needs_retrieval", True),
+                        "referenced_turn": meta.get("referenced_turn"),
+                    }
+                )
+
             return history
         except Exception as e:
             logger.error(f"❌ Failed to load history: {e}")
             return []
 
+
 async def search_conversation_context(
-    session_id: str,
-    query: str,
-    top_k: int = 5
+    session_id: str, query: str, top_k: int = 5
 ) -> List[Dict]:
     """
     Hybrid Search:
@@ -150,20 +158,20 @@ async def search_conversation_context(
         # Step 1: Pinecone Search
         query_embedding = embed_query_for_search(query)
         index = get_pinecone_index()
-        
+
         results = index.query(
             vector=query_embedding,
             filter={"session_id": session_id},
             top_k=top_k,
-            namespace="conversations"
+            namespace="conversations",
         )
-        
+
         if not results.matches:
             return []
-            
+
         id_score_map = {m.id: m.score for m in results.matches}
         target_ids = list(id_score_map.keys())
-        
+
         if not target_ids:
             return []
 
@@ -172,18 +180,20 @@ async def search_conversation_context(
             stmt = select(ConversationTurn).where(ConversationTurn.id.in_(target_ids))
             db_results = await session.execute(stmt)
             turns = db_results.scalars().all()
-            
+
         # Step 3: Merge
         relevant_turns = []
         for t in turns:
-            relevant_turns.append({
-                "turn_number": t.turn_number,
-                "user_query": t.user_query,
-                "assistant_response": t.assistant_response,
-                "relevance_score": id_score_map.get(t.id, 0),
-                "timestamp": t.created_at.timestamp() if t.created_at else 0
-            })
-            
+            relevant_turns.append(
+                {
+                    "turn_number": t.turn_number,
+                    "user_query": t.user_query,
+                    "assistant_response": t.assistant_response,
+                    "relevance_score": id_score_map.get(t.id, 0),
+                    "timestamp": t.created_at.timestamp() if t.created_at else 0,
+                }
+            )
+
         relevant_turns.sort(key=lambda x: x["relevance_score"], reverse=True)
         return relevant_turns
 
@@ -191,74 +201,140 @@ async def search_conversation_context(
         logger.error(f"❌ Search failed: {e}")
         return []
 
+
 async def delete_session(session_id: str):
     """Clean up both DB and Vector Store"""
     async with AsyncSessionLocal() as session:
         try:
             # 1. DB Delete
             await session.execute(
-                delete(ConversationTurn).where(ConversationTurn.session_id == session_id)
+                delete(ConversationTurn).where(
+                    ConversationTurn.session_id == session_id
+                )
             )
             await session.commit()
-            
+
             # 2. Pinecone Delete (Best Effort)
             try:
                 index = get_pinecone_index()
-                index.delete(filter={"session_id": session_id}, namespace="conversations")
+                index.delete(
+                    filter={"session_id": session_id}, namespace="conversations"
+                )
             except Exception:
                 pass
-                
+
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-async def list_all_sessions(user_id: Optional[str] = None, limit: int = 50) -> List[Dict]:
-    """List sessions by aggregating turns in Postgres"""
+
+async def list_all_sessions(
+    user_id: Optional[str] = None, limit: int = 50
+) -> List[Dict]:
+    """List sessions by aggregating turns in Postgres with actual conversation content"""
     async with AsyncSessionLocal() as session:
         try:
-            # 🔥 UPDATED: Include min(created_at) to satisfy Pydantic models
+            # Get session metadata
             stmt = (
                 select(
                     ConversationTurn.session_id,
                     func.min(ConversationTurn.created_at).label("created_at"),
                     func.max(ConversationTurn.created_at).label("last_update"),
-                    func.count(ConversationTurn.id).label("message_count")
+                    func.count(ConversationTurn.id).label("message_count"),
                 )
                 .group_by(ConversationTurn.session_id)
                 .order_by(desc("last_update"))
                 .limit(limit)
             )
-            
+
             result = await session.execute(stmt)
             rows = result.all()
-            
+
             sessions = []
             for row in rows:
-                sessions.append({
-                    "session_id": row.session_id,
-                    "updated_at": row.last_update.timestamp() if row.last_update else 0,
-                    "created_at": row.created_at.timestamp() if row.created_at else 0,
-                    "message_count": row.message_count,
-                    "title": f"Session {row.session_id[:8]}...", # Simplified title
-                    "last_message": "View conversation details" # Placeholder for missing field
-                })
+                # Get first user query
+                first_query_stmt = (
+                    select(ConversationTurn.user_query)
+                    .where(ConversationTurn.session_id == row.session_id)
+                    .order_by(ConversationTurn.created_at.asc())
+                    .limit(1)
+                )
+                first_query_result = await session.execute(first_query_stmt)
+                first_query = first_query_result.scalar() or "Conversation"
+
+                # Get last assistant response
+                last_response_stmt = (
+                    select(ConversationTurn.assistant_response)
+                    .where(ConversationTurn.session_id == row.session_id)
+                    .order_by(ConversationTurn.created_at.desc())
+                    .limit(1)
+                )
+                last_response_result = await session.execute(last_response_stmt)
+                last_response = last_response_result.scalar() or "No response"
+
+                # CLEAN MARKDOWN SYMBOLS FROM LAST RESPONSE
+                clean_response = last_response
+                clean_response = clean_response.replace("**", "").replace(
+                    "*", ""
+                )  # Remove bold/italic
+                clean_response = (
+                    clean_response.replace("##", "").replace("#", "").strip()
+                )  # Remove headers
+                clean_response = clean_response.replace(
+                    "`", ""
+                ).strip()  # Remove code ticks
+                clean_response = (
+                    clean_response.replace("[", "")
+                    .replace("]", "")
+                    .replace("(", "")
+                    .replace(")", "")
+                    .strip()
+                )  # Remove links
+
+                # Truncate for display
+                title = (
+                    first_query[:60] + "..." if len(first_query) > 60 else first_query
+                )
+                last_message = (
+                    clean_response[:80] + "..."
+                    if len(clean_response) > 80
+                    else clean_response
+                )
+
+                sessions.append(
+                    {
+                        "session_id": row.session_id,
+                        "updated_at": (
+                            row.last_update.timestamp() if row.last_update else 0
+                        ),
+                        "created_at": (
+                            row.created_at.timestamp() if row.created_at else 0
+                        ),
+                        "message_count": row.message_count,
+                        "title": title,  # First user query
+                        "first_message": first_query,
+                        "last_message": last_message,  # Last assistant response preview (cleaned)
+                        "last_assistant_response": last_response,
+                    }
+                )
             return sessions
         except Exception as e:
             logger.error(f"❌ Failed to list sessions: {e}")
             return []
 
-async def search_across_sessions(query: str, user_id: Optional[str] = None, top_k: int = 10) -> List[Dict]:
+
+async def search_across_sessions(
+    query: str, user_id: Optional[str] = None, top_k: int = 10
+) -> List[Dict]:
     """Search Pinecone across all sessions, then hydrate from DB"""
     try:
         query_embedding = embed_query_for_search(query)
         index = get_pinecone_index()
-        
+
         results = index.query(
-            vector=query_embedding,
-            top_k=top_k,
-            namespace="conversations"
+            vector=query_embedding, top_k=top_k, namespace="conversations"
         )
-        
+
         if not results.matches:
             return []
 
@@ -272,24 +348,27 @@ async def search_across_sessions(query: str, user_id: Optional[str] = None, top_
             stmt = select(ConversationTurn).where(ConversationTurn.id.in_(target_ids))
             db_results = await session.execute(stmt)
             turns = db_results.scalars().all()
-            
+
         matches = []
         for t in turns:
-            matches.append({
-                "session_id": t.session_id,
-                "turn_number": t.turn_number,
-                "user_query": t.user_query,
-                "assistant_response": t.assistant_response,
-                "relevance_score": id_score_map.get(t.id, 0),
-                "timestamp": t.created_at.timestamp() if t.created_at else 0
-            })
-            
+            matches.append(
+                {
+                    "session_id": t.session_id,
+                    "turn_number": t.turn_number,
+                    "user_query": t.user_query,
+                    "assistant_response": t.assistant_response,
+                    "relevance_score": id_score_map.get(t.id, 0),
+                    "timestamp": t.created_at.timestamp() if t.created_at else 0,
+                }
+            )
+
         matches.sort(key=lambda x: x["relevance_score"], reverse=True)
         return matches
 
     except Exception as e:
         logger.error(f"❌ Cross-session search failed: {e}")
         return []
+
 
 def get_session_metadata(session_id: str) -> Optional[Dict]:
     """Metadata stub"""
