@@ -1,5 +1,5 @@
 """
-FastAPI Backend - Production-Ready RAG with Conversation Memory & Clerk Authentication
+FastAPI Backend - Production-Ready RAG with Conversation Memory, Clerk Auth & Redis Cache
 """
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Depends, BackgroundTasks
@@ -23,7 +23,10 @@ from uuid import uuid4
 from datetime import datetime
 from dotenv import load_dotenv
 
-# NEW: Import Configuration & Auth
+# NEW: Import Redis client
+from redis_client import redis_cache
+
+# Import Configuration & Auth
 from app_config import get_config
 from auth_utils import verify_clerk_token
 
@@ -64,17 +67,16 @@ async def lifespan(app: FastAPI):
     global query_graph_app
     
     loop = asyncio.get_running_loop()
-    # Note: We no longer have a single global tracker to initialize with a loop
-    # Trackers are created per request.
     
     query_graph_app = build_query_graph(enable_persistence=True)
     logger.info(f"🚀 RAG Book Bot API started successfully (Env: {settings.environment})")
+    logger.info(f"📦 Redis connected: {redis_cache.client.ping()}")
     
     yield
     
     logger.info("🛑 Application shutting down...")
 
-app = FastAPI(title="RAG Book Bot API", version="4.3.0", lifespan=lifespan)
+app = FastAPI(title="RAG Book Bot API", version="4.4.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -145,13 +147,14 @@ class IngestResponse(BaseModel):
 class BookInfo(BaseModel):
     title: str
     author: str
-    total_chunks: int
+    total_chunks: int = 0
     code_chunks: int = 0
     text_chunks: int = 0
     indexed_at: Optional[float] = None
 
 class BooksResponse(BaseModel):
     books: List[BookInfo]
+    source: str = "redis"  # NEW: Track data source
 
 class ConversationHistoryResponse(BaseModel):
     session_id: str
@@ -186,7 +189,8 @@ def parse_book_filename(filename: str) -> tuple[str, str]:
         author = "Unknown"
     return title, author
 
-def get_available_books() -> List[BookInfo]:
+def get_available_books_from_pinecone() -> List[BookInfo]:
+    """Fallback: Get books from Pinecone metadata namespace"""
     try:
         index = get_pinecone_index()
         metadata_namespace = settings.vector_db.metadata_namespace
@@ -213,14 +217,18 @@ def get_available_books() -> List[BookInfo]:
             return books_info
         return []
     except Exception as e:
-        print(f"❌ Error fetching books: {e}")
+        logger.error(f"❌ Error fetching books from Pinecone: {e}")
         return []
 
 def store_book_metadata(book_title: str, author: str, total_chunks: int, code_chunks: int = 0):
+    """Store metadata in both Pinecone AND Redis"""
     try:
+        # Store in Pinecone (existing logic)
         index = get_pinecone_index()
         metadata_namespace = settings.vector_db.metadata_namespace
         book_id = hashlib.md5(book_title.encode()).hexdigest()
+        indexed_at = time.time()
+        
         index.upsert(
             vectors=[{
                 "id": book_id,
@@ -231,13 +239,25 @@ def store_book_metadata(book_title: str, author: str, total_chunks: int, code_ch
                     "total_chunks": total_chunks,
                     "code_chunks": code_chunks,
                     "text_chunks": total_chunks - code_chunks,
-                    "indexed_at": time.time()
+                    "indexed_at": indexed_at
                 }
             }],
             namespace=metadata_namespace
         )
+        
+        # NEW: Store in Redis cache
+        redis_cache.add_book(
+            book_id=book_id,
+            book_name=book_title,
+            author=author,
+            total_chunks=total_chunks,
+            code_chunks=code_chunks,
+            indexed_at=indexed_at
+        )
+        logger.info(f"✅ Book metadata stored in Pinecone and Redis: {book_title}")
+        
     except Exception as e:
-        print(f"⚠️ Failed to store metadata: {e}")
+        logger.error(f"⚠️ Failed to store metadata: {e}")
 
 def format_chunk_detail(chunk, source: str) -> ChunkDetail:
     if hasattr(chunk, 'relevance_percentage') and chunk.relevance_percentage is not None and chunk.relevance_percentage > 0:
@@ -304,12 +324,47 @@ def convert_pinecone_to_conversation_turns(pinecone_turns: List[dict]) -> List[C
 
 @app.get("/")
 async def root():
-    return {"status": "online", "message": "RAG Book Bot API v4.3 - Secure & Async Fixes", "auth": "Clerk (Enabled)"}
+    return {
+        "status": "online", 
+        "message": "RAG Book Bot API v4.4 - With Redis Cache", 
+        "auth": "Clerk (Enabled)",
+        "cache": "Redis"
+    }
 
 @app.get("/books", response_model=BooksResponse)
 async def list_books():
-    books = get_available_books()
-    return BooksResponse(books=books)
+    """
+    NEW: Fetch books from Redis cache first, fallback to Pinecone if needed
+    """
+    try:
+        # Try Redis first
+        books = redis_cache.get_all_books()
+        
+        if books:
+            logger.info(f"📦 Served {len(books)} books from Redis cache")
+            return BooksResponse(books=books, source="redis")
+        
+        # Fallback to Pinecone if Redis is empty
+        logger.warning("⚠️ Redis cache empty, falling back to Pinecone")
+        books = get_available_books_from_pinecone()
+        
+        # Repopulate Redis cache
+        for book in books:
+            book_id = hashlib.md5(book.title.encode()).hexdigest()
+            redis_cache.add_book(
+                book_id=book_id,
+                book_name=book.title,
+                author=book.author,
+                total_chunks=book.total_chunks,
+                code_chunks=book.code_chunks,
+                indexed_at=book.indexed_at
+            )
+        
+        return BooksResponse(books=books, source="pinecone_fallback")
+        
+    except Exception as e:
+        logger.error(f"❌ Error fetching books: {e}")
+        return BooksResponse(books=[], source="error")
 
 @app.post("/query", response_model=QueryResponse)
 async def process_query(
@@ -474,6 +529,7 @@ def process_ingestion_task(task_id: str, temp_path: str, book_title: str, author
         # Run ingestion with task_id
         result = ingestor.ingest_book(pdf_path=temp_path, book_title=book_title, author=author, task_id=task_id)
         
+        # Store metadata in both Pinecone and Redis
         store_book_metadata(book_title, author, result.get('chunks', 0), result.get('code_chunks', 0))
         
         if os.path.exists(temp_path):
@@ -483,7 +539,6 @@ def process_ingestion_task(task_id: str, temp_path: str, book_title: str, author
         
     except Exception as e:
         logger.error(f"❌ Background ingestion failed: {e}")
-        # Ensure tracker reports failure to frontend
         tracker = get_tracker(task_id)
         if tracker:
             tracker.add_error(str(e))
@@ -491,7 +546,6 @@ def process_ingestion_task(task_id: str, temp_path: str, book_title: str, author
         if os.path.exists(temp_path):
             os.unlink(temp_path)
     finally:
-        # Cleanup tracker after delay to allow frontend to receive final message
         time.sleep(5)
         remove_tracker(task_id)
 
@@ -510,7 +564,6 @@ async def ingest_book(
     try:
         task_id = str(uuid4())
         
-        # Initialize a tracker for this specific task
         tracker = create_tracker(task_id)
         tracker.set_loop(asyncio.get_running_loop())
         
@@ -518,18 +571,15 @@ async def ingest_book(
         final_book_title = book_title or extracted_title
         final_author = author or extracted_author
         
-        # Create temp file
         fd, tmp_path = tempfile.mkstemp(suffix='.pdf')
         os.close(fd)
         
-        # Write content asynchronously
         with open(tmp_path, 'wb') as f:
             content = await file.read()
             f.write(content)
             
         logger.info(f"📥 File received: {final_book_title}. Handing off to background task {task_id}.")
 
-        # Add to background tasks
         background_tasks.add_task(
             process_ingestion_task, 
             task_id=task_id,
@@ -538,7 +588,6 @@ async def ingest_book(
             author=final_author
         )
         
-        # Return success with task_id for WebSocket connection
         return IngestResponse(success=True, result={"task_id": task_id, "message": "Ingestion started"})
         
     except Exception as e:
@@ -549,7 +598,6 @@ async def ingest_book(
 async def websocket_ingestion_progress(websocket: WebSocket, task_id: str):
     await websocket.accept()
     
-    # Get the specific tracker for this task
     tracker = get_tracker(task_id)
     if not tracker:
         await websocket.close(code=4004, reason="Task not found or expired")
@@ -568,8 +616,6 @@ async def websocket_ingestion_progress(websocket: WebSocket, task_id: str):
         except: pass
 
     tracker.on_progress(send_update)
-    
-    # Send initial state immediately
     await send_update(tracker.state)
     
     try:
@@ -622,7 +668,16 @@ async def search_sessions(query: str, limit: int = 10, user_claims: dict = Depen
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    redis_healthy = False
+    try:
+        redis_healthy = redis_cache.client.ping()
+    except:
+        pass
+    
+    return {
+        "status": "healthy",
+        "redis": "connected" if redis_healthy else "disconnected"
+    }
 
 if __name__ == "__main__":
     import uvicorn

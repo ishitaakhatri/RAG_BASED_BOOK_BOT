@@ -8,3 +8,5 @@ venv/etc/jupyter/nbconfig/notebook.d/pydeck.json
 /venv
 /venv
 /venv
+/venv311
+.env

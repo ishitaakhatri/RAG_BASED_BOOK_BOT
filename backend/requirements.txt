@@ -31,3 +31,8 @@ numpy>=1.26.0
 pyjwt>=2.8.0
 cryptography>=42.0.0
 tiktoken>=0.6.0
+
+#redis 
+redis==5.0.1
+
+

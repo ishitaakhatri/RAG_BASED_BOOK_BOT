@@ -120,6 +120,14 @@ export default function RAGBookBot() {
   useEffect(() => {
     fetchBooks();
     fetchSessions();
+    // Listen for books-updated event (from IngestionPage)
+    const handleBooksUpdated = () => {
+      fetchBooks();
+    };
+    window.addEventListener("books-updated", handleBooksUpdated);
+    return () => {
+      window.removeEventListener("books-updated", handleBooksUpdated);
+    };
   }, []);
 
   const shouldAutoScrollRef = useRef(true);
@@ -242,11 +250,13 @@ export default function RAGBookBot() {
     pdf.save(`chat_${currentSessionId || Date.now()}.pdf`);
   };
 
+  const [booksSource, setBooksSource] = useState("");
   const fetchBooks = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/books`);
       const data = await response.json();
       setBooks(data.books || []);
+      setBooksSource(data.source || "");
     } catch (error) {
       console.error("Failed to fetch books:", error);
     }
@@ -767,7 +777,7 @@ export default function RAGBookBot() {
             <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20 flex-1 flex flex-col min-h-0">
               <h3 className="text-lg font-semibold text-white mb-3 flex items-center flex-shrink-0">
                 <Library className="w-5 h-5 mr-2" />
-                Library{" "}
+                Library
                 <span className="ml-auto text-xs font-normal text-purple-300 bg-black/30 px-2 py-1 rounded">
                   {searchMode === "all"
                     ? "All"
@@ -775,6 +785,15 @@ export default function RAGBookBot() {
                     ? "Books"
                     : "Papers"}
                 </span>
+                {booksSource && (
+                  <span className={`ml-2 text-xs px-2 py-1 rounded font-semibold ${booksSource === "redis" ? "bg-green-700 text-green-200" : booksSource === "pinecone_fallback" ? "bg-yellow-700 text-yellow-200" : "bg-red-700 text-red-200"}`}>
+                    {booksSource === "redis"
+                      ? "Redis Cache"
+                      : booksSource === "pinecone_fallback"
+                      ? "Pinecone Fallback"
+                      : booksSource.charAt(0).toUpperCase() + booksSource.slice(1)}
+                  </span>
+                )}
               </h3>
               <div className="space-y-2 flex-1 flex flex-col min-h-0">
                 <div className="flex justify-center">

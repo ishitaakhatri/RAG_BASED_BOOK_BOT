@@ -194,6 +194,11 @@ export default function IngestionPage({ books, onUploadSuccess }) {
 
     addLog("🎉 All files in queue processed.", "success");
 
+    // Always refresh books list after upload
+    if (typeof window !== "undefined" && window.location) {
+      // If on main page, trigger reload via event
+      window.dispatchEvent(new Event("books-updated"));
+    }
     if (onUploadSuccess) {
       console.log("📚 Refreshing book list...");
       onUploadSuccess();
