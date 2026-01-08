@@ -50,7 +50,6 @@ const BACKEND_DEFAULTS = {
 };
 
 export default function RAGBookBot() {
-  // CLERK AUTH HOOK
   const { getToken, signOut } = useAuth();
 
   const [query, setQuery] = useState("");
@@ -95,7 +94,6 @@ export default function RAGBookBot() {
     "Please hold on, just a moment…",
   ];
 
-  // Helper to make authenticated requests
   const authFetch = async (endpoint, options = {}) => {
     const token = await getToken();
     const headers = {
@@ -161,7 +159,7 @@ export default function RAGBookBot() {
     const maxWidth = pageWidth - 2 * margin;
     let yPosition = 20;
 
-    pdf.setFillColor(139, 92, 246);
+    pdf.setFillColor(59, 130, 246);
     pdf.rect(0, 0, pageWidth, 30, "F");
     pdf.setTextColor(255, 255, 255);
     pdf.setFontSize(20);
@@ -190,7 +188,7 @@ export default function RAGBookBot() {
         yPosition = 20;
       }
       if (msg.role === "user") {
-        pdf.setFillColor(139, 92, 246);
+        pdf.setFillColor(59, 130, 246);
         pdf.roundedRect(margin, yPosition - 5, maxWidth, 8, 2, 2, "F");
         pdf.setTextColor(255, 255, 255);
         pdf.setFontSize(11);
@@ -211,7 +209,7 @@ export default function RAGBookBot() {
         });
         yPosition += 5;
       } else {
-        pdf.setFillColor(34, 197, 94);
+        pdf.setFillColor(16, 185, 129);
         pdf.roundedRect(margin, yPosition - 5, maxWidth, 8, 2, 2, "F");
         pdf.setTextColor(255, 255, 255);
         pdf.setFontSize(11);
@@ -275,7 +273,6 @@ export default function RAGBookBot() {
 
   const loadSession = async (sessionId) => {
     try {
-      // Use authFetch
       const response = await authFetch(`/conversation/${sessionId}`);
       const data = await response.json();
       const loadedMessages = [];
@@ -310,7 +307,6 @@ export default function RAGBookBot() {
     e.stopPropagation();
     if (!confirm("Are you sure you want to delete this conversation?")) return;
     try {
-      // Use authFetch with DELETE
       const response = await authFetch(`/conversation/${sessionId}`, {
         method: "DELETE",
       });
@@ -330,7 +326,6 @@ export default function RAGBookBot() {
     }
     setIsSearching(true);
     try {
-      // Use authFetch
       const response = await authFetch(
         `/search/sessions?query=${encodeURIComponent(searchQuery)}&limit=10`
       );
@@ -350,7 +345,6 @@ export default function RAGBookBot() {
     }
     if (currentSessionId) {
       try {
-        // Use authFetch
         await authFetch(
           `/cancel-query?session_id=${encodeURIComponent(currentSessionId)}`,
           { method: "POST" }
@@ -391,7 +385,7 @@ export default function RAGBookBot() {
     };
 
     try {
-      const token = await getToken(); // Get token explicitly for AbortSignal support
+      const token = await getToken();
       const response = await fetch(`${API_BASE_URL}/query`, {
         method: "POST",
         headers: {
@@ -452,6 +446,7 @@ export default function RAGBookBot() {
     setEditingMessageIndex(index);
     setEditingText(currentText);
   };
+  
   const handleCancelEdit = () => {
     setEditingMessageIndex(null);
     setEditingText("");
@@ -564,8 +559,8 @@ export default function RAGBookBot() {
       onClick={() => setSelectedBook(doc.title)}
       className={`w-full text-left px-3 py-2 rounded-lg transition-all truncate group ${
         selectedBook === doc.title
-          ? "bg-purple-600 text-white"
-          : "bg-white/5 text-purple-200 hover:bg-white/10"
+          ? "bg-blue-600 text-white shadow-md"
+          : "bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-blue-300"
       }`}
       title={`${doc.title} by ${doc.author}`}
     >
@@ -578,32 +573,33 @@ export default function RAGBookBot() {
   );
 
   return (
-    <div className="h-screen bg-slate-950 text-white relative overflow-hidden flex">
-      {/* Animated Background Elements - Matching Landing Page */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl animate-pulse" />
-        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-pink-600/20 rounded-full blur-3xl animate-pulse delay-1000" />
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-3xl" />
+    <div className="h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 text-gray-900 relative overflow-hidden flex">
+      {/* Subtle Background Elements */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-20 right-20 w-96 h-96 bg-blue-200/20 rounded-full blur-3xl" />
+        <div className="absolute bottom-20 left-20 w-96 h-96 bg-indigo-200/20 rounded-full blur-3xl" />
       </div>
+      
       {/* Grid Pattern Overlay */}
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:50px_50px]" />
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(99,102,241,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(99,102,241,0.03)_1px,transparent_1px)] bg-[size:64px_64px]" />
+      
       <div className="relative z-10 flex flex-1 w-full">
         {/* Sidebar */}
         <div
           className={`${
             showSessions ? "w-80" : "w-0"
-          } transition-all duration-300 bg-black/30 backdrop-blur-lg border-r border-white/10 overflow-hidden flex flex-col`}
+          } transition-all duration-300 bg-white border-r border-gray-200 overflow-hidden flex flex-col shadow-lg`}
         >
-          <div className="p-4 border-b border-white/10">
+          <div className="p-4 border-b border-gray-200">
             <button
               onClick={startNewChat}
-              className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all"
+              className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md"
             >
               <Plus className="w-5 h-5" />
               <span className="font-semibold">New Chat</span>
             </button>
           </div>
-          <div className="p-4 border-b border-white/10">
+          <div className="p-4 border-b border-gray-200">
             <div className="relative">
               <input
                 type="text"
@@ -611,55 +607,55 @@ export default function RAGBookBot() {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyPress={(e) => e.key === "Enter" && searchSessions()}
                 placeholder="Search conversations..."
-                className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-purple-300 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-300 rounded-lg text-gray-900 placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
-              <Search className="absolute left-3 top-2.5 w-4 h-4 text-purple-300" />
+              <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
               {searchQuery && (
                 <button
                   onClick={() => {
                     setSearchQuery("");
                     setSearchResults([]);
                   }}
-                  className="absolute right-3 top-2.5 text-purple-300 hover:text-white"
+                  className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-700"
                 >
                   <X className="w-4 h-4" />
                 </button>
               )}
             </div>
             {isSearching && (
-              <div className="mt-2 text-xs text-purple-300 flex items-center">
+              <div className="mt-2 text-xs text-blue-600 flex items-center">
                 <Loader className="w-3 h-3 animate-spin mr-2" />
                 Searching...
               </div>
             )}
           </div>
           <div
-            className="flex-1 overflow-y-scroll p-4 space-y-2 custom-scrollbar"
+            className="flex-1 overflow-y-scroll p-4 space-y-2"
             style={{ maxHeight: "980px" }}
           >
             {searchResults.length > 0 ? (
               <>
-                <div className="text-xs text-purple-300 mb-2">
+                <div className="text-xs text-gray-600 mb-2 font-medium">
                   {searchResults.length} results for "{searchQuery}"
                 </div>
                 {searchResults.map((result, idx) => (
                   <div
                     key={idx}
                     onClick={() => loadSession(result.session_id)}
-                    className="bg-white/5 hover:bg-white/10 rounded-lg p-3 cursor-pointer transition-all border border-white/10 hover:border-purple-400/50"
+                    className="bg-gray-50 hover:bg-blue-50 rounded-lg p-3 cursor-pointer transition-all border border-gray-200 hover:border-blue-300"
                   >
-                    <div className="text-sm text-white font-medium mb-1 truncate">
+                    <div className="text-sm text-gray-900 font-medium mb-1 truncate">
                       {result.user_query}
                     </div>
-                    <div className="text-xs text-purple-200 mb-2 line-clamp-2">
+                    <div className="text-xs text-gray-600 mb-2 line-clamp-2">
                       {result.assistant_response}
                     </div>
-                    <div className="flex items-center justify-between text-xs text-purple-300">
+                    <div className="flex items-center justify-between text-xs text-gray-500">
                       <span className="flex items-center">
                         <Clock className="w-3 h-3 mr-1" />
                         {formatTimestamp(result.timestamp)}
                       </span>
-                      <span className="text-green-400">
+                      <span className="text-green-600 font-medium">
                         {(result.relevance_score * 100).toFixed(0)}% match
                       </span>
                     </div>
@@ -669,8 +665,8 @@ export default function RAGBookBot() {
             ) : (
               <>
                 {currentSessionId && (
-                  <div className="mb-2 text-xs text-purple-300 font-semibold">
-                    CURRENT CHAT
+                  <div className="mb-2 text-xs text-gray-600 font-semibold uppercase tracking-wide">
+                    Current Chat
                   </div>
                 )}
                 {sessions.map((session, idx) => {
@@ -681,19 +677,19 @@ export default function RAGBookBot() {
                       onClick={() => loadSession(session.session_id)}
                       className={`rounded-lg p-3 cursor-pointer transition-all border ${
                         isCurrent
-                          ? "bg-purple-600/30 border-purple-400"
-                          : "bg-white/5 hover:bg-white/10 border-white/10 hover:border-purple-400/50"
+                          ? "bg-blue-50 border-blue-300 shadow-sm"
+                          : "bg-gray-50 hover:bg-blue-50 border-gray-200 hover:border-blue-300"
                       }`}
                     >
                       <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm text-white font-medium mb-1 truncate">
+                          <div className="text-sm text-gray-900 font-medium mb-1 truncate">
                             {session.title}
                           </div>
-                          <div className="text-xs text-purple-200 truncate mb-2">
+                          <div className="text-xs text-gray-600 truncate mb-2">
                             {session.last_message}
                           </div>
-                          <div className="flex items-center space-x-3 text-xs text-purple-300">
+                          <div className="flex items-center space-x-3 text-xs text-gray-500">
                             <span className="flex items-center">
                               <MessageCircle className="w-3 h-3 mr-1" />
                               {session.message_count}
@@ -706,7 +702,7 @@ export default function RAGBookBot() {
                         </div>
                         <button
                           onClick={(e) => deleteSession(session.session_id, e)}
-                          className="ml-2 p-1 hover:bg-red-500/20 rounded text-red-400 hover:text-red-300 transition-colors"
+                          className="ml-2 p-1 hover:bg-red-100 rounded text-red-500 hover:text-red-700 transition-colors"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -721,24 +717,24 @@ export default function RAGBookBot() {
 
         {/* Main Content */}
         <div className="flex-1 flex flex-col h-full min-h-0">
-          <header className="bg-black/20 backdrop-blur-lg border-b border-white/10">
+          <header className="bg-white border-b border-gray-200 shadow-sm">
             <div className="px-4 sm:px-6 lg:px-8 py-4">
               <div className="relative flex items-center">
                 <div className="flex items-center space-x-3">
                   <button
                     onClick={() => setShowSessions(!showSessions)}
-                    className="p-2 hover:bg-white/10 rounded-lg transition-all text-white"
+                    className="p-2 hover:bg-gray-100 rounded-lg transition-all text-gray-700"
                   >
                     <History className="w-5 h-5" />
                   </button>
-                  <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-2 rounded-lg">
+                  <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-2 rounded-lg shadow-md">
                     <Library className="w-8 h-8 text-white" />
                   </div>
                   <div>
-                    <h1 className="text-2xl font-bold text-white">
+                    <h1 className="text-2xl font-bold text-gray-900">
                       RAG Knowledge Bot
                     </h1>
-                    <p className="text-sm text-purple-200">
+                    <p className="text-sm text-gray-600">
                       {currentSessionId
                         ? "Conversation with Memory"
                         : "Start New Conversation"}
@@ -749,7 +745,7 @@ export default function RAGBookBot() {
                   <button
                     onClick={downloadChat}
                     disabled={messages.length === 0}
-                    className="flex-shrink-0 flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    className="flex-shrink-0 flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md"
                     title="Download chat history"
                   >
                     <Download className="w-4 h-4" />
@@ -757,14 +753,14 @@ export default function RAGBookBot() {
                   </button>
                   <button
                     onClick={() => navigate("/ingest")}
-                    className="flex-shrink-0 flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all"
+                    className="flex-shrink-0 flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md"
                   >
                     <Upload className="w-4 h-4" />
                     <span className="hidden sm:inline">Upload Doc</span>
                   </button>
                   <button
                     onClick={() => setShowSettings(!showSettings)}
-                    className="flex-shrink-0 p-2 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-all"
+                    className="flex-shrink-0 p-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all"
                   >
                     <Settings className="w-5 h-5" />
                   </button>
@@ -772,13 +768,14 @@ export default function RAGBookBot() {
               </div>
             </div>
           </header>
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-full min-h-0">
+          
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-full min-h-0 p-6">
             <div className="lg:col-span-1 space-y-4 overflow-hidden flex flex-col">
-              <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20 flex-1 flex flex-col min-h-0">
-                <h3 className="text-lg font-semibold text-white mb-3 flex items-center flex-shrink-0">
+              <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm flex-1 flex flex-col min-h-0">
+                <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center flex-shrink-0">
                   <Library className="w-5 h-5 mr-2" />
                   Library{" "}
-                  <span className="ml-auto text-xs font-normal text-purple-300 bg-black/30 px-2 py-1 rounded">
+                  <span className="ml-auto text-xs font-normal text-gray-600 bg-gray-100 px-2 py-1 rounded">
                     {searchMode === "all"
                       ? "All"
                       : searchMode === "books"
@@ -788,13 +785,13 @@ export default function RAGBookBot() {
                 </h3>
                 <div className="space-y-2 flex-1 flex flex-col min-h-0">
                   <div className="flex justify-center">
-                    <div className="bg-black/30 p-1 rounded-lg flex space-x-1">
+                    <div className="bg-gray-100 p-1 rounded-lg flex space-x-1">
                       <button
                         onClick={() => setSearchMode("all")}
                         className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${
                           searchMode === "all"
-                            ? "bg-purple-600 text-white shadow-lg"
-                            : "text-purple-300 hover:bg-white/5"
+                            ? "bg-blue-600 text-white shadow-md"
+                            : "text-gray-600 hover:bg-gray-200"
                         }`}
                       >
                         All Sources
@@ -803,8 +800,8 @@ export default function RAGBookBot() {
                         onClick={() => setSearchMode("books")}
                         className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
                           searchMode === "books"
-                            ? "bg-blue-600 text-white shadow-lg"
-                            : "text-purple-300 hover:bg-white/5"
+                            ? "bg-blue-600 text-white shadow-md"
+                            : "text-gray-600 hover:bg-gray-200"
                         }`}
                       >
                         <BookOpen className="w-3 h-3 mr-1" /> Books
@@ -813,20 +810,20 @@ export default function RAGBookBot() {
                         onClick={() => setSearchMode("papers")}
                         className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
                           searchMode === "papers"
-                            ? "bg-green-600 text-white shadow-lg"
-                            : "text-purple-300 hover:bg-white/5"
+                            ? "bg-green-600 text-white shadow-md"
+                            : "text-gray-600 hover:bg-gray-200"
                         }`}
                       >
                         <GraduationCap className="w-3 h-3 mr-1" /> Papers
                       </button>
                     </div>
                   </div>
-                  <div className="overflow-y-auto pr-2 space-y-3 custom-scrollbar flex-1">
+                  <div className="overflow-y-auto pr-2 space-y-3 flex-1">
                     {(searchMode === "all" || searchMode === "papers") &&
                       paperList.length > 0 && (
                         <div className="animate-fade-in">
                           {searchMode === "all" && (
-                            <div className="text-xs font-bold text-green-400 uppercase tracking-wider mb-1 mt-2 flex items-center">
+                            <div className="text-xs font-bold text-green-600 uppercase tracking-wider mb-1 mt-2 flex items-center">
                               <GraduationCap className="w-3 h-3 mr-1" />{" "}
                               Research Papers
                             </div>
@@ -835,7 +832,7 @@ export default function RAGBookBot() {
                             {paperList.map((doc, idx) =>
                               renderDocButton(
                                 doc,
-                                <FileText className="w-3 h-3 flex-shrink-0 text-green-300" />
+                                <FileText className="w-3 h-3 flex-shrink-0 text-green-600" />
                               )
                             )}
                           </div>
@@ -845,7 +842,7 @@ export default function RAGBookBot() {
                       bookList.length > 0 && (
                         <div className="animate-fade-in">
                           {searchMode === "all" && (
-                            <div className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-1 mt-4 flex items-center">
+                            <div className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1 mt-4 flex items-center">
                               <Book className="w-3 h-3 mr-1" /> Books
                             </div>
                           )}
@@ -853,49 +850,50 @@ export default function RAGBookBot() {
                             {bookList.map((doc, idx) =>
                               renderDocButton(
                                 doc,
-                                <Book className="w-3 h-3 flex-shrink-0 text-blue-300" />
+                                <Book className="w-3 h-3 flex-shrink-0 text-blue-600" />
                               )
                             )}
                           </div>
                         </div>
                       )}
                     {books.length === 0 && (
-                      <div className="text-center text-purple-300 text-sm py-8 opacity-70">
+                      <div className="text-center text-gray-500 text-sm py-8 opacity-70">
                         No documents found. <br /> Upload some!
                       </div>
                     )}
                   </div>
                 </div>
               </div>
-              <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20 flex-shrink-0">
-                <h3 className="text-lg font-semibold text-white mb-3">Stats</h3>
+              <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm flex-shrink-0">
+                <h3 className="text-lg font-semibold text-gray-900 mb-3">Stats</h3>
                 <div className="space-y-2 text-sm">
-                  <div className="flex justify-between text-purple-200">
+                  <div className="flex justify-between text-gray-600">
                     <span>Books:</span>
-                    <span className="font-semibold text-white">
+                    <span className="font-semibold text-gray-900">
                       {bookList.length}
                     </span>
                   </div>
-                  <div className="flex justify-between text-purple-200">
+                  <div className="flex justify-between text-gray-600">
                     <span>Papers:</span>
-                    <span className="font-semibold text-white">
+                    <span className="font-semibold text-gray-900">
                       {paperList.length}
                     </span>
                   </div>
-                  <div className="flex justify-between text-purple-200">
+                  <div className="flex justify-between text-gray-600">
                     <span>Sessions:</span>
-                    <span className="font-semibold text-white">
+                    <span className="font-semibold text-gray-900">
                       {sessions.length}
                     </span>
                   </div>
                 </div>
               </div>
             </div>
+            
             <div className="lg:col-span-3 space-y-4 flex flex-col h-full min-h-0">
               {showSettings && (
-                <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
+                <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
                   <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-lg font-semibold text-white flex items-center">
+                    <h3 className="text-lg font-semibold text-gray-900 flex items-center">
                       <Settings className="w-5 h-5 mr-2" />
                       Retrieval Settings
                     </h3>
@@ -904,19 +902,19 @@ export default function RAGBookBot() {
                         onClick={() =>
                           setUseBackendDefaults(!useBackendDefaults)
                         }
-                        className="flex items-center text-sm text-purple-200 hover:text-white transition-colors focus:outline-none"
+                        className="flex items-center text-sm text-gray-600 hover:text-gray-900 transition-colors focus:outline-none"
                       >
                         {useBackendDefaults ? (
-                          <ToggleRight className="w-8 h-8 text-purple-500 mr-2" />
+                          <ToggleRight className="w-8 h-8 text-blue-600 mr-2" />
                         ) : (
                           <ToggleLeft className="w-8 h-8 text-gray-400 mr-2" />
                         )}
                         <span>Use Server Defaults</span>
                       </button>
-                      <div className="w-px h-6 bg-white/20"></div>
+                      <div className="w-px h-6 bg-gray-300"></div>
                       <button
                         onClick={() => signOut()}
-                        className="flex items-center space-x-1 px-3 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-300 hover:text-red-200 rounded-lg transition-all border border-red-500/30 hover:border-red-500/50"
+                        className="flex items-center space-x-1 px-3 py-2 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 rounded-lg transition-all border border-red-200"
                         title="Logout"
                       >
                         <LogOut className="w-4 h-4" />
@@ -930,7 +928,7 @@ export default function RAGBookBot() {
                     }`}
                   >
                     <div>
-                      <label className="block text-sm font-medium text-purple-200 mb-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
                         Pass 1: Initial Candidates
                       </label>
                       <input
@@ -940,16 +938,16 @@ export default function RAGBookBot() {
                         aria-disabled={useBackendDefaults}
                         value={pass1K}
                         onChange={(e) => setPass1K(parseInt(e.target.value))}
-                        className={`w-full accent-purple-500 ${
+                        className={`w-full accent-blue-600 ${
                           useBackendDefaults ? "pointer-events-none" : ""
                         }`}
                       />
-                      <span className="text-white text-sm">
+                      <span className="text-gray-900 text-sm">
                         {pass1K} chunks
                       </span>
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-purple-200 mb-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
                         Pass 2: After Reranking
                       </label>
                       <input
@@ -959,36 +957,37 @@ export default function RAGBookBot() {
                         disabled={useBackendDefaults}
                         value={pass2K}
                         onChange={(e) => setPass2K(parseInt(e.target.value))}
-                        className={`w-full accent-purple-500 ${
+                        className={`w-full accent-blue-600 ${
                           useBackendDefaults ? "pointer-events-none" : ""
                         }`}
                       />
-                      <span className="text-white text-sm">
+                      <span className="text-gray-900 text-sm">
                         {pass2K} chunks
                       </span>
                     </div>
                   </div>
                 </div>
               )}
-              <div className="flex-1 bg-white/10 backdrop-blur-lg rounded-xl border border-white/20 flex flex-col min-h-0">
+              
+              <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col min-h-0">
                 <div
-                  className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4 chat-messages scrollbar-thin"
+                  className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4"
                   onScroll={handleUserScroll}
                 >
                   {messages.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-center">
-                      <Sparkles className="w-16 h-16 text-purple-400 mb-4" />
-                      <h3 className="text-2xl font-semibold text-white mb-2">
+                      <Sparkles className="w-16 h-16 text-blue-500 mb-4" />
+                      <h3 className="text-2xl font-semibold text-gray-900 mb-2">
                         {currentSessionId
                           ? "Continue Your Conversation"
                           : "Research & Coding Assistant"}
                       </h3>
-                      <p className="text-purple-200 max-w-md">
+                      <p className="text-gray-600 max-w-md">
                         {currentSessionId
                           ? "Ask follow-up questions - I remember our conversation!"
                           : "Ask questions about your uploaded books and research papers. I can distinguish between theoretical proofs and coding implementation!"}
                       </p>
-                      <p className="text-purple-300 text-sm mt-4">
+                      <p className="text-gray-500 text-sm mt-4">
                         💡 Tip: Use the toggle below to switch between Books
                         (Code) and Papers (Theory).
                       </p>
@@ -1012,79 +1011,50 @@ export default function RAGBookBot() {
                   )}
                   {loading && (
                     <div className="flex justify-start">
-                      <div className="max-w-2xl bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg px-6 py-4 text-white/80 flex items-center space-x-3">
-                        <span className="text-sm font-medium transition-all duration-300 ease-in-out">
-                          {loadingStages[currentLoadingStage]}
-                        </span>
-                        <div className="flex items-center space-x-1.5">
-                          <div
-                            className={`w-2 h-2 rounded-full transition-all duration-300 ${
-                              currentLoadingStage % 3 === 0
-                                ? "bg-blue-400 scale-100"
-                                : "bg-blue-400/40 scale-75"
-                            }`}
-                          />
-                          <div
-                            className={`w-2 h-2 rounded-full transition-all duration-300 ${
-                              currentLoadingStage % 3 === 1
-                                ? "bg-purple-400 scale-100"
-                                : "bg-purple-400/40 scale-75"
-                            }`}
-                          />
-                          <div
-                            className={`w-2 h-2 rounded-full transition-all duration-300 ${
-                              currentLoadingStage % 3 === 2
-                                ? "bg-pink-400 scale-100"
-                                : "bg-pink-400/40 scale-75"
-                            }`}
-                          />
+                      <div className="max-w-2xl bg-blue-50 border border-blue-200 rounded-2xl p-4 shadow-sm">
+                        <div className="flex items-center space-x-3">
+                          <Loader className="w-5 h-5 text-blue-600 animate-spin" />
+                          <span className="text-sm text-gray-700 font-medium">
+                            {loadingStages[currentLoadingStage]}
+                          </span>
                         </div>
                       </div>
                     </div>
                   )}
                   <div ref={messagesEndRef} />
                 </div>
-                <div className="p-4 border-t border-white/20 space-y-3">
-                  <div className="flex space-x-3">
+
+                {/* Input Area */}
+                <div className="p-4 border-t border-gray-200 bg-gray-50">
+                  <form onSubmit={handleQuerySubmit} className="flex space-x-3">
                     <input
                       type="text"
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
-                      onKeyPress={(e) =>
-                        e.key === "Enter" && !loading && handleQuerySubmit(e)
-                      }
-                      placeholder={
-                        currentSessionId
-                          ? "Ask a follow-up question..."
-                          : "Ask a question..."
-                      }
-                      className="flex-1 px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      placeholder="Ask a question about your documents..."
+                      className="flex-1 px-4 py-3 bg-white border border-gray-300 rounded-xl text-gray-900 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       disabled={loading}
                     />
-                    {!loading ? (
+                    {loading ? (
                       <button
-                        onClick={handleQuerySubmit}
-                        disabled={!query.trim()}
-                        className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                        type="button"
+                        onClick={handleInterruptQuery}
+                        className="px-6 py-3 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-all font-semibold shadow-md flex items-center space-x-2"
                       >
-                        <Search className="w-5 h-5" />
+                        <Pause className="w-5 h-5" />
+                        <span>Stop</span>
                       </button>
                     ) : (
                       <button
-                        onClick={handleInterruptQuery}
-                        className="p-3 bg-yellow-500 hover:bg-yellow-600 text-white rounded-none transition-all flex items-center justify-center shadow-lg hover:shadow-xl"
-                        title="Pause the query processing"
+                        type="submit"
+                        disabled={!query.trim()}
+                        className="px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-semibold shadow-md flex items-center space-x-2"
                       >
-                        <Pause className="w-5 h-5" />
+                        <MessageSquare className="w-5 h-5" />
+                        <span>Send</span>
                       </button>
                     )}
-                  </div>
-                  {currentSessionId && (
-                    <div className="mt-2 text-xs text-purple-300 flex items-center">
-                      <MessageCircle className="w-3 h-3 mr-1" />
-                      Session active - I remember our conversation
-                    </div>
-                  )}
+                  </form>
                 </div>
               </div>
             </div>
@@ -1095,7 +1065,8 @@ export default function RAGBookBot() {
   );
 }
 
-function MessageBubble({
+// MessageBubble Component (keeping original logic, updating styles)
+const MessageBubble = ({
   message,
   id,
   index,
@@ -1106,505 +1077,203 @@ function MessageBubble({
   onCancelEdit,
   onSubmitEdit,
   isLoading,
-}) {
+}) => {
   const [showSources, setShowSources] = useState(false);
-  const [showPipeline, setShowPipeline] = useState(false);
-  const [showRewrittenQueries, setShowRewrittenQueries] = useState(false);
+  const [showStats, setShowStats] = useState(false);
+  const [copiedId, setCopiedId] = useState(null);
+
+  const copyToClipboard = (text, id) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
 
   if (message.role === "user") {
-    if (isEditing) {
-      return (
-        <div id={id} className="flex justify-end">
-          <div className="max-w-2xl bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg px-4 py-3 w-full">
-            <div className="flex gap-2">
+    return (
+      <div className="flex justify-end" id={id}>
+        <div className="max-w-2xl">
+          {isEditing ? (
+            <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 shadow-sm">
               <textarea
                 value={editingText}
                 onChange={(e) => onEditChange(e.target.value)}
-                className="flex-1 px-3 py-2 bg-white/20 border border-white/30 rounded-lg text-white placeholder-gray-200 focus:outline-none focus:ring-2 focus:ring-white resize-none"
-                rows="3"
-                disabled={isLoading}
-                autoFocus
+                className="w-full p-3 bg-white border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 mb-3"
+                rows={4}
               />
+              <div className="flex space-x-2">
+                <button
+                  onClick={() => onSubmitEdit(index)}
+                  disabled={isLoading}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium transition-all"
+                >
+                  Resend
+                </button>
+                <button
+                  onClick={onCancelEdit}
+                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm font-medium transition-all"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
-            <div className="flex justify-end space-x-2 mt-3">
+          ) : (
+            <div className="group">
+              <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl px-5 py-3 shadow-md">
+                <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                  {message.content}
+                </p>
+              </div>
               <button
-                onClick={onCancelEdit}
-                disabled={isLoading}
-                className="px-3 py-1.5 bg-red-500/50 hover:bg-red-600 text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+                onClick={() => onEdit(index, message.content)}
+                className="mt-2 text-xs text-gray-500 hover:text-blue-600 transition-colors opacity-0 group-hover:opacity-100 flex items-center space-x-1"
               >
-                Cancel
-              </button>
-              <button
-                onClick={() => onSubmitEdit(index)}
-                disabled={isLoading}
-                className="px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
-              >
-                {isLoading ? "Submitting..." : "Submit"}
+                <Edit className="w-3 h-3" />
+                <span>Edit</span>
               </button>
             </div>
-          </div>
-        </div>
-      );
-    }
-    return (
-      <div id={id} className="flex justify-end group">
-        <div className="max-w-2xl bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg px-4 py-3 relative">
-          <p className="whitespace-pre-wrap">{message.content}</p>
-          <button
-            onClick={() => onEdit(index, message.content)}
-            className="absolute top-2 right-2 p-2 bg-white/20 hover:bg-white/30 text-white rounded opacity-0 group-hover:opacity-100 transition-all duration-200"
-            title="Edit this query"
-          >
-            <Edit className="w-4 h-4" />
-          </button>
+          )}
         </div>
       </div>
     );
   }
 
   return (
-    <div id={id} className="flex justify-start">
-      <div className="max-w-3xl bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg px-4 py-3 text-white w-full">
-        {message.error ? (
-          <div className="flex items-start space-x-2 text-red-300">
-            <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-            <p>{message.content}</p>
-          </div>
-        ) : (
-          <>
-            {message.answered_from_history && (
-              <div className="mb-3 bg-blue-500/20 border border-blue-400/50 rounded-lg p-3">
-                <div className="flex items-center space-x-2 text-blue-200">
-                  <History className="w-4 h-4" />
-                  <span className="text-sm font-semibold">
-                    Answered from conversation memory
-                  </span>
-                </div>
-                {message.resolved_query &&
-                  message.resolved_query !== message.content && (
-                    <div className="mt-2 text-xs text-blue-300">
-                      Resolved query: "{message.resolved_query}"
-                    </div>
-                  )}
-              </div>
-            )}
-
-            {message.rewritten_queries &&
-              message.rewritten_queries.length > 0 && (
-                <div className="mb-3">
-                  <button
-                    onClick={() =>
-                      setShowRewrittenQueries(!showRewrittenQueries)
-                    }
-                    className="flex items-center space-x-2 text-sm text-purple-300 hover:text-purple-100 transition-colors mb-2 w-full justify-between bg-white/5 p-3 rounded-lg border border-white/10 hover:border-purple-400/50"
-                  >
-                    <div className="flex items-center space-x-2">
-                      <Repeat className="w-4 h-4" />
-                      <span className="font-semibold">
-                        Query Expansion ({message.rewritten_queries.length}{" "}
-                        variations)
-                      </span>
-                    </div>
-                    {showRewrittenQueries ? (
-                      <ChevronUp className="w-4 h-4" />
-                    ) : (
-                      <ChevronDown className="w-4 h-4" />
-                    )}
-                  </button>
-                  {showRewrittenQueries && (
-                    <div className="bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-lg p-4 border border-blue-400/30">
-                      <div className="space-y-2">
-                        {message.rewritten_queries.map((query, idx) => (
-                          <div
-                            key={idx}
-                            className="flex items-start space-x-2 bg-white/5 rounded p-2 border border-white/10"
-                          >
-                            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-gradient-to-br from-blue-400 to-purple-400 flex items-center justify-center text-xs font-bold text-white">
-                              {idx + 1}
-                            </div>
-                            <p className="flex-1 text-sm text-gray-200 leading-relaxed">
-                              {query}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-            <div className="bg-white/5 rounded-lg p-4 mb-3 border border-white/10">
-              <div className="flex items-center space-x-2 mb-2">
-                <MessageSquare className="w-5 h-5 text-purple-300" />
-                <h4 className="font-semibold text-purple-100">Answer</h4>
-              </div>
-              <div className="prose prose-invert prose-p:leading-relaxed prose-pre:bg-black/50 max-w-none text-gray-100">
-                <ReactMarkdown
-                  components={{
-                    code: ({ node, inline, className, children, ...props }) => {
-                      const [copied, setCopied] = React.useState(false);
-                      const handleCopy = () => {
-                        const codeText = String(children).replace(/\n$/, "");
-                        navigator.clipboard.writeText(codeText);
-                        setCopied(true);
-                        setTimeout(() => setCopied(false), 2000);
-                      };
-                      if (inline)
-                        return (
-                          <code
-                            className="bg-white/10 rounded px-1 py-0.5"
-                            {...props}
-                          >
-                            {children}
-                          </code>
-                        );
-                      return (
-                        <div className="relative group my-4">
-                          <button
-                            onClick={handleCopy}
-                            className="absolute top-2 right-2 p-2 bg-purple-600/80 hover:bg-purple-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-200 z-10 flex items-center space-x-1.5 shadow-lg"
-                          >
-                            {copied ? (
-                              <>
-                                <CheckCircle className="w-4 h-4" />
-                                <span className="text-xs">Copied!</span>
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="w-4 h-4" />
-                                <span className="text-xs">Copy</span>
-                              </>
-                            )}
-                          </button>
-                          <code
-                            className="block bg-gradient-to-br from-gray-900 to-gray-800 p-4 pt-6 rounded-lg overflow-x-auto border border-white/10"
-                            {...props}
-                          >
-                            {children}
-                          </code>
-                        </div>
-                      );
-                    },
-                  }}
-                >
-                  {message.content}
-                </ReactMarkdown>
-              </div>
+    <div className="flex justify-start" id={id}>
+      <div className="max-w-3xl w-full">
+        <div className="bg-gray-50 border border-gray-200 rounded-2xl p-5 shadow-sm">
+          {message.answered_from_history && (
+            <div className="mb-3 flex items-center space-x-2 text-xs text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200 w-fit">
+              <History className="w-3.5 h-3.5" />
+              <span className="font-medium">Answered from conversation history</span>
             </div>
-
-            {message.pipeline_stages && message.pipeline_stages.length > 0 && (
-              <div className="mb-3">
-                <button
-                  onClick={() => setShowPipeline(!showPipeline)}
-                  className="flex items-center space-x-2 text-sm text-purple-300 hover:text-purple-100 transition-colors mb-2 w-full justify-between bg-white/5 p-3 rounded-lg border border-white/10 hover:border-purple-400/50"
-                >
-                  <div className="flex items-center space-x-2">
-                    <Layers className="w-4 h-4" />
-                    <span className="font-semibold">
-                      Retrieval Pipeline ({message.stats?.final || 0} final
-                      chunks)
-                    </span>
-                  </div>
-                  {showPipeline ? (
-                    <ChevronUp className="w-4 h-4" />
-                  ) : (
-                    <ChevronDown className="w-4 h-4" />
-                  )}
-                </button>
-                {showPipeline && (
-                  <EnhancedPipelineDisplay
-                    stages={message.pipeline_stages}
-                    stats={message.stats}
-                  />
-                )}
+          )}
+          
+          {message.resolved_query && message.resolved_query !== message.content && (
+            <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="text-xs font-semibold text-blue-700 mb-1 flex items-center">
+                <Repeat className="w-3.5 h-3.5 mr-1" />
+                Resolved Query
               </div>
-            )}
+              <p className="text-sm text-gray-700 italic">{message.resolved_query}</p>
+            </div>
+          )}
+
+          <div className="prose prose-sm max-w-none">
+            <ReactMarkdown className="text-gray-800 leading-relaxed">
+              {message.content}
+            </ReactMarkdown>
+          </div>
+
+          <div className="flex items-center space-x-3 mt-4 pt-3 border-t border-gray-200">
+            <button
+              onClick={() => copyToClipboard(message.content, id)}
+              className="text-xs text-gray-500 hover:text-blue-600 transition-colors flex items-center space-x-1"
+            >
+              {copiedId === id ? (
+                <>
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  <span>Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copy</span>
+                </>
+              )}
+            </button>
 
             {message.sources && message.sources.length > 0 && (
-              <div className="mt-3">
-                <button
-                  onClick={() => setShowSources(!showSources)}
-                  className="flex items-center space-x-2 text-sm text-purple-300 hover:text-purple-100 transition-all duration-300 w-full justify-between bg-gradient-to-r from-white/5 to-white/10 p-4 rounded-xl border border-white/10 hover:border-purple-400/50 hover:shadow-lg hover:shadow-purple-500/20 group"
-                >
-                  <div className="flex items-center space-x-2">
-                    <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-2 rounded-lg group-hover:scale-110 transition-transform duration-300">
-                      <Book className="w-4 h-4 text-white" />
-                    </div>
-                    <span className="font-semibold">
-                      {message.sources.length} Source
-                      {message.sources.length > 1 ? "s" : ""}
-                    </span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <span className="text-xs px-2 py-1 bg-purple-500/20 rounded-full border border-purple-400/30">
-                      References
-                    </span>
-                    {showSources ? (
-                      <ChevronUp className="w-4 h-4 group-hover:transform group-hover:-translate-y-1 transition-transform" />
-                    ) : (
-                      <ChevronDown className="w-4 h-4 group-hover:transform group-hover:translate-y-1 transition-transform" />
-                    )}
-                  </div>
-                </button>
-                {showSources && (
-                  <div className="mt-3 space-y-3">
-                    {message.sources.map((source, idx) => (
-                      <div
-                        key={idx}
-                        className="group bg-gradient-to-br from-purple-900/20 via-pink-900/10 to-purple-900/20 rounded-xl p-4 border border-purple-400/20 hover:border-purple-400/50 transition-all duration-300 hover:shadow-xl hover:shadow-purple-500/20 backdrop-blur-sm relative overflow-hidden"
-                      >
-                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-purple-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                        <div className="relative flex items-start space-x-4">
-                          <div className="bg-gradient-to-br from-purple-500 via-purple-600 to-pink-500 rounded-xl p-3 flex-shrink-0 shadow-lg shadow-purple-500/30 group-hover:scale-105 group-hover:rotate-3 transition-all duration-300">
-                            {source.book_title.includes("Paper") ||
-                            source.total_pages < 50 ? (
-                              <FileText className="w-5 h-5 text-white" />
-                            ) : (
-                              <Book className="w-5 h-5 text-white" />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-base font-bold text-white mb-2 leading-tight group-hover:text-purple-100 transition-colors">
-                              {source.book_title}
-                            </div>
-                            {source.author && (
-                              <div className="text-xs text-purple-300/80 mb-3 italic flex items-center space-x-1">
-                                <span className="w-1 h-1 bg-purple-400 rounded-full" />
-                                <span>by {source.author}</span>
-                              </div>
-                            )}
-                            <div className="inline-flex items-center bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-400/30 rounded-lg px-3 py-2 text-xs text-purple-200">
-                              <div className="w-1.5 h-1.5 bg-purple-400 rounded-full mr-2 animate-pulse" />
-                              <span className="font-medium">
-                                {source.chapter}
-                              </span>
-                            </div>
-                          </div>
-                          {source.relevance && (
-                            <div className="flex-shrink-0">
-                              <div className="relative">
-                                <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg blur opacity-50 group-hover:opacity-75 transition-opacity" />
-                                <div className="relative bg-gradient-to-r from-purple-600 to-pink-600 text-white text-sm font-bold px-4 py-2 rounded-lg border border-purple-400/30 shadow-lg">
-                                  {source.relevance.toFixed(0)}%
-                                </div>
-                              </div>
-                              <div className="text-[10px] text-purple-300 text-center mt-1">
-                                relevance
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function EnhancedPipelineDisplay({ stages, stats }) {
-  const [expandedStage, setExpandedStage] = useState(null);
-  const [showingChunks, setShowingChunks] = useState({});
-
-  const getStageColor = (index) =>
-    [
-      "from-blue-500 to-blue-600",
-      "from-purple-500 to-purple-600",
-      "from-pink-500 to-pink-600",
-      "from-green-500 to-green-600",
-      "from-yellow-500 to-yellow-600",
-      "from-indigo-500 to-indigo-600",
-    ][index % 6];
-  const getChangeIndicator = (currentCount, previousCount) => {
-    if (previousCount === null) return null;
-    const diff = currentCount - previousCount;
-    if (diff > 0)
-      return <span className="text-green-300 text-xs ml-2">(+{diff})</span>;
-    if (diff < 0)
-      return <span className="text-orange-300 text-xs ml-2">({diff})</span>;
-    return null;
-  };
-
-  return (
-    <div className="mt-3 space-y-3 bg-black/20 p-4 rounded-lg">
-      <div className="flex items-center justify-between text-sm bg-white/5 p-3 rounded border border-white/10">
-        <div className="flex items-center space-x-4">
-          <span className="text-white font-semibold">{stats?.pass1 || 0}</span>
-          <span className="text-purple-300">→</span>
-          <span className="text-white font-semibold">{stats?.pass2 || 0}</span>
-          <span className="text-purple-300">→</span>
-          <span className="text-white font-semibold">{stats?.pass3 || 0}</span>
-          <span className="text-purple-300">→</span>
-          <span className="text-green-300 font-semibold">
-            {stats?.final || 0}
-          </span>
-        </div>
-        {stats?.tokens && (
-          <span className="text-purple-200 text-xs">{stats.tokens} tokens</span>
-        )}
-      </div>
-      {stages.map((stage, index) => {
-        const previousCount = index > 0 ? stages[index - 1].chunk_count : null;
-        const isExpanded = expandedStage === index;
-        const hasChunks = stage.chunks && stage.chunks.length > 0;
-        return (
-          <div key={index} className="relative">
-            {index < stages.length - 1 && (
-              <div className="absolute left-6 top-full h-3 w-0.5 bg-purple-400/30" />
-            )}
-            <div className="bg-white/5 rounded-lg border border-white/10 overflow-hidden">
-              <div
-                className={`bg-gradient-to-r ${getStageColor(
-                  index
-                )} p-3 flex items-center justify-between cursor-pointer`}
-                onClick={() => setExpandedStage(isExpanded ? null : index)}
+              <button
+                onClick={() => setShowSources(!showSources)}
+                className="text-xs text-gray-500 hover:text-blue-600 transition-colors flex items-center space-x-1"
               >
-                <div className="flex items-center space-x-3">
-                  <div className="bg-white/20 rounded-full p-1.5">
-                    <Filter className="w-3 h-3 text-white" />
+                <FileText className="w-3.5 h-3.5" />
+                <span>{message.sources.length} Sources</span>
+                {showSources ? (
+                  <ChevronUp className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                )}
+              </button>
+            )}
+
+            {message.stats && (
+              <button
+                onClick={() => setShowStats(!showStats)}
+                className="text-xs text-gray-500 hover:text-blue-600 transition-colors flex items-center space-x-1"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Stats</span>
+                {showStats ? (
+                  <ChevronUp className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                )}
+              </button>
+            )}
+          </div>
+
+          {showSources && message.sources && message.sources.length > 0 && (
+            <div className="mt-4 space-y-2">
+              <h4 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                Sources
+              </h4>
+              {message.sources.map((source, idx) => (
+                <div
+                  key={idx}
+                  className="p-3 bg-white border border-gray-200 rounded-lg text-xs"
+                >
+                  <div className="font-semibold text-gray-900 mb-1">
+                    {source.title} - Page {source.page}
                   </div>
-                  <div>
-                    <div className="text-white font-semibold text-sm">
-                      {stage.stage_name}
-                    </div>
-                    <div className="text-white/80 text-xs">
-                      {stage.chunk_count} chunks total
-                      {getChangeIndicator(stage.chunk_count, previousCount)}
-                    </div>
+                  <div className="text-gray-600 leading-relaxed">
+                    {source.content.substring(0, 200)}...
                   </div>
+                  {source.score && (
+                    <div className="mt-2 text-gray-500">
+                      Relevance: {(source.score * 100).toFixed(1)}%
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center space-x-2">
-                  {hasChunks && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowingChunks((prev) => ({
-                          ...prev,
-                          [index]: !prev[index],
-                        }));
-                      }}
-                      className="px-2 py-1 bg-white/20 hover:bg-white/30 rounded text-xs text-white"
-                    >
-                      {showingChunks[index] ? "Hide" : "View"}
-                    </button>
-                  )}
-                  {isExpanded ? (
-                    <ChevronUp className="w-4 h-4 text-white" />
-                  ) : (
-                    <ChevronDown className="w-4 h-4 text-white" />
-                  )}
+              ))}
+            </div>
+          )}
+
+          {showStats && message.stats && (
+            <div className="mt-4 p-4 bg-white border border-gray-200 rounded-lg">
+              <h4 className="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-3">
+                Performance Stats
+              </h4>
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Total Time:</span>
+                  <span className="font-medium text-gray-900">
+                    {message.stats.total_time?.toFixed(2)}s
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Retrieval:</span>
+                  <span className="font-medium text-gray-900">
+                    {message.stats.retrieval_time?.toFixed(2)}s
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Generation:</span>
+                  <span className="font-medium text-gray-900">
+                    {message.stats.generation_time?.toFixed(2)}s
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Tokens:</span>
+                  <span className="font-medium text-gray-900">
+                    {message.stats.tokens_used}
+                  </span>
                 </div>
               </div>
-              {isExpanded && (
-                <div className="p-3 bg-black/20 text-xs text-purple-200">
-                  {index === 0 &&
-                    "Broad semantic search using vector similarity with query expansion."}
-                  {index === 1 &&
-                    "Precision ranking with cross-encoder to select most relevant."}
-                  {index === 2 &&
-                    "Intelligent expansion following related concepts."}
-                  {index === 3 &&
-                    "Cluster-based expansion to find semantically related chunks."}
-                  {index === 4 &&
-                    "Final context assembly and compression for LLM input."}
-                  {!stage.stage_name.includes("Pass") &&
-                    "Pipeline stage processing."}
-                </div>
-              )}
-              {showingChunks[index] && hasChunks && (
-                <div className="p-3 bg-black/30 max-h-64 overflow-y-auto space-y-2">
-                  {stage.chunks.slice(0, 5).map((chunk, i) => (
-                    <div key={i} className="bg-white/5 rounded p-2 text-xs">
-                      <div className="font-semibold text-white mb-1 flex items-center justify-between">
-                        <span>{chunk.book_title}</span>
-                        <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] ${
-                            chunk.type === "code"
-                              ? "bg-green-500/30 text-green-200"
-                              : "bg-blue-500/30 text-blue-200"
-                          }`}
-                        >
-                          {chunk.type}
-                        </span>
-                      </div>
-                      <div className="text-purple-300 text-[11px] mb-1">
-                        {chunk.chapter} • {chunk.relevance?.toFixed(0)}%
-                        relevant
-                      </div>
-                      <div className="text-gray-300 text-[10px] bg-black/30 p-1 rounded">
-                        {chunk.content_preview?.substring(0, 100)}...
-                      </div>
-                    </div>
-                  ))}
-                  {stage.chunks.length > 5 && (
-                    <div className="text-center text-purple-300 text-xs">
-                      + {stage.chunks.length - 5} more chunks
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
-          </div>
-        );
-      })}
+          )}
+        </div>
+      </div>
     </div>
   );
-}
-
-<style>
-  {`
-input[type="range"]::-webkit-slider-runnable-track {
-  height: 6px;
-  background: linear-gradient(to right, #8b5cf6, #ec4899);
-  border-radius: 3px;
-}
-input[type="range"]::-webkit-slider-thumb {
-  width: 18px;
-  height: 18px;
-  background: #fff;
-  border: 2px solid #8b5cf6;
-  border-radius: 50%;
-  margin-top: -6px;
-  cursor: pointer;
-  box-shadow: 0 0 2px #8b5cf6;
-}
-input[type="range"]:disabled::-webkit-slider-thumb {
-  background: #e5e7eb;
-  border-color: #a78bfa;
-}
-input[type="range"]:focus::-webkit-slider-thumb {
-  outline: 2px solid #8b5cf6;
-}
-input[type="range"]::-moz-range-track {
-  height: 6px;
-  background: linear-gradient(to right, #8b5cf6, #ec4899);
-  border-radius: 3px;
-}
-input[type="range"]::-moz-range-thumb {
-  width: 18px;
-  height: 18px;
-  background: #fff;
-  border: 2px solid #8b5cf6;
-  border-radius: 50%;
-  cursor: pointer;
-}
-input[type="range"]:disabled::-moz-range-thumb {
-  background: #e5e7eb;
-  border-color: #a78bfa;
-}
-input[type="range"]::-ms-fill-lower {
-  background: #8b5cf6;
-}
-input[type="range"]::-ms-fill-upper {
-  background: #ec4899;
-}
-input[type="range"] {
-  background: transparent;
-}
-`}
-</style>;
+};
