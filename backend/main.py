@@ -1,8 +1,9 @@
+
 """
 FastAPI Backend - Production-Ready RAG with Conversation Memory & Clerk Authentication
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Depends, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
@@ -16,6 +17,9 @@ import time
 import hashlib
 from uuid import uuid4
 from dotenv import load_dotenv
+from celery.result import AsyncResult
+
+# ...existing code...
 
 # Redis client
 import redis
@@ -518,9 +522,12 @@ def process_ingestion_task(task_id: str, temp_path: str, book_title: str, author
         time.sleep(5)
         remove_tracker(task_id)
 
+
+# --- Celery integration ---
+from celery_worker import celery_app
+
 @app.post("/ingest", response_model=IngestResponse)
 async def ingest_book(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     book_title: Optional[str] = None,
     author: Optional[str] = None,
@@ -528,42 +535,35 @@ async def ingest_book(
 ):
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files supported")
-    
+
     tmp_path = None
     try:
-        task_id = str(uuid4())
-        
-        # Initialize a tracker for this specific task
-        tracker = create_tracker(task_id)
-        tracker.set_loop(asyncio.get_running_loop())
-        
         extracted_title, extracted_author = parse_book_filename(file.filename)
         final_book_title = book_title or extracted_title
         final_author = author or extracted_author
-        
+
         # Create temp file
         fd, tmp_path = tempfile.mkstemp(suffix='.pdf')
         os.close(fd)
-        
+
         # Write content asynchronously
         with open(tmp_path, 'wb') as f:
             content = await file.read()
             f.write(content)
-            
-        logger.info(f"📥 File received: {final_book_title}. Handing off to background task {task_id}.")
 
-        # Add to background tasks
-        background_tasks.add_task(
-            process_ingestion_task, 
-            task_id=task_id,
-            temp_path=tmp_path, 
-            book_title=final_book_title, 
-            author=final_author
+        # Enqueue Celery ingestion task
+        task = celery_app.send_task(
+            'celery_worker.ingest_book_task',
+            args=[{
+                'temp_path': tmp_path,
+                'book_title': final_book_title,
+                'author': final_author
+            }]
         )
-        
-        # Return success with task_id for WebSocket connection
-        return IngestResponse(success=True, result={"task_id": task_id, "message": "Ingestion started"})
-        
+
+        logger.info(f"📥 File received: {final_book_title}. Enqueued Celery task {task.id}.")
+        return IngestResponse(success=True, result={"task_id": task.id, "message": "Ingestion started"})
+
     except Exception as e:
         if tmp_path and os.path.exists(tmp_path): os.unlink(tmp_path)
         return IngestResponse(success=False, error=str(e))
