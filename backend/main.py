@@ -17,6 +17,9 @@ import hashlib
 from uuid import uuid4
 from dotenv import load_dotenv
 
+# Redis client
+import redis
+
 from app_config import get_config
 from auth_utils import verify_clerk_token
 
@@ -25,6 +28,11 @@ from rag_based_book_bot.db import init_db
 
 load_dotenv()
 settings = get_config()
+
+# Redis connection (default localhost:6379 for local dev, 'redis' for Docker)
+redis_host = os.getenv('REDIS_HOST') or ('localhost' if os.getenv('ENV', 'local') == 'local' else 'redis')
+redis_port = int(os.getenv('REDIS_PORT', 6379))
+redis_client = redis.Redis(host=redis_host, port=redis_port, db=0, decode_responses=True)
 
 logger = logging.getLogger("main")
 logger.setLevel(settings.log_level)
@@ -187,7 +195,14 @@ def parse_book_filename(filename: str) -> tuple[str, str]:
 
 def get_available_books() -> List[BookInfo]:
     try:
-        # 🔥 UPDATED: Use Pinecone class from nodes.py or re-instantiate
+        # Try Redis cache first
+        cached_books = redis_client.get('books_metadata')
+        if cached_books:
+            import json
+            books_list = json.loads(cached_books)
+            return [BookInfo(**b) for b in books_list]
+
+        # If not cached, fetch from Pinecone
         index = get_pinecone_index()
         metadata_namespace = settings.vector_db.metadata_namespace
         results = index.query(
@@ -210,6 +225,9 @@ def get_available_books() -> List[BookInfo]:
                 ))
         if books_info:
             books_info.sort(key=lambda x: x.indexed_at or 0, reverse=True)
+            # Cache in Redis for 10 minutes
+            import json
+            redis_client.setex('books_metadata', 600, json.dumps([b.dict() for b in books_info]))
             return books_info
         return []
     except Exception as e:
@@ -236,6 +254,8 @@ def store_book_metadata(book_title: str, author: str, total_chunks: int, code_ch
             }],
             namespace=metadata_namespace
         )
+        # Invalidate Redis cache
+        redis_client.delete('books_metadata')
     except Exception as e:
         print(f"⚠️ Failed to store metadata: {e}")
 
