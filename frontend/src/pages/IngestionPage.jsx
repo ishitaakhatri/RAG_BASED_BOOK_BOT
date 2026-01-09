@@ -614,7 +614,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
               {/* LEFT SIDEBAR */}
               <div className="lg:col-span-1 space-y-6">
-                <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
+                <div className="bg-gray-50 rounded-xl p-6 border border-gray-200 shadow-sm">
                   <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
                     <Library className="w-5 h-5 mr-2" />
                     Library
@@ -774,7 +774,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
 
               {/* RIGHT SIDE - Upload Form */}
               <div className="lg:col-span-3 space-y-6">
-                <div className="bg-white rounded-xl p-8 border border-gray-200 shadow-sm">
+                <div className="bg-gray-50 rounded-xl p-8 border border-gray-200 shadow-sm">
                   <h2 className="text-2xl font-bold text-gray-900 mb-2">
                     Upload PDFs
                   </h2>
@@ -1059,8 +1059,8 @@ export default function IngestionPage({ books, onUploadSuccess }) {
 
                     {/* Logs Section */}
                     {logs.length > 0 && (
-                      <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-                        <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                      <div className="bg-white rounded-xl border-2 border-blue-400 shadow-lg">
+                        <div className="flex items-center justify-between p-4 border-b border-blue-200">
                           <h4 className="text-sm font-semibold text-gray-900 flex items-center">
                             <FileText className="w-4 h-4 mr-2" />
                             Processing Logs ({logs.length})
@@ -1083,7 +1083,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                           </button>
                         </div>
                         {showLogs && (
-                          <div className="p-4 max-h-80 overflow-y-auto bg-gray-50 font-mono text-xs space-y-1 terminal-glow">
+                          <div className="p-4 max-h-80 overflow-y-auto bg-blue-50 font-mono text-xs space-y-1 terminal-glow border-t border-blue-100">
                             {renderedLogs}
                             <div ref={logsEndRef} />
                           </div>

@@ -560,7 +560,7 @@ export default function RAGBookBot() {
       className={`w-full text-left px-3 py-2 rounded-lg transition-all truncate group ${
         selectedBook === doc.title
           ? "bg-blue-600 text-white shadow-md"
-          : "bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-blue-300"
+          : "bg-blue-50 border border-blue-100 text-gray-700 hover:bg-blue-100 hover:border-blue-300"
       }`}
       title={`${doc.title} by ${doc.author}`}
     >
@@ -588,7 +588,7 @@ export default function RAGBookBot() {
         <div
           className={`${
             showSessions ? "w-80" : "w-0"
-          } transition-all duration-300 bg-white border-r border-gray-200 overflow-hidden flex flex-col shadow-lg`}
+          } transition-all duration-300 bg-blue-50 border-r border-blue-100 overflow-hidden flex flex-col shadow-lg`}
         >
           <div className="p-4 border-b border-gray-200">
             <button
@@ -1032,7 +1032,7 @@ export default function RAGBookBot() {
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
                       placeholder="Ask a question about your documents..."
-                      className="flex-1 px-4 py-3 bg-white border border-gray-300 rounded-xl text-gray-900 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      className="flex-1 px-4 py-3 bg-white border-2 border-blue-400 rounded-xl text-gray-900 placeholder-gray-500 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 shadow-lg"
                       disabled={loading}
                     />
                     {loading ? (
