@@ -19,11 +19,12 @@ import {
 } from "lucide-react";
 
 // Determine the correct protocol (ws or wss) based on the current page
-const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 
 // Dynamically set the URL to match the current domain/IP
 // This works for both localhost AND your EC2 IP automatically
 const WS_URL = `${protocol}//${window.location.host}/api/ws/ingest`;
+// const WS_URL = "wss://triecious-shavonne-semidivisive.ngrok-free.dev/ws/ingest";
 
 // For the API URL, we can use a relative path so Nginx proxies it
 const API_BASE_URL = "/api";
@@ -257,33 +258,35 @@ export default function IngestionPage({ books, onUploadSuccess }) {
 
       if (data.success) {
         // --- CHANGED LOGIC START ---
-        
+
         // 1. Get the task ID from the backend
         const taskId = data.result?.task_id;
 
         if (taskId) {
-            addLog(`✅ Upload complete. Tracking Task ID: ${taskId}`, "success");
-            
-            // 2. Update status to show we are waiting for processing
-            setUploadProgress({
-                status: "processing", // Not success yet!
-                message: "File uploaded. Starting processing...",
-                percentage: 10,
-            });
-            
-            // 3. Connect to WebSocket with the specific Task ID
-            if (isIngestingRef.current) {
-                await connectWebSocket(taskId);
-            }
-        } else {
-            // Fallback if no task_id (shouldn't happen with updated backend)
-            addLog("⚠️ No task ID returned. Assuming immediate completion.", "warning");
-            finishSequenceStarted.current = true;
-            proceedToNextFile();
-        }
-        
-        // --- CHANGED LOGIC END ---
+          addLog(`✅ Upload complete. Tracking Task ID: ${taskId}`, "success");
 
+          // 2. Update status to show we are waiting for processing
+          setUploadProgress({
+            status: "processing", // Not success yet!
+            message: "File uploaded. Starting processing...",
+            percentage: 10,
+          });
+
+          // 3. Connect to WebSocket with the specific Task ID
+          if (isIngestingRef.current) {
+            await connectWebSocket(taskId);
+          }
+        } else {
+          // Fallback if no task_id (shouldn't happen with updated backend)
+          addLog(
+            "⚠️ No task ID returned. Assuming immediate completion.",
+            "warning"
+          );
+          finishSequenceStarted.current = true;
+          proceedToNextFile();
+        }
+
+        // --- CHANGED LOGIC END ---
       } else {
         throw new Error(data.error || "Unknown error");
       }
@@ -308,14 +311,14 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     return new Promise((resolve, reject) => {
       try {
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            // If already connected, close it to switch to new task
-            wsRef.current.close();
+          // If already connected, close it to switch to new task
+          wsRef.current.close();
         }
 
         // --- UPDATED URL CONSTRUCTION ---
         // Append the task_id to the URL: /api/ws/ingest/{taskId}
         const wsUrlWithId = `${WS_URL}/${taskId}`;
-        
+
         wsRef.current = new WebSocket(wsUrlWithId);
 
         wsRef.current.onopen = () => {
@@ -352,11 +355,10 @@ export default function IngestionPage({ books, onUploadSuccess }) {
           console.error("WebSocket error:", error);
           reject(error);
         };
-        
-        wsRef.current.onclose = () => {
-            console.log("WebSocket connection closed");
-        };
 
+        wsRef.current.onclose = () => {
+          console.log("WebSocket connection closed");
+        };
       } catch (error) {
         reject(error);
       }

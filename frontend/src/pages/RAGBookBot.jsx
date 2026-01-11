@@ -41,6 +41,7 @@ import {
 import ReactMarkdown from "react-markdown";
 
 const API_BASE_URL = "http://localhost:8000";
+// const API_BASE_URL = "https://triecious-shavonne-semidivisive.ngrok-free.dev";
 
 const BACKEND_DEFAULTS = {
   pass1K: 50,
