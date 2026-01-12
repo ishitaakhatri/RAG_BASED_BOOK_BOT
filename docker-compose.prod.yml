@@ -9,6 +9,23 @@ services:
     depends_on:
       - grobid
 
+  redis:
+    image: redis:7-alpine
+    container_name: rag_bot_redis
+    restart: always
+    ports:
+      - "6379:6379"
+
+  celery_worker:
+    build: ./backend
+    container_name: rag_bot_celery_worker
+    command: ["celery", "-A", "celery_worker.celery_app", "worker", "--loglevel=info"]
+    depends_on:
+      - redis
+      - grobid
+    env_file: ./backend/.env
+    restart: always
+
   grobid:
     image: lfoppiano/grobid:0.8.0
     container_name: rag_bot_grobid

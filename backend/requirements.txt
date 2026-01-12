@@ -35,3 +35,5 @@ tiktoken>=0.6.0
 asyncpg>=0.29.0
 sqlalchemy>=2.0.30
 greenlet>=3.0.3
+celery>=5.3.0
+redis>=5.0.0

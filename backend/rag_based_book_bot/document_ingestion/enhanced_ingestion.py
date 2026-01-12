@@ -39,6 +39,32 @@ from rag_based_book_bot.memory.embedding_utils import get_embedding_model
 from app_config import get_config
 settings = get_config()
 
+# Celery task import
+try:
+    from celery_worker import celery_app
+except ImportError:
+    from celery_worker import celery_app
+
+# Celery ingestion task
+@celery_app.task
+def run_ingestion_task(file_path, config_dict=None):
+    """
+    Celery task to run ingestion asynchronously.
+    Args:
+        file_path (str): Path to the file to ingest.
+        config_dict (dict, optional): IngestorConfig as dict.
+    Returns:
+        str: Success message or error.
+    """
+    try:
+        config = IngestorConfig(**config_dict) if config_dict else None
+        ingestor = SemanticBookIngestor(config)
+        # Example: you may need to adapt this to your actual ingestion method
+        ingestor.ingest(file_path)
+        return f"Ingestion completed for {file_path}"
+    except Exception as e:
+        return f"Ingestion failed for {file_path}: {str(e)}"
+
 PINECONE_INDEX = settings.vector_db.index_name
 DEFAULT_NAMESPACE = settings.vector_db.namespace
 EMBEDDING_MODEL = settings.vector_db.embedding_model

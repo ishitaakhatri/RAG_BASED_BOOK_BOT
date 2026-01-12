@@ -32,7 +32,8 @@ logger.propagate = True
 
 from rag_based_book_bot.document_ingestion.enhanced_ingestion import (
     EnhancedBookIngestorPaddle,
-    IngestorConfig
+    IngestorConfig,
+    run_ingestion_task
 )
 from rag_based_book_bot.document_ingestion.progress_tracker import (
     create_tracker, get_tracker, remove_tracker
@@ -460,47 +461,20 @@ async def cancel_query(session_id: str = Query(...), user_claims: dict = Depends
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-# --- BACKGROUND INGESTION TASK ---
-def process_ingestion_task(task_id: str, temp_path: str, book_title: str, author: str):
-    """Background task to handle ingestion without blocking the HTTP request"""
-    try:
-        logger.info(f"🧵 Starting background ingestion for {book_title} (Task: {task_id})")
-        config = IngestorConfig(
-            similarity_threshold=settings.ingestion.similarity_threshold,
-            min_chunk_size=settings.ingestion.min_chunk_size,
-            max_chunk_size=settings.ingestion.max_chunk_size,
-            use_grobid=settings.ingestion.use_grobid,
-            debug=False
-        )
-        ingestor = EnhancedBookIngestorPaddle(config=config)
-        
-        # Run ingestion with task_id
-        result = ingestor.ingest_book(pdf_path=temp_path, book_title=book_title, author=author, task_id=task_id)
-        
-        store_book_metadata(book_title, author, result.get('chunks', 0), result.get('code_chunks', 0))
-        
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
-            
-        logger.info(f"✅ Background ingestion finished for {book_title}")
-        
-    except Exception as e:
-        logger.error(f"❌ Background ingestion failed: {e}")
-        # Ensure tracker reports failure to frontend
-        tracker = get_tracker(task_id)
-        if tracker:
-            tracker.add_error(str(e))
-            tracker.finish(success=False)
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
-    finally:
-        # Cleanup tracker after delay to allow frontend to receive final message
-        time.sleep(5)
-        remove_tracker(task_id)
+
+# --- CELERY INGESTION TASK LAUNCHER ---
+def launch_celery_ingestion_task(tmp_path: str, book_title: str, author: str, config: IngestorConfig = None):
+    """
+    Launch ingestion as a Celery job.
+    """
+    config_dict = config.__dict__ if config else None
+    # Pass all required info to the celery task
+    task = run_ingestion_task.delay(tmp_path, config_dict)
+    return task.id
+
 
 @app.post("/ingest", response_model=IngestResponse)
 async def ingest_book(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     book_title: Optional[str] = None,
     author: Optional[str] = None,
@@ -508,42 +482,33 @@ async def ingest_book(
 ):
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files supported")
-    
     tmp_path = None
     try:
+        # Use UUID for tracking
         task_id = str(uuid4())
-        
-        # Initialize a tracker for this specific task
         tracker = create_tracker(task_id)
         tracker.set_loop(asyncio.get_running_loop())
-        
         extracted_title, extracted_author = parse_book_filename(file.filename)
         final_book_title = book_title or extracted_title
         final_author = author or extracted_author
-        
         # Create temp file
         fd, tmp_path = tempfile.mkstemp(suffix='.pdf')
         os.close(fd)
-        
-        # Write content asynchronously
         with open(tmp_path, 'wb') as f:
             content = await file.read()
             f.write(content)
-            
-        logger.info(f"📥 File received: {final_book_title}. Handing off to background task {task_id}.")
-
-        # Add to background tasks
-        background_tasks.add_task(
-            process_ingestion_task, 
-            task_id=task_id,
-            temp_path=tmp_path, 
-            book_title=final_book_title, 
-            author=final_author
+        logger.info(f"📥 File received: {final_book_title}. Handing off to Celery ingestion task {task_id}.")
+        # Prepare config
+        config = IngestorConfig(
+            similarity_threshold=settings.ingestion.similarity_threshold,
+            min_chunk_size=settings.ingestion.min_chunk_size,
+            max_chunk_size=settings.ingestion.max_chunk_size,
+            use_grobid=settings.ingestion.use_grobid,
+            debug=False
         )
-        
-        # Return success with task_id for WebSocket connection
-        return IngestResponse(success=True, result={"task_id": task_id, "message": "Ingestion started"})
-        
+        celery_task_id = launch_celery_ingestion_task(tmp_path, final_book_title, final_author, config)
+        # Return success with celery task id
+        return IngestResponse(success=True, result={"task_id": celery_task_id, "message": "Ingestion started"})
     except Exception as e:
         if tmp_path and os.path.exists(tmp_path): os.unlink(tmp_path)
         return IngestResponse(success=False, error=str(e))
@@ -630,6 +595,17 @@ async def search_sessions(query: str, limit: int = 10, user_claims: dict = Depen
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+# --- INGESTION TASK STATUS ENDPOINT ---
+from celery.result import AsyncResult
+@app.get("/ingest/status/{task_id}")
+def get_ingestion_status(task_id: str):
+    result = AsyncResult(task_id)
+    return {
+        "task_id": task_id,
+        "status": result.status,
+        "result": result.result
+    }
 
 if __name__ == "__main__":
     import uvicorn
