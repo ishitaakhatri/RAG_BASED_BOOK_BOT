@@ -1,11 +1,14 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
-from app_config import get_config
+from app_config import get_settings  # <--- CHANGED: Use get_settings instead of get_config
 
-settings = get_config()
+# Load the Pydantic Settings object (AppSettings)
+settings = get_settings()
 
 # Fix Render/Heroku style URLs for AsyncPG (they often provide postgres://)
-db_url = settings.database.url
+# CHANGED: Access DATABASE_URL directly from the flat settings object
+db_url = settings.DATABASE_URL
+
 if db_url:
     if db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
@@ -17,9 +20,13 @@ if db_url:
 if not db_url:
     db_url = "sqlite+aiosqlite:///./local_dev.db"
 
+# CHANGED: Derive echo_sql from the LOG_LEVEL or APP_ENV
+# If log level is DEBUG or env is development, we echo SQL.
+should_echo = (settings.LOG_LEVEL.upper() == "DEBUG") or (settings.APP_ENV == "development")
+
 engine = create_async_engine(
     db_url,
-    echo=settings.database.echo_sql,
+    echo=should_echo,
     pool_size=20,
     max_overflow=10
 )
