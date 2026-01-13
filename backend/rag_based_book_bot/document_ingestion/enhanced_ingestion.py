@@ -12,7 +12,7 @@ import time
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 from rag_based_book_bot.document_ingestion.progress_tracker import (
-    get_tracker, ProgressTracker # Changed import
+    get_tracker, ProgressTracker
 )
 import pdfplumber
 
@@ -38,32 +38,6 @@ from rag_based_book_bot.memory.embedding_utils import get_embedding_model
 
 from app_config import get_config
 settings = get_config()
-
-# Celery task import
-try:
-    from celery_worker import celery_app
-except ImportError:
-    from celery_worker import celery_app
-
-# Celery ingestion task
-@celery_app.task
-def run_ingestion_task(file_path, config_dict=None):
-    """
-    Celery task to run ingestion asynchronously.
-    Args:
-        file_path (str): Path to the file to ingest.
-        config_dict (dict, optional): IngestorConfig as dict.
-    Returns:
-        str: Success message or error.
-    """
-    try:
-        config = IngestorConfig(**config_dict) if config_dict else None
-        ingestor = SemanticBookIngestor(config)
-        # Example: you may need to adapt this to your actual ingestion method
-        ingestor.ingest(file_path)
-        return f"Ingestion completed for {file_path}"
-    except Exception as e:
-        return f"Ingestion failed for {file_path}: {str(e)}"
 
 PINECONE_INDEX = settings.vector_db.index_name
 DEFAULT_NAMESPACE = settings.vector_db.namespace
@@ -157,10 +131,8 @@ class SemanticBookIngestor:
             
             logger.info(f"🚀 Starting ingestion for: '{book_title}' (Task: {task_id})")
             
-            # Use specific tracker for this task
+            # Use specific tracker for this task (Redis-backed)
             tracker = get_tracker(task_id)
-            if not tracker:
-                logger.warning(f"No tracker found for task {task_id}, logging locally only.")
             
             # 1. AUTO-DETECT TYPE via Page Count
             with pdfplumber.open(pdf_path) as pdf:
@@ -213,7 +185,7 @@ class SemanticBookIngestor:
                             if tracker:
                                 logger.info(f"⚙️ Processing batch {batch_num}/{total_batches} (page {current_page})")
                                 tracker.update_batch(batch_num, total_batches, current_page)
-                            time.sleep(0.01)
+                            # time.sleep removed to speed up processing in worker
 
                         if tracker: tracker.start_chunking()
                         logger.info("🔄 Starting semantic chunking process...")    
@@ -363,8 +335,6 @@ class SemanticBookIngestor:
                     logger.info(msg)
                     tracker.add_log(msg)
 
-                time.sleep(0.1) 
-            
             if tracker:
                 tracker.start_upsert() 
                 tracker.update_upsert(total_chunks) 

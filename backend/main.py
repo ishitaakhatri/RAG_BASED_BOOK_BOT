@@ -2,42 +2,37 @@
 FastAPI Backend - Production-Ready RAG with Conversation Memory & Clerk Authentication
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Depends, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
-from typing import Optional, List, Dict
-from fastapi import WebSocket, WebSocketDisconnect
+from typing import Optional, List, Dict, Annotated
 import asyncio
 import logging
 import os
-import tempfile
 import time
 import hashlib
+import json
+import boto3
 from uuid import uuid4
 from dotenv import load_dotenv
+from redis import Redis
 
-from app_config import get_config
+from app_config import get_config, get_settings
 from auth_utils import verify_clerk_token
 
-# NEW: Import DB Init
+# NEW: Import DB Init & Celery Task
 from rag_based_book_bot.db import init_db 
+from tasks import ingest_book_task
 
 load_dotenv()
-settings = get_config()
+config = get_config()
+settings = get_settings()
 
 logger = logging.getLogger("main")
-logger.setLevel(settings.log_level)
+logger.setLevel(config.log_level)
 logger.propagate = True
 
-from rag_based_book_bot.document_ingestion.enhanced_ingestion import (
-    EnhancedBookIngestorPaddle,
-    IngestorConfig,
-    run_ingestion_task
-)
-from rag_based_book_bot.document_ingestion.progress_tracker import (
-    create_tracker, get_tracker, remove_tracker
-)
 from rag_based_book_bot.agents.states import AgentState, ConversationTurn, create_initial_state
 from rag_based_book_bot.agents.graph import build_query_graph
 from rag_based_book_bot.agents.nodes import get_pinecone_index
@@ -52,8 +47,19 @@ from rag_based_book_bot.memory import (
 )
 
 # ============================================================================
-# LIFESPAN & STARTUP
+# INITIALIZATION
 # ============================================================================
+
+# S3 Client for API Uploads
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+    region_name=settings.AWS_DEFAULT_REGION
+)
+
+# Redis Client for Status Polling
+redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 query_graph_app = None
 
@@ -62,19 +68,19 @@ async def lifespan(app: FastAPI):
     """Modern lifespan handler"""
     global query_graph_app
     
-    # 🔥 Initialize Database Tables (Async)
+    # Initialize Database Tables (Async)
     print("🚀 Initializing Database...")
     await init_db()
     print("✅ Database ready.")
     
     query_graph_app = build_query_graph(enable_persistence=True)
-    logger.info(f"🚀 RAG Book Bot API started successfully (Env: {settings.environment})")
+    logger.info(f"🚀 RAG Book Bot API started successfully (Env: {config.environment})")
     
     yield
     
     logger.info("🛑 Application shutting down...")
 
-app = FastAPI(title="RAG Book Bot API", version="4.3.0", lifespan=lifespan)
+app = FastAPI(title="RAG Book Bot API", version="5.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -113,10 +119,10 @@ class QueryRequest(BaseModel):
     chapter_filter: Optional[str] = None
     search_mode: Optional[str] = "all" 
     top_k: int = 5
-    pass1_k: int = settings.retrieval.pass1_top_k
-    pass2_k: int = settings.retrieval.pass2_top_k
-    pass3_enabled: bool = settings.retrieval.pass3_enabled
-    max_tokens: int = settings.retrieval.max_context_tokens
+    pass1_k: int = config.retrieval.pass1_top_k
+    pass2_k: int = config.retrieval.pass2_top_k
+    pass3_enabled: bool = config.retrieval.pass3_enabled
+    max_tokens: int = config.retrieval.max_context_tokens
     force_retrieval: bool = False
 
 class PipelineStage(BaseModel):
@@ -188,11 +194,10 @@ def parse_book_filename(filename: str) -> tuple[str, str]:
 
 def get_available_books() -> List[BookInfo]:
     try:
-        # 🔥 UPDATED: Use Pinecone class from nodes.py or re-instantiate
         index = get_pinecone_index()
-        metadata_namespace = settings.vector_db.metadata_namespace
+        metadata_namespace = config.vector_db.metadata_namespace
         results = index.query(
-            vector=[1.0] * settings.vector_db.dimension,
+            vector=[1.0] * config.vector_db.dimension,
             top_k=10000,
             namespace=metadata_namespace,
             include_metadata=True
@@ -216,29 +221,6 @@ def get_available_books() -> List[BookInfo]:
     except Exception as e:
         print(f"❌ Error fetching books: {e}")
         return []
-
-def store_book_metadata(book_title: str, author: str, total_chunks: int, code_chunks: int = 0):
-    try:
-        index = get_pinecone_index()
-        metadata_namespace = settings.vector_db.metadata_namespace
-        book_id = hashlib.md5(book_title.encode()).hexdigest()
-        index.upsert(
-            vectors=[{
-                "id": book_id,
-                "values": [1.0] * settings.vector_db.dimension,
-                "metadata": {
-                    "book_title": book_title,
-                    "author": author,
-                    "total_chunks": total_chunks,
-                    "code_chunks": code_chunks,
-                    "text_chunks": total_chunks - code_chunks,
-                    "indexed_at": time.time()
-                }
-            }],
-            namespace=metadata_namespace
-        )
-    except Exception as e:
-        print(f"⚠️ Failed to store metadata: {e}")
 
 def format_chunk_detail(chunk, source: str) -> ChunkDetail:
     if hasattr(chunk, 'relevance_percentage') and chunk.relevance_percentage is not None and chunk.relevance_percentage > 0:
@@ -305,7 +287,7 @@ def convert_pinecone_to_conversation_turns(pinecone_turns: List[dict]) -> List[C
 
 @app.get("/")
 async def root():
-    return {"status": "online", "message": "RAG Book Bot API v4.3 - Async Postgres + Pinecone", "auth": "Clerk (Enabled)"}
+    return {"status": "online", "message": "RAG Book Bot API v5.0 - Distributed Architecture", "auth": "Clerk (Enabled)"}
 
 @app.get("/books", response_model=BooksResponse)
 async def list_books():
@@ -321,13 +303,10 @@ async def process_query(
     session_id = None
     try:
         user_id = user_claims.get("sub")
-        # Ensure we don't modify the Pydantic model in place with extra fields unexpectedly
-        # Just use local variables for logic
         
         session_id = request.session_id or str(uuid4())
         query_cancellation_events[session_id] = asyncio.Event()
         
-        # 🔥 UPDATED: Async Call to Load History
         pinecone_turns = await load_conversation(session_id, max_turns=10)
         conversation_history = convert_pinecone_to_conversation_turns(pinecone_turns)
         
@@ -362,13 +341,12 @@ async def process_query(
         turn_number = len(conversation_history) + 1
         
         try:
-            # 🔥 UPDATED: Async Save with Search Payload
             await save_conversation_turn(
                 session_id=session_id,
                 turn_number=turn_number,
                 user_query=request.query,
                 assistant_response=final_state["response"].answer,
-                search_summary=final_state["response"].search_summary, # <--- Pass Summary
+                search_summary=final_state["response"].search_summary,
                 resolved_query=final_state.get("resolved_query"),
                 needs_retrieval=final_state.get("needs_retrieval", True),
                 referenced_turn=final_state.get("referenced_turn"),
@@ -461,99 +439,91 @@ async def cancel_query(session_id: str = Query(...), user_claims: dict = Depends
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-
-# --- CELERY INGESTION TASK LAUNCHER ---
-def launch_celery_ingestion_task(tmp_path: str, book_title: str, author: str, config: IngestorConfig = None):
-    """
-    Launch ingestion as a Celery job.
-    """
-    config_dict = config.__dict__ if config else None
-    # Pass all required info to the celery task
-    task = run_ingestion_task.delay(tmp_path, config_dict)
-    return task.id
-
+# --- INGESTION ENDPOINTS (DISTRIBUTED) ---
 
 @app.post("/ingest", response_model=IngestResponse)
-async def ingest_book(
-    file: UploadFile = File(...),
+def ingest_book(
+    file: Annotated[UploadFile, File(...)],
+    user_claims: Annotated[dict, Depends(verify_clerk_token)],
     book_title: Optional[str] = None,
-    author: Optional[str] = None,
-    user_claims: dict = Depends(verify_clerk_token)
+    author: Optional[str] = "Unknown"
 ):
+    """
+    Synchronous endpoint (using 'def') to handle blocking S3 uploads safely.
+    FastAPI runs this in a threadpool, preventing the event loop from blocking.
+    """
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files supported")
-    tmp_path = None
+    
+    task_id = str(uuid4())
+    s3_key = f"uploads/{task_id}/{file.filename}"
+    
     try:
-        # Use UUID for tracking
-        task_id = str(uuid4())
-        tracker = create_tracker(task_id)
-        tracker.set_loop(asyncio.get_running_loop())
+        # 1. Parse Metadata
         extracted_title, extracted_author = parse_book_filename(file.filename)
         final_book_title = book_title or extracted_title
         final_author = author or extracted_author
-        # Create temp file
-        fd, tmp_path = tempfile.mkstemp(suffix='.pdf')
-        os.close(fd)
-        with open(tmp_path, 'wb') as f:
-            content = await file.read()
-            f.write(content)
-        logger.info(f"📥 File received: {final_book_title}. Handing off to Celery ingestion task {task_id}.")
-        # Prepare config
-        config = IngestorConfig(
-            similarity_threshold=settings.ingestion.similarity_threshold,
-            min_chunk_size=settings.ingestion.min_chunk_size,
-            max_chunk_size=settings.ingestion.max_chunk_size,
-            use_grobid=settings.ingestion.use_grobid,
-            debug=False
+        
+        # 2. Upload to S3 (Blocking I/O)
+        logger.info(f"📤 Uploading {file.filename} to S3 bucket {settings.S3_BUCKET_NAME}...")
+        s3_client.upload_fileobj(file.file, settings.S3_BUCKET_NAME, s3_key)
+        
+        # 3. Dispatch Celery Task (Non-blocking)
+        logger.info(f"🚀 Dispatching Celery task for {task_id}")
+        ingest_book_task.delay(
+            task_id=task_id, 
+            s3_key=s3_key, 
+            book_title=final_book_title, 
+            author=final_author
         )
-        celery_task_id = launch_celery_ingestion_task(tmp_path, final_book_title, final_author, config)
-        # Return success with celery task id
-        return IngestResponse(success=True, result={"task_id": celery_task_id, "message": "Ingestion started"})
+        
+        return IngestResponse(
+            success=True, 
+            result={"task_id": task_id, "message": "Ingestion started"}
+        )
+        
     except Exception as e:
-        if tmp_path and os.path.exists(tmp_path): os.unlink(tmp_path)
+        logger.error(f"❌ Ingestion initiation failed: {e}")
         return IngestResponse(success=False, error=str(e))
 
 @app.websocket("/ws/ingest/{task_id}")
 async def websocket_ingestion_progress(websocket: WebSocket, task_id: str):
+    """
+    Async WebSocket to poll Redis for ingestion progress.
+    """
     await websocket.accept()
-    
-    # Get the specific tracker for this task
-    tracker = get_tracker(task_id)
-    if not tracker:
-        await websocket.close(code=4004, reason="Task not found or expired")
-        return
-
-    is_connected = True
-    
-    async def send_update(state):
-        nonlocal is_connected
-        if not is_connected: return
-        try:
-            if websocket.client_state.name == "CONNECTED": 
-                await websocket.send_json(state.to_dict())
-            else: 
-                is_connected = False
-        except: pass
-
-    tracker.on_progress(send_update)
-    
-    # Send initial state immediately
-    await send_update(tracker.state)
+    redis_key = f"task:{task_id}"
     
     try:
-        while is_connected:
-            try: await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
-            except (asyncio.TimeoutError, WebSocketDisconnect): continue
-    finally:
-        is_connected = False
-        tracker.remove_callback(send_update)
-        try: await websocket.close()
-        except: pass
+        while True:
+            # Poll Redis (Use to_thread for blocking redis calls)
+            data = await asyncio.to_thread(redis_client.get, redis_key)
+            
+            if data:
+                state = json.loads(data)
+                await websocket.send_json(state)
+                
+                if state.get("status") in ["completed", "failed"]:
+                    break
+            else:
+                # If key missing, assume queued or initializing
+                await websocket.send_json({"status": "queued", "percentage": 0})
+            
+            # Poll every 0.5s to balance responsiveness and load
+            await asyncio.sleep(0.5)
+            
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        try:
+            await websocket.close()
+        except:
+            pass
 
 @app.get("/sessions", response_model=SessionListResponse)
 async def list_sessions(limit: int = Query(50), user_claims: dict = Depends(verify_clerk_token)):
     user_id = user_claims.get("sub")
-    # 🔥 UPDATED: Async Call
     sessions = await list_all_sessions(user_id=user_id, limit=limit)
     return SessionListResponse(sessions=sessions, total=len(sessions))
 
@@ -566,7 +536,6 @@ async def get_conversation_history(session_id: str, user_claims: dict = Depends(
         if owner_id and owner_id != user_id:
             raise HTTPException(status_code=403, detail="Unauthorized access to this session")
 
-    # 🔥 UPDATED: Async Call
     turns = await load_conversation(session_id, max_turns=100)
     if not turns: raise HTTPException(status_code=404, detail="Conversation not found")
     return ConversationHistoryResponse(session_id=session_id, total_turns=len(turns), turns=turns)
@@ -580,7 +549,6 @@ async def delete_conversation(session_id: str, user_claims: dict = Depends(verif
         if owner_id and owner_id != user_id:
             raise HTTPException(status_code=403, detail="Unauthorized to delete this session")
 
-    # 🔥 UPDATED: Async Call
     result = await delete_session(session_id)
     if not result.get('success'): raise HTTPException(status_code=500, detail="Failed")
     return {"message": "Deleted", "session_id": session_id}
@@ -588,24 +556,12 @@ async def delete_conversation(session_id: str, user_claims: dict = Depends(verif
 @app.get("/search/sessions")
 async def search_sessions(query: str, limit: int = 10, user_claims: dict = Depends(verify_clerk_token)):
     user_id = user_claims.get("sub")
-    # 🔥 UPDATED: Async Call
     results = await search_across_sessions(query=query, user_id=user_id, top_k=limit)
     return {"query": query, "results": results, "total": len(results)}
 
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
-
-# --- INGESTION TASK STATUS ENDPOINT ---
-from celery.result import AsyncResult
-@app.get("/ingest/status/{task_id}")
-def get_ingestion_status(task_id: str):
-    result = AsyncResult(task_id)
-    return {
-        "task_id": task_id,
-        "status": result.status,
-        "result": result.result
-    }
 
 if __name__ == "__main__":
     import uvicorn
