@@ -25,7 +25,6 @@ services:
     container_name: rag_bot_celery_worker
     command: ["celery", "-A", "celery_worker.celery_app", "worker", "--loglevel=info"]
     depends_on:
-      - redis
       - grobid
     # This was already correct, keeping it consistent
     env_file: ./backend/.env
