@@ -5,9 +5,10 @@ services:
     build: ./backend
     container_name: rag_bot_backend
     restart: always
-    env_file: .env
+    # FIX: Point directly to the backend folder's env file
+    env_file: ./backend/.env
     depends_on:
-      - redis
+      - grobid
 
   redis:
     image: redis:7-alpine
@@ -22,14 +23,13 @@ services:
   celery_worker:
     build: ./backend
     container_name: rag_bot_celery_worker
-    # Command matches the refactored celery_worker.py module
     command: ["celery", "-A", "celery_worker.celery_app", "worker", "--loglevel=info"]
     depends_on:
       - redis
       - grobid
+    # This was already correct, keeping it consistent
     env_file: ./backend/.env
     restart: always
-    # Shared memory increased for PyTorch/AI operations
     shm_size: '2gb'
 
   grobid:
@@ -37,7 +37,6 @@ services:
     container_name: rag_bot_grobid
     restart: always
     environment:
-      # Increased heap size for handling large PDFs
       - JAVA_OPTS=-Xmx4g -Dorg.grobid.max.connections=10
     ports:
       - "8070:8070"
@@ -46,6 +45,7 @@ services:
     build:
       context: ./frontend
       args:
+        # This variable MUST exist in the shell or root .env to be substituted here
         VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY}
     container_name: rag_bot_frontend
     restart: always
