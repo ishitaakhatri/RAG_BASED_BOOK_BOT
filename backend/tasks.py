@@ -8,20 +8,13 @@ from rag_based_book_bot.document_ingestion.progress_tracker import get_tracker
 
 settings = get_settings()
 
-# Initialize S3 Client in global scope so it's reused across tasks in the worker process
-s3_client = boto3.client(
-    's3',
-    aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-    region_name=settings.AWS_DEFAULT_REGION
-)
-
 class IngestionTask(Task):
     """Base Task class to handle global error logging for ingestion"""
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         tracker = get_tracker(task_id)
-        tracker.add_error(f"Worker failure: {str(exc)}")
-        tracker.finish(success=False)
+        if tracker:
+            tracker.add_error(f"Worker failure: {str(exc)}")
+            tracker.finish(success=False)
 
 @celery_app.task(bind=True, base=IngestionTask, name="ingest_book_task")
 def ingest_book_task(self, task_id: str, s3_key: str, book_title: str, author: str):
@@ -31,14 +24,28 @@ def ingest_book_task(self, task_id: str, s3_key: str, book_title: str, author: s
     tracker = get_tracker(task_id)
     local_path = f"/tmp/{task_id}.pdf"
     
+    # --- THREAD SAFETY FIX ---
+    # Initialize S3 Client INSIDE the task. Boto3 clients are not thread-safe.
+    # This ensures each worker process gets its own clean connection.
+    s3_client = boto3.client(
+        's3',
+        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+        region_name=settings.AWS_DEFAULT_REGION
+    )
+    
     try:
         tracker.add_log(f"📥 Downloading {s3_key} from S3...")
+        
+        # Download from S3 to local worker temp storage
         s3_client.download_file(settings.S3_BUCKET_NAME, s3_key, local_path)
         
         tracker.add_log("⚙️ Initializing AI Ingestor...")
+        
+        # Ensure Grobid URL points to the Grobid service (usually on the same worker node or network)
         config = IngestorConfig(
             use_grobid=True, 
-            grobid_url=settings.GROBID_URL
+            grobid_url=settings.GROBID_URL 
         )
         
         ingestor = EnhancedBookIngestorPaddle(config=config)
@@ -57,7 +64,9 @@ def ingest_book_task(self, task_id: str, s3_key: str, book_title: str, author: s
 
     except Exception as e:
         # Detailed logging before re-raising
-        tracker.add_error(f"Task Exception: {str(e)}")
+        if tracker:
+            tracker.add_error(f"Task Exception: {str(e)}")
+        # We re-raise so Celery marks the task as FAILED in its own internal backend
         raise e
     finally:
         # Cleanup temporary file to save disk space

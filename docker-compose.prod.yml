@@ -7,7 +7,7 @@ services:
     restart: always
     env_file: .env
     depends_on:
-      - grobid
+      - redis
 
   redis:
     image: redis:7-alpine
@@ -15,23 +15,32 @@ services:
     restart: always
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
 
   celery_worker:
     build: ./backend
     container_name: rag_bot_celery_worker
+    # Command matches the refactored celery_worker.py module
     command: ["celery", "-A", "celery_worker.celery_app", "worker", "--loglevel=info"]
     depends_on:
       - redis
       - grobid
     env_file: ./backend/.env
     restart: always
+    # Shared memory increased for PyTorch/AI operations
+    shm_size: '2gb'
 
   grobid:
     image: lfoppiano/grobid:0.8.0
     container_name: rag_bot_grobid
     restart: always
     environment:
-      - JAVA_OPTS=-XX:-UseContainerSupport
+      # Increased heap size for handling large PDFs
+      - JAVA_OPTS=-Xmx4g -Dorg.grobid.max.connections=10
+    ports:
+      - "8070:8070"
 
   frontend:
     build:
@@ -51,3 +60,6 @@ services:
     depends_on:
       - backend
       - frontend
+
+volumes:
+  redis_data:

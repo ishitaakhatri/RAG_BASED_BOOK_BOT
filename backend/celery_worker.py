@@ -1,18 +1,16 @@
-from celery import Celery
 import os
+import logging
+from celery_app import celery_app
+# CRITICAL: Import tasks so they are registered with the worker
+import tasks
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-celery_app = Celery(
-    "backend",
-    broker=REDIS_URL,
-    backend=REDIS_URL
-)
-
-celery_app.conf.update(
-    task_serializer="json",
-    result_serializer="json",
-    accept_content=["json"],
-    timezone="UTC",
-    enable_utc=True,
-)
+if __name__ == "__main__":
+    redis_url = os.getenv("REDIS_URL", "UNKNOWN")
+    logger.info(f"🚀 Celery Worker starting... connecting to broker: {redis_url}")
+    
+    # This allows running the worker directly with python celery_worker.py if needed
+    celery_app.start()
