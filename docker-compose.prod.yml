@@ -8,7 +8,7 @@ services:
     # FIX: Point directly to the backend folder's env file
     env_file: ./backend/.env
     depends_on:
-      - grobid
+      - redis
 
   redis:
     image: redis:7-alpine
