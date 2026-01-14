@@ -36,7 +36,7 @@ services:
     container_name: rag_bot_grobid
     restart: always
     environment:
-      - JAVA_OPTS=-Xmx4g -Dorg.grobid.max.connections=10
+      - JAVA_OPTS=-Xmx3g -Dorg.grobid.max.connections=10 -XX:-UseContainerSupport
     ports:
       - "8070:8070"
 
