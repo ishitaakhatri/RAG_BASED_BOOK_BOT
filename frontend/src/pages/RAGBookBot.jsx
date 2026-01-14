@@ -40,7 +40,7 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
-const API_BASE_URL = "http://localhost:8000";
+const API_BASE_URL = "/api";
 
 const BACKEND_DEFAULTS = {
   pass1K: 50,
