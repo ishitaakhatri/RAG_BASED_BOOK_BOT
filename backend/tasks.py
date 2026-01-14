@@ -1,12 +1,57 @@
 import os
 import boto3
+import time
+import hashlib
 from celery import Task
 from celery_app import celery_app
 from app_config import get_settings
 from rag_based_book_bot.document_ingestion.enhanced_ingestion import EnhancedBookIngestorPaddle, IngestorConfig
 from rag_based_book_bot.document_ingestion.progress_tracker import get_tracker
+from pinecone import Pinecone
 
 settings = get_settings()
+
+def store_book_metadata(book_title: str, author: str, total_chunks: int, code_chunks: int = 0):
+    """
+    Registers the book in the Pinecone metadata namespace so it appears in the frontend list.
+    """
+    try:
+        # Re-initialize Pinecone inside the worker process to avoid thread-safety issues
+        pc = Pinecone(api_key=settings.PINECONE_API_KEY)
+        index = pc.Index(settings.PINECONE_INDEX_NAME)
+        
+        # Determine metadata namespace (fallback to 'books_metadata' if not set clearly)
+        metadata_namespace = settings.PINECONE_NAMESPACE.replace("_rag", "_metadata")
+        if not metadata_namespace.endswith("metadata"):
+             metadata_namespace = "books_metadata"
+
+        # Create a unique ID for the book metadata entry
+        book_id = hashlib.md5(book_title.encode()).hexdigest()
+        
+        print(f"📝 Registering book metadata for '{book_title}' in {metadata_namespace}...")
+        
+        # Upsert the "Book Card"
+        # We use a dummy vector of all 1.0s because we only query this by metadata or list all
+        dummy_vector = [1.0] * settings.vector_db.dimension
+        
+        index.upsert(
+            vectors=[{
+                "id": book_id,
+                "values": dummy_vector,
+                "metadata": {
+                    "book_title": book_title,
+                    "author": author,
+                    "total_chunks": total_chunks,
+                    "code_chunks": code_chunks,
+                    "text_chunks": total_chunks - code_chunks,
+                    "indexed_at": time.time()
+                }
+            }],
+            namespace=metadata_namespace
+        )
+        print("✅ Metadata registered successfully.")
+    except Exception as e:
+        print(f"⚠️ Failed to store metadata: {e}")
 
 class IngestionTask(Task):
     """Base Task class to handle global error logging for ingestion"""
@@ -58,6 +103,16 @@ def ingest_book_task(self, task_id: str, s3_key: str, book_title: str, author: s
             author=author,
             task_id=task_id 
         )
+        
+        # --- CRITICAL FIX: Store Metadata ---
+        tracker.add_log("📝 Registering book in library catalog...")
+        store_book_metadata(
+            book_title=book_title, 
+            author=author, 
+            total_chunks=result.get("chunks", 0),
+            code_chunks=result.get("code_chunks", 0)
+        )
+        # ------------------------------------
         
         tracker.finish(success=True)
         return result
