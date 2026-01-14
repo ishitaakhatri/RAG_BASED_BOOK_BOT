@@ -90,7 +90,6 @@ def ingest_book_task(self, task_id: str, s3_key: str, book_title: str, author: s
         # Ensure Grobid URL points to the Grobid service (usually on the same worker node or network)
         config = IngestorConfig(
             use_grobid=True, 
-            grobid_url=settings.GROBID_URL 
         )
         
         ingestor = EnhancedBookIngestorPaddle(config=config)
