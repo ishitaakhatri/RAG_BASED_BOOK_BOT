@@ -348,7 +348,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
       setLogs((prevLogs) =>
         prevLogs.filter((l) => !l.message.includes("Ingestion completed"))
       );
-      processedLogsRef.current.clear();
     }
 
     const isFinishedInLogs = logs.some((l) =>
