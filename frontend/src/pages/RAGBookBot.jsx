@@ -1080,6 +1080,7 @@ const MessageBubble = ({
 }) => {
   const [showSources, setShowSources] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  const [showPipeline, setShowPipeline] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
 
   const copyToClipboard = (text, id) => {
@@ -1197,6 +1198,21 @@ const MessageBubble = ({
               </button>
             )}
 
+            {message.pipeline_stages && message.pipeline_stages.length > 0 && (
+              <button
+                onClick={() => setShowPipeline(!showPipeline)}
+                className="text-xs text-gray-500 hover:text-blue-600 transition-colors flex items-center space-x-1"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Pipeline</span>
+                {showPipeline ? (
+                  <ChevronUp className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                )}
+              </button>
+            )}
+
             {message.stats && (
               <button
                 onClick={() => setShowStats(!showStats)}
@@ -1212,6 +1228,11 @@ const MessageBubble = ({
               </button>
             )}
           </div>
+
+          {/* PIPELINE DISPLAY */}
+          {showPipeline && message.pipeline_stages && (
+             <EnhancedPipelineDisplay stages={message.pipeline_stages} stats={message.stats} />
+          )}
 
           {showSources && message.sources && message.sources.length > 0 && (
             <div className="mt-4 space-y-2">
@@ -1277,3 +1298,67 @@ const MessageBubble = ({
     </div>
   );
 };
+
+function EnhancedPipelineDisplay({ stages, stats }) {
+  const [expandedStage, setExpandedStage] = useState(null);
+  const [showingChunks, setShowingChunks] = useState({});
+
+  const getStageColor = (index) =>
+    [
+      "from-blue-500 to-blue-600",
+      "from-purple-500 to-purple-600",
+      "from-pink-500 to-pink-600",
+      "from-green-500 to-green-600",
+      "from-yellow-500 to-yellow-600",
+      "from-indigo-500 to-indigo-600",
+    ][index % 6];
+    
+  return (
+    <div className="mt-3 space-y-3 bg-gray-50 p-4 rounded-lg border border-gray-200">
+      <div className="flex items-center justify-between text-sm bg-white p-3 rounded border border-gray-200 shadow-sm">
+        <div className="flex items-center space-x-4">
+          <span className="text-gray-900 font-semibold">{stats?.pass1 || 0}</span>
+          <span className="text-gray-400">→</span>
+          <span className="text-gray-900 font-semibold">{stats?.pass2 || 0}</span>
+          <span className="text-gray-400">→</span>
+          <span className="text-green-600 font-semibold">{stats?.final || 0}</span>
+        </div>
+        {stats?.tokens && <span className="text-gray-500 text-xs">{stats.tokens} tokens</span>}
+      </div>
+      {stages.map((stage, index) => {
+        const isExpanded = expandedStage === index;
+        const hasChunks = stage.chunks && stage.chunks.length > 0;
+        return (
+          <div key={index} className="relative">
+            {index < stages.length - 1 && <div className="absolute left-6 top-full h-3 w-0.5 bg-gray-300" />}
+            <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
+              <div
+                className={`bg-gradient-to-r ${getStageColor(index)} p-3 flex items-center justify-between cursor-pointer`}
+                onClick={() => setExpandedStage(isExpanded ? null : index)}
+              >
+                <div className="flex items-center space-x-3">
+                  <div className="bg-white/20 rounded-full p-1.5"><Filter className="w-3 h-3 text-white" /></div>
+                  <div className="text-white font-semibold text-sm">{stage.stage_name} ({stage.chunk_count})</div>
+                </div>
+                {hasChunks && <ChevronDown className={`w-4 h-4 text-white transition-transform ${isExpanded ? 'rotate-180' : ''}`} />}
+              </div>
+              {isExpanded && hasChunks && (
+                <div className="p-3 bg-gray-100 max-h-64 overflow-y-auto space-y-2 border-t border-gray-200">
+                  {stage.chunks.slice(0, 5).map((chunk, i) => (
+                    <div key={i} className="bg-white border border-gray-200 rounded p-2 text-xs shadow-sm">
+                      <div className="font-semibold text-gray-900 flex justify-between">
+                        <span>{chunk.book_title}</span>
+                        <span className="bg-blue-100 text-blue-700 px-1.5 rounded">{chunk.relevance?.toFixed(0)}%</span>
+                      </div>
+                      <div className="text-gray-600 mt-1">{chunk.content_preview?.substring(0, 100)}...</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}

@@ -650,6 +650,59 @@ Your role:
 # NODE 10: LLM REASONING (MANUAL JSON)
 # ============================================================================
 
+def clean_and_parse_json(output_text: str) -> dict:
+    """
+    Robust helper to parse JSON from LLM output, handling:
+    1. Markdown code blocks
+    2. Missing quotes or control characters (via aggressive fallback)
+    3. Partial extraction of 'answer' field if full JSON fails
+    """
+    text = output_text.strip()
+    
+    # 1. Clean Markdown
+    if "```" in text:
+        match = re.search(r"```(?:json)?(.*?)```", text, re.DOTALL)
+        if match:
+            text = match.group(1).strip()
+
+    # 2. Attempt standard parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # 3. Aggressive Extraction for 'answer' field
+    # If the content looks like a JSON object with an "answer" field, try to extract it manually.
+    if '"answer":' in text:
+        # Find the content after "answer": " and before the next ", ignoring escaped quotes.
+        start_marker = '"answer":'
+        start_idx = text.find(start_marker)
+        if start_idx != -1:
+            # Find the opening quote of the value
+            value_start = text.find('"', start_idx + len(start_marker))
+            if value_start != -1:
+                # Iterate to find the closing quote, handling escapes
+                idx = value_start + 1
+                while idx < len(text):
+                    if text[idx] == '"' and text[idx-1] != '\\':
+                        # Found closing quote
+                        extracted_answer = text[value_start+1 : idx]
+                        # Unescape basic things like \" to " and \n to newline
+                        extracted_answer = extracted_answer.replace('\\"', '"').replace('\\n', '\n')
+                        return {
+                            "answer": extracted_answer,
+                            "search_summary": "Extracted from invalid JSON",
+                            "confidence_score": 0.5
+                        }
+                    idx += 1
+    
+    # 4. Final Fallback: Treat whole text as the answer (cleaned)
+    return {
+        "answer": text,
+        "search_summary": "Raw output",
+        "confidence_score": 0.5
+    }
+
 async def llm_reasoning_node(state: AgentState) -> Dict:
     parsed_query = state.get("parsed_query")
     assembled_context = state.get("assembled_context", "")
@@ -661,9 +714,7 @@ async def llm_reasoning_node(state: AgentState) -> Dict:
     try:
         print(f"\n[FINAL] LLM Reasoning (Manual JSON Prompting)")
         
-        # 🔥 MANUAL JSON PROMPTING (Works with Gemma 3)
-        # We explicitly ask for JSON format in the prompt
-        
+        # 🔥 MANUAL JSON PROMPTING
         messages = [
             SystemMessage(content=system_prompt + "\n\nIMPORTANT: You must return your answer in valid JSON format."),
             HumanMessage(content=f"""
@@ -673,7 +724,7 @@ Context:
 Question: 
 {parsed_query.raw_query}
 
-Provide your answer in the following JSON format ONLY:
+Provide your answer in the following JSON format ONLY, nothing else, no extra text:
 {{
   "answer": "Your detailed Markdown response here...",
   "search_summary": "A short 1-sentence summary of the topic",
@@ -682,25 +733,11 @@ Provide your answer in the following JSON format ONLY:
 """)
         ]
         
-        # Plain invoke (no structured output wrapper)
         response = await llm.ainvoke(messages)
         content = response.content.strip()
         
-        # Manually parse JSON from string response
-        # Clean markdown code blocks if present
-        if content.startswith("```"):
-            content = content.replace("```json", "").replace("```", "").strip()
-            
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
-            # Fallback if model fails to output strict JSON
-            print("⚠️ Failed to parse JSON, using raw content as answer")
-            data = {
-                "answer": content,
-                "search_summary": "Response generated",
-                "confidence_score": 0.5
-            }
+        # Use the robust helper function
+        data = clean_and_parse_json(content)
         
         # Extract source IDs from reranked chunks
         sources = [c.chunk.chunk_id for c in state.get("reranked_chunks", [])[:3]]
@@ -708,7 +745,7 @@ Provide your answer in the following JSON format ONLY:
         return {
             "response": LLMResponse(
                 answer=data.get("answer", ""),
-                code_snippets=[], # Parsing could be enhanced here
+                code_snippets=[], 
                 sources=sources,
                 confidence=float(data.get("confidence_score", 0.0)),
                 search_summary=data.get("search_summary", "") 
