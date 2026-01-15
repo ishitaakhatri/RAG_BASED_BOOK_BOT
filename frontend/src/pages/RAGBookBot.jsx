@@ -49,6 +49,43 @@ const BACKEND_DEFAULTS = {
   maxTokens: 30000,
 };
 
+// --- ERROR BOUNDARY COMPONENT ---
+// This prevents the "White Screen of Death" by catching render errors
+class SafeErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("React Render Error Caught:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+          <div className="font-bold flex items-center gap-2">
+            <AlertCircle className="w-4 h-4" />
+            Component Error
+          </div>
+          <p className="mt-1 opacity-75">
+            This message could not be displayed. Check console for details.
+          </p>
+          <pre className="mt-2 text-xs bg-red-100 p-2 rounded overflow-auto max-w-full">
+            {this.state.error?.toString()}
+          </pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function RAGBookBot() {
   const { getToken, signOut } = useAuth();
 
@@ -281,7 +318,7 @@ export default function RAGBookBot() {
         loadedMessages.push({
           role: "assistant",
           content: turn.assistant_response,
-          sources: [],
+          sources: [], // Sources not loaded from history in this simplified version to avoid crashes
           stats: turn.stats || {},
           pipeline_stages: turn.pipeline_stages || [],
           rewritten_queries: turn.rewritten_queries || [],
@@ -397,12 +434,15 @@ export default function RAGBookBot() {
       });
 
       const data = await response.json();
+      console.log("DEBUG: API Response Received", data); // Debug Log
+
       if (data.error || data.detail) {
+        const errorMsg = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || data.error);
         setMessages((prev) => [
           ...prev,
           {
             role: "assistant",
-            content: `Error: ${data.error || data.detail}`,
+            content: `Error: ${errorMsg}`,
             error: true,
           },
         ]);
@@ -427,6 +467,7 @@ export default function RAGBookBot() {
       }
     } catch (error) {
       if (error.name !== "AbortError") {
+        console.error("DEBUG: Fetch Error", error);
         setMessages((prev) => [
           ...prev,
           {
@@ -498,11 +539,12 @@ export default function RAGBookBot() {
       });
       const data = await response.json();
       if (data.error || data.detail) {
+        const errorMsg = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || data.error);
         setMessages((prev) => [
           ...prev,
           {
             role: "assistant",
-            content: `Error: ${data.error || data.detail}`,
+            content: `Error: ${errorMsg}`,
             error: true,
           },
         ]);
@@ -540,17 +582,22 @@ export default function RAGBookBot() {
   };
 
   const formatTimestamp = (timestamp) => {
-    const date = new Date(timestamp * 1000);
-    const now = new Date();
-    const diff = now - date;
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-    if (minutes < 1) return "Just now";
-    if (minutes < 60) return `${minutes}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    if (days < 7) return `${days}d ago`;
-    return date.toLocaleDateString();
+    if (!timestamp) return "";
+    try {
+      const date = new Date(timestamp * 1000);
+      const now = new Date();
+      const diff = now - date;
+      const minutes = Math.floor(diff / 60000);
+      const hours = Math.floor(diff / 3600000);
+      const days = Math.floor(diff / 86400000);
+      if (minutes < 1) return "Just now";
+      if (minutes < 60) return `${minutes}m ago`;
+      if (hours < 24) return `${hours}h ago`;
+      if (days < 7) return `${days}d ago`;
+      return date.toLocaleDateString();
+    } catch (e) {
+      return "";
+    }
   };
 
   const renderDocButton = (doc, icon) => (
@@ -994,19 +1041,20 @@ export default function RAGBookBot() {
                     </div>
                   ) : (
                     messages.map((msg, idx) => (
-                      <MessageBubble
-                        key={idx}
-                        message={msg}
-                        id={`msg-${idx}`}
-                        index={idx}
-                        isEditing={editingMessageIndex === idx}
-                        editingText={editingText}
-                        onEditChange={setEditingText}
-                        onEdit={handleEditQuery}
-                        onCancelEdit={handleCancelEdit}
-                        onSubmitEdit={handleSubmitEdit}
-                        isLoading={loading}
-                      />
+                      <SafeErrorBoundary key={idx}>
+                        <MessageBubble
+                          message={msg}
+                          id={`msg-${idx}`}
+                          index={idx}
+                          isEditing={editingMessageIndex === idx}
+                          editingText={editingText}
+                          onEditChange={setEditingText}
+                          onEdit={handleEditQuery}
+                          onCancelEdit={handleCancelEdit}
+                          onSubmitEdit={handleSubmitEdit}
+                          isLoading={loading}
+                        />
+                      </SafeErrorBoundary>
                     ))
                   )}
                   {loading && (
@@ -1065,7 +1113,7 @@ export default function RAGBookBot() {
   );
 }
 
-// MessageBubble Component (keeping original logic, updating styles)
+// MessageBubble Component with Defensive Rendering & Error Boundary
 const MessageBubble = ({
   message,
   id,
@@ -1084,6 +1132,7 @@ const MessageBubble = ({
   const [copiedId, setCopiedId] = useState(null);
 
   const copyToClipboard = (text, id) => {
+    if (!text) return; // Guard against empty text
     navigator.clipboard.writeText(text);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
@@ -1121,7 +1170,7 @@ const MessageBubble = ({
             <div className="group">
               <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl px-5 py-3 shadow-md">
                 <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-                  {message.content}
+                  {message.content || ""}
                 </p>
               </div>
               <button
@@ -1137,6 +1186,11 @@ const MessageBubble = ({
       </div>
     );
   }
+
+  // Helper to ensure pipeline_stages is an array
+  const validPipelineStages = Array.isArray(message.pipeline_stages) ? message.pipeline_stages : [];
+  // Helper to ensure sources is an array of objects
+  const validSources = Array.isArray(message.sources) ? message.sources.filter(s => s && typeof s === 'object') : [];
 
   return (
     <div className="flex justify-start" id={id}>
@@ -1159,9 +1213,10 @@ const MessageBubble = ({
             </div>
           )}
 
-          <div className="prose prose-sm max-w-none">
-            <ReactMarkdown className="text-gray-800 leading-relaxed">
-              {message.content}
+          <div className="prose prose-sm max-w-none text-gray-800 leading-relaxed">
+            {/* Fix: Fallback to empty string if content is null/undefined to prevent crash */}
+            <ReactMarkdown>
+              {typeof message.content === 'string' ? message.content : String(message.content || "")}
             </ReactMarkdown>
           </div>
 
@@ -1183,13 +1238,13 @@ const MessageBubble = ({
               )}
             </button>
 
-            {message.sources && message.sources.length > 0 && (
+            {validSources.length > 0 && (
               <button
                 onClick={() => setShowSources(!showSources)}
                 className="text-xs text-gray-500 hover:text-blue-600 transition-colors flex items-center space-x-1"
               >
                 <FileText className="w-3.5 h-3.5" />
-                <span>{message.sources.length} Sources</span>
+                <span>{validSources.length} Sources</span>
                 {showSources ? (
                   <ChevronUp className="w-3.5 h-3.5" />
                 ) : (
@@ -1198,7 +1253,7 @@ const MessageBubble = ({
               </button>
             )}
 
-            {message.pipeline_stages && message.pipeline_stages.length > 0 && (
+            {validPipelineStages.length > 0 && (
               <button
                 onClick={() => setShowPipeline(!showPipeline)}
                 className="text-xs text-gray-500 hover:text-blue-600 transition-colors flex items-center space-x-1"
@@ -1230,29 +1285,33 @@ const MessageBubble = ({
           </div>
 
           {/* PIPELINE DISPLAY */}
-          {showPipeline && message.pipeline_stages && (
-             <EnhancedPipelineDisplay stages={message.pipeline_stages} stats={message.stats} />
+          {/* Fix: Ensure pipeline_stages is actually an array before rendering */}
+          {showPipeline && validPipelineStages.length > 0 && (
+             <SafeErrorBoundary>
+               <EnhancedPipelineDisplay stages={validPipelineStages} stats={message.stats} />
+             </SafeErrorBoundary>
           )}
 
-          {showSources && message.sources && message.sources.length > 0 && (
+          {showSources && validSources.length > 0 && (
             <div className="mt-4 space-y-2">
               <h4 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
                 Sources
               </h4>
-              {message.sources.map((source, idx) => (
+              {validSources.map((source, idx) => (
                 <div
                   key={idx}
                   className="p-3 bg-white border border-gray-200 rounded-lg text-xs"
                 >
                   <div className="font-semibold text-gray-900 mb-1">
-                    {source.title} - Page {source.page}
+                    {source.title || "Unknown Title"} - Page {source.page || "?"}
                   </div>
                   <div className="text-gray-600 leading-relaxed">
-                    {source.content.substring(0, 200)}...
+                    {/* Fix: Defensive check for source.content */}
+                    {(source.content || "").substring(0, 200)}...
                   </div>
-                  {source.score && (
+                  {(source.relevance || source.score) && (
                     <div className="mt-2 text-gray-500">
-                      Relevance: {(source.score * 100).toFixed(1)}%
+                      Relevance: {((source.relevance || source.score) * 100).toFixed(1)}%
                     </div>
                   )}
                 </div>
@@ -1347,10 +1406,10 @@ function EnhancedPipelineDisplay({ stages, stats }) {
                   {stage.chunks.slice(0, 5).map((chunk, i) => (
                     <div key={i} className="bg-white border border-gray-200 rounded p-2 text-xs shadow-sm">
                       <div className="font-semibold text-gray-900 flex justify-between">
-                        <span>{chunk.book_title}</span>
-                        <span className="bg-blue-100 text-blue-700 px-1.5 rounded">{chunk.relevance?.toFixed(0)}%</span>
+                        <span>{chunk.book_title || "Unknown Book"}</span>
+                        <span className="bg-blue-100 text-blue-700 px-1.5 rounded">{((chunk.relevance || 0)).toFixed(0)}%</span>
                       </div>
-                      <div className="text-gray-600 mt-1">{chunk.content_preview?.substring(0, 100)}...</div>
+                      <div className="text-gray-600 mt-1">{(chunk.content_preview || "").substring(0, 100)}...</div>
                     </div>
                   ))}
                 </div>

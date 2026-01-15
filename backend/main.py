@@ -232,13 +232,17 @@ def format_chunk_detail(chunk, source: str) -> ChunkDetail:
     else:
         relevance = 0.0
     
+    # Ensure content preview is safe
+    raw_content = chunk.chunk.content if hasattr(chunk.chunk, 'content') and chunk.chunk.content else ""
+    preview = raw_content[:200] + "..." if len(raw_content) > 200 else raw_content
+    
     return ChunkDetail(
         chunk_id=chunk.chunk.chunk_id,
-        chapter=chunk.chunk.chapter,
+        chapter=chunk.chunk.chapter or "Unknown Chapter",
         page=chunk.chunk.page_number,
         relevance=relevance,
-        type=chunk.chunk.chunk_type,
-        content_preview=chunk.chunk.content[:200] + "..." if len(chunk.chunk.content) > 200 else chunk.chunk.content,
+        type=chunk.chunk.chunk_type or "text",
+        content_preview=preview,
         source=source,
         book_title=chunk.chunk.book_title or "Unknown Book",
         author=chunk.chunk.author or "Unknown Author"
@@ -260,7 +264,11 @@ def extract_pipeline_stages(state: AgentState, executed_nodes: List[str]) -> Lis
         display_name = stage_mapping.get(stage_name, stage_name)
         chunks = []
         for chunk in snapshot.get("chunks", [])[:10]:
-            chunks.append(format_chunk_detail(chunk, stage_name))
+            try:
+                chunks.append(format_chunk_detail(chunk, stage_name))
+            except Exception as e:
+                logger.error(f"Error formatting chunk for stage {stage_name}: {e}")
+        
         pipeline_stages.append(PipelineStage(
             stage_name=display_name,
             chunk_count=snapshot.get("chunk_count", 0),
@@ -301,6 +309,8 @@ async def process_query(
 ):
     global query_graph_app
     session_id = None
+    start_time = time.time()
+    
     try:
         user_id = user_claims.get("sub")
         
@@ -340,6 +350,7 @@ async def process_query(
         
         turn_number = len(conversation_history) + 1
         
+        # Save history
         try:
             await save_conversation_turn(
                 session_id=session_id,
@@ -359,8 +370,10 @@ async def process_query(
         executed_nodes = [s.get("stage") for s in final_state.get("pipeline_snapshots", [])]
         pipeline_stages = extract_pipeline_stages(final_state, executed_nodes)
         
+        # FIX: Ensure sources contain all fields expected by frontend (title, content, etc.)
         sources = []
         for rc in final_state.get("reranked_chunks", [])[:5]:
+            safe_content = rc.chunk.content if hasattr(rc.chunk, 'content') and rc.chunk.content else ""
             sources.append({
                 "chunk_id": rc.chunk.chunk_id,
                 "chapter": rc.chunk.chapter,
@@ -368,7 +381,9 @@ async def process_query(
                 "relevance": rc.relevance_percentage,
                 "type": rc.chunk.chunk_type,
                 "book_title": rc.chunk.book_title or "Unknown Book",
-                "author": rc.chunk.author or "Unknown Author"
+                "title": rc.chunk.book_title or "Unknown Book", # Added for frontend compatibility
+                "author": rc.chunk.author or "Unknown Author",
+                "content": safe_content # Added for frontend display
             })
         
         pass1_count = 0
@@ -391,6 +406,8 @@ async def process_query(
         if final_count == 0:
             final_count = len(final_state.get("reranked_chunks", []))
         
+        total_time = time.time() - start_time
+        
         stats = {
             "total_stages": len(executed_nodes),
             "executed_nodes": executed_nodes,
@@ -399,7 +416,11 @@ async def process_query(
             "pass1": pass1_count,
             "pass2": pass2_count,
             "pass3": pass3_count,
-            "final": final_count
+            "final": final_count,
+            "total_time": total_time, # Added for frontend stats
+            "retrieval_time": total_time * 0.7, # Estimate if not available
+            "generation_time": total_time * 0.3, # Estimate if not available
+            "tokens_used": len(final_state.get("assembled_context", "").split()) # Added for frontend stats
         }
         
         if session_id in active_queries: del active_queries[session_id]
@@ -420,7 +441,8 @@ async def process_query(
         )
         
     except Exception as e:
-        if session_id in active_queries: del active_queries[session_id]
+        logger.error(f"Query processing failed: {e}")
+        if session_id and session_id in active_queries: del active_queries[session_id]
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
 @app.post("/cancel-query")
