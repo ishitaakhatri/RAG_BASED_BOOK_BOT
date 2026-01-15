@@ -1,0 +1,22 @@
+
+services:
+  # Redis for local dev (Expose port 6379 to host)
+  redis:
+    image: redis:7-alpine
+    container_name: rag_bot_redis_dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data_dev:/data
+
+  # Grobid for local dev (Expose port 8070 to host)
+  grobid:
+    image: lfoppiano/grobid:0.8.0
+    container_name: rag_bot_grobid_dev
+    ports:
+      - "8070:8070"
+    environment:
+      - "JAVA_OPTS=-Xmx2g"
+  
+volumes:
+  redis_data_dev:
