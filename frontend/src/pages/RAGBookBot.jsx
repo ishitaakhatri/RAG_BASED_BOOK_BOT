@@ -437,7 +437,10 @@ export default function RAGBookBot() {
       console.log("DEBUG: API Response Received", data); // Debug Log
 
       if (data.error || data.detail) {
-        const errorMsg = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || data.error);
+        const errorMsg =
+          typeof data.detail === "string"
+            ? data.detail
+            : JSON.stringify(data.detail || data.error);
         setMessages((prev) => [
           ...prev,
           {
@@ -487,7 +490,7 @@ export default function RAGBookBot() {
     setEditingMessageIndex(index);
     setEditingText(currentText);
   };
-  
+
   const handleCancelEdit = () => {
     setEditingMessageIndex(null);
     setEditingText("");
@@ -539,7 +542,10 @@ export default function RAGBookBot() {
       });
       const data = await response.json();
       if (data.error || data.detail) {
-        const errorMsg = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || data.error);
+        const errorMsg =
+          typeof data.detail === "string"
+            ? data.detail
+            : JSON.stringify(data.detail || data.error);
         setMessages((prev) => [
           ...prev,
           {
@@ -626,10 +632,10 @@ export default function RAGBookBot() {
         <div className="absolute top-20 right-20 w-96 h-96 bg-blue-200/20 rounded-full blur-3xl" />
         <div className="absolute bottom-20 left-20 w-96 h-96 bg-indigo-200/20 rounded-full blur-3xl" />
       </div>
-      
+
       {/* Grid Pattern Overlay */}
       <div className="absolute inset-0 bg-[linear-gradient(rgba(99,102,241,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(99,102,241,0.03)_1px,transparent_1px)] bg-[size:64px_64px]" />
-      
+
       <div className="relative z-10 flex flex-1 w-full">
         {/* Sidebar */}
         <div
@@ -815,7 +821,7 @@ export default function RAGBookBot() {
               </div>
             </div>
           </header>
-          
+
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-full min-h-0 p-6">
             <div className="lg:col-span-1 space-y-4 overflow-hidden flex flex-col">
               <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm flex-1 flex flex-col min-h-0">
@@ -912,7 +918,9 @@ export default function RAGBookBot() {
                 </div>
               </div>
               <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm flex-shrink-0">
-                <h3 className="text-lg font-semibold text-gray-900 mb-3">Stats</h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-3">
+                  Stats
+                </h3>
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between text-gray-600">
                     <span>Books:</span>
@@ -935,7 +943,7 @@ export default function RAGBookBot() {
                 </div>
               </div>
             </div>
-            
+
             <div className="lg:col-span-3 space-y-4 flex flex-col h-full min-h-0">
               {showSettings && (
                 <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
@@ -1015,29 +1023,23 @@ export default function RAGBookBot() {
                   </div>
                 </div>
               )}
-              
-              <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col min-h-0">
+
+              <div className="relative flex-1 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col min-h-0 overflow-hidden">
                 <div
                   className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4"
                   onScroll={handleUserScroll}
                 >
                   {messages.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-center">
-                      <Sparkles className="w-16 h-16 text-blue-500 mb-4" />
-                      <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                        {currentSessionId
-                          ? "Continue Your Conversation"
-                          : "Research & Coding Assistant"}
+                    <div
+                      className="relative flex flex-col items-center justify-center h-full text-center 
+bg-gradient-to-br from-blue-50 via-white to-blue-100 
+rounded-xl border border-blue-200 shadow-inner overflow-hidden"
+                    >
+                      <div className="absolute inset-0 bg-[url('/image.jpg')] bg-no-repeat bg-center bg-contain opacity-10 pointer-events-none" />
+
+                      <h3 className="text-2xl font-semibold text-blue-900 mb-2">
+                        {currentSessionId ? "Continue Your Conversation" : ""}
                       </h3>
-                      <p className="text-gray-600 max-w-md">
-                        {currentSessionId
-                          ? "Ask follow-up questions - I remember our conversation!"
-                          : "Ask questions about your uploaded books and research papers. I can distinguish between theoretical proofs and coding implementation!"}
-                      </p>
-                      <p className="text-gray-500 text-sm mt-4">
-                        💡 Tip: Use the toggle below to switch between Books
-                        (Code) and Papers (Theory).
-                      </p>
                     </div>
                   ) : (
                     messages.map((msg, idx) => (
@@ -1188,35 +1190,46 @@ const MessageBubble = ({
   }
 
   // Helper to ensure pipeline_stages is an array
-  const validPipelineStages = Array.isArray(message.pipeline_stages) ? message.pipeline_stages : [];
+  const validPipelineStages = Array.isArray(message.pipeline_stages)
+    ? message.pipeline_stages
+    : [];
   // Helper to ensure sources is an array of objects
-  const validSources = Array.isArray(message.sources) ? message.sources.filter(s => s && typeof s === 'object') : [];
+  const validSources = Array.isArray(message.sources)
+    ? message.sources.filter((s) => s && typeof s === "object")
+    : [];
 
   return (
     <div className="flex justify-start" id={id}>
       <div className="max-w-3xl w-full">
-        <div className="bg-gray-50 border border-gray-200 rounded-2xl p-5 shadow-sm">
+        <div className="bg-gray-50 border border-gray-200 rounded-2xl p-5 shadow-sm animate-slide">
           {message.answered_from_history && (
             <div className="mb-3 flex items-center space-x-2 text-xs text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200 w-fit">
               <History className="w-3.5 h-3.5" />
-              <span className="font-medium">Answered from conversation history</span>
+              <span className="font-medium">
+                Answered from conversation history
+              </span>
             </div>
           )}
-          
-          {message.resolved_query && message.resolved_query !== message.content && (
-            <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <div className="text-xs font-semibold text-blue-700 mb-1 flex items-center">
-                <Repeat className="w-3.5 h-3.5 mr-1" />
-                Resolved Query
+
+          {message.resolved_query &&
+            message.resolved_query !== message.content && (
+              <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="text-xs font-semibold text-blue-700 mb-1 flex items-center">
+                  <Repeat className="w-3.5 h-3.5 mr-1" />
+                  Resolved Query
+                </div>
+                <p className="text-sm text-gray-700 italic">
+                  {message.resolved_query}
+                </p>
               </div>
-              <p className="text-sm text-gray-700 italic">{message.resolved_query}</p>
-            </div>
-          )}
+            )}
 
           <div className="prose prose-sm max-w-none text-gray-800 leading-relaxed">
             {/* Fix: Fallback to empty string if content is null/undefined to prevent crash */}
             <ReactMarkdown>
-              {typeof message.content === 'string' ? message.content : String(message.content || "")}
+              {typeof message.content === "string"
+                ? message.content
+                : String(message.content || "")}
             </ReactMarkdown>
           </div>
 
@@ -1287,9 +1300,12 @@ const MessageBubble = ({
           {/* PIPELINE DISPLAY */}
           {/* Fix: Ensure pipeline_stages is actually an array before rendering */}
           {showPipeline && validPipelineStages.length > 0 && (
-             <SafeErrorBoundary>
-               <EnhancedPipelineDisplay stages={validPipelineStages} stats={message.stats} />
-             </SafeErrorBoundary>
+            <SafeErrorBoundary>
+              <EnhancedPipelineDisplay
+                stages={validPipelineStages}
+                stats={message.stats}
+              />
+            </SafeErrorBoundary>
           )}
 
           {showSources && validSources.length > 0 && (
@@ -1303,7 +1319,8 @@ const MessageBubble = ({
                   className="p-3 bg-white border border-gray-200 rounded-lg text-xs"
                 >
                   <div className="font-semibold text-gray-900 mb-1">
-                    {source.title || "Unknown Title"} - Page {source.page || "?"}
+                    {source.title || "Unknown Title"} - Page{" "}
+                    {source.page || "?"}
                   </div>
                   <div className="text-gray-600 leading-relaxed">
                     {/* Fix: Defensive check for source.content */}
@@ -1311,7 +1328,8 @@ const MessageBubble = ({
                   </div>
                   {(source.relevance || source.score) && (
                     <div className="mt-2 text-gray-500">
-                      Relevance: {((source.relevance || source.score) * 100).toFixed(1)}%
+                      Relevance:{" "}
+                      {((source.relevance || source.score) * 100).toFixed(1)}%
                     </div>
                   )}
                 </div>
@@ -1371,45 +1389,74 @@ function EnhancedPipelineDisplay({ stages, stats }) {
       "from-yellow-500 to-yellow-600",
       "from-indigo-500 to-indigo-600",
     ][index % 6];
-    
+
   return (
     <div className="mt-3 space-y-3 bg-gray-50 p-4 rounded-lg border border-gray-200">
       <div className="flex items-center justify-between text-sm bg-white p-3 rounded border border-gray-200 shadow-sm">
         <div className="flex items-center space-x-4">
-          <span className="text-gray-900 font-semibold">{stats?.pass1 || 0}</span>
+          <span className="text-gray-900 font-semibold">
+            {stats?.pass1 || 0}
+          </span>
           <span className="text-gray-400">→</span>
-          <span className="text-gray-900 font-semibold">{stats?.pass2 || 0}</span>
+          <span className="text-gray-900 font-semibold">
+            {stats?.pass2 || 0}
+          </span>
           <span className="text-gray-400">→</span>
-          <span className="text-green-600 font-semibold">{stats?.final || 0}</span>
+          <span className="text-green-600 font-semibold">
+            {stats?.final || 0}
+          </span>
         </div>
-        {stats?.tokens && <span className="text-gray-500 text-xs">{stats.tokens} tokens</span>}
+        {stats?.tokens && (
+          <span className="text-gray-500 text-xs">{stats.tokens} tokens</span>
+        )}
       </div>
       {stages.map((stage, index) => {
         const isExpanded = expandedStage === index;
         const hasChunks = stage.chunks && stage.chunks.length > 0;
         return (
           <div key={index} className="relative">
-            {index < stages.length - 1 && <div className="absolute left-6 top-full h-3 w-0.5 bg-gray-300" />}
+            {index < stages.length - 1 && (
+              <div className="absolute left-6 top-full h-3 w-0.5 bg-gray-300" />
+            )}
             <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
               <div
-                className={`bg-gradient-to-r ${getStageColor(index)} p-3 flex items-center justify-between cursor-pointer`}
+                className={`bg-gradient-to-r ${getStageColor(
+                  index
+                )} p-3 flex items-center justify-between cursor-pointer`}
                 onClick={() => setExpandedStage(isExpanded ? null : index)}
               >
                 <div className="flex items-center space-x-3">
-                  <div className="bg-white/20 rounded-full p-1.5"><Filter className="w-3 h-3 text-white" /></div>
-                  <div className="text-white font-semibold text-sm">{stage.stage_name} ({stage.chunk_count})</div>
+                  <div className="bg-white/20 rounded-full p-1.5">
+                    <Filter className="w-3 h-3 text-white" />
+                  </div>
+                  <div className="text-white font-semibold text-sm">
+                    {stage.stage_name} ({stage.chunk_count})
+                  </div>
                 </div>
-                {hasChunks && <ChevronDown className={`w-4 h-4 text-white transition-transform ${isExpanded ? 'rotate-180' : ''}`} />}
+                {hasChunks && (
+                  <ChevronDown
+                    className={`w-4 h-4 text-white transition-transform ${
+                      isExpanded ? "rotate-180" : ""
+                    }`}
+                  />
+                )}
               </div>
               {isExpanded && hasChunks && (
                 <div className="p-3 bg-gray-100 max-h-64 overflow-y-auto space-y-2 border-t border-gray-200">
                   {stage.chunks.slice(0, 5).map((chunk, i) => (
-                    <div key={i} className="bg-white border border-gray-200 rounded p-2 text-xs shadow-sm">
+                    <div
+                      key={i}
+                      className="bg-white border border-gray-200 rounded p-2 text-xs shadow-sm"
+                    >
                       <div className="font-semibold text-gray-900 flex justify-between">
                         <span>{chunk.book_title || "Unknown Book"}</span>
-                        <span className="bg-blue-100 text-blue-700 px-1.5 rounded">{((chunk.relevance || 0)).toFixed(0)}%</span>
+                        <span className="bg-blue-100 text-blue-700 px-1.5 rounded">
+                          {(chunk.relevance || 0).toFixed(0)}%
+                        </span>
                       </div>
-                      <div className="text-gray-600 mt-1">{(chunk.content_preview || "").substring(0, 100)}...</div>
+                      <div className="text-gray-600 mt-1">
+                        {(chunk.content_preview || "").substring(0, 100)}...
+                      </div>
                     </div>
                   ))}
                 </div>
