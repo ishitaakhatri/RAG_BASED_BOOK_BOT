@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
+﻿import React, { useState, useRef, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import "tailwindcss/tailwind.css";
 import jsPDF from "jspdf";
@@ -414,11 +414,11 @@ export default function RAGBookBot() {
       ...(useBackendDefaults
         ? {}
         : {
-            pass1_k: pass1K,
-            pass2_k: pass2K,
-            pass3_enabled: pass3Enabled,
-            max_tokens: maxTokens,
-          }),
+          pass1_k: pass1K,
+          pass2_k: pass2K,
+          pass3_enabled: pass3Enabled,
+          max_tokens: maxTokens,
+        }),
     };
 
     try {
@@ -522,11 +522,11 @@ export default function RAGBookBot() {
       ...(useBackendDefaults
         ? {}
         : {
-            pass1_k: pass1K,
-            pass2_k: pass2K,
-            pass3_enabled: pass3Enabled,
-            max_tokens: maxTokens,
-          }),
+          pass1_k: pass1K,
+          pass2_k: pass2K,
+          pass3_enabled: pass3Enabled,
+          max_tokens: maxTokens,
+        }),
     };
 
     try {
@@ -610,11 +610,10 @@ export default function RAGBookBot() {
     <button
       key={doc.title}
       onClick={() => setSelectedBook(doc.title)}
-      className={`w-full text-left px-3 py-2 rounded-lg transition-all truncate group ${
-        selectedBook === doc.title
-          ? "bg-blue-600 text-white shadow-md"
-          : "bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-blue-300"
-      }`}
+      className={`w-full text-left px-3 py-2 rounded-lg transition-all truncate group ${selectedBook === doc.title
+        ? "bg-blue-600 text-white shadow-md"
+        : "bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-blue-300"
+        }`}
       title={`${doc.title} by ${doc.author}`}
     >
       <div className="flex items-center space-x-2">
@@ -626,33 +625,32 @@ export default function RAGBookBot() {
   );
 
   return (
-    <div className="h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 text-gray-900 relative overflow-hidden flex">
+    <div className="h-screen bg-gradient-to-br from-stone-50 via-stone-100 to-amber-50/30 text-stone-800 relative overflow-hidden flex">
       {/* Subtle Background Elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-20 right-20 w-96 h-96 bg-blue-200/20 rounded-full blur-3xl" />
-        <div className="absolute bottom-20 left-20 w-96 h-96 bg-indigo-200/20 rounded-full blur-3xl" />
+        <div className="absolute top-20 right-20 w-96 h-96 bg-emerald-200/15 rounded-full blur-3xl" />
+        <div className="absolute bottom-20 left-20 w-96 h-96 bg-amber-200/15 rounded-full blur-3xl" />
       </div>
 
       {/* Grid Pattern Overlay */}
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(99,102,241,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(99,102,241,0.03)_1px,transparent_1px)] bg-[size:64px_64px]" />
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(16,185,129,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(16,185,129,0.02)_1px,transparent_1px)] bg-[size:64px_64px]" />
 
       <div className="relative z-10 flex flex-1 w-full">
         {/* Sidebar */}
         <div
-          className={`${
-            showSessions ? "w-80" : "w-0"
-          } transition-all duration-300 bg-white border-r border-gray-200 overflow-hidden flex flex-col shadow-lg`}
+          className={`${showSessions ? "w-80" : "w-0"
+            } transition-all duration-300 bg-white border-r border-stone-200 overflow-hidden flex flex-col shadow-lg`}
         >
-          <div className="p-4 border-b border-gray-200">
+          <div className="p-4 border-b border-stone-200">
             <button
               onClick={startNewChat}
-              className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md"
+              className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-lg hover:from-emerald-600 hover:to-teal-700 transition-all shadow-md shadow-emerald-500/20"
             >
               <Plus className="w-5 h-5" />
               <span className="font-semibold">New Chat</span>
             </button>
           </div>
-          <div className="p-4 border-b border-gray-200">
+          <div className="p-4 border-b border-stone-200">
             <div className="relative">
               <input
                 type="text"
@@ -660,7 +658,7 @@ export default function RAGBookBot() {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyPress={(e) => e.key === "Enter" && searchSessions()}
                 placeholder="Search conversations..."
-                className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-300 rounded-lg text-gray-900 placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full pl-10 pr-4 py-2 bg-stone-50 border border-stone-300 rounded-lg text-stone-800 placeholder-stone-400 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
               />
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
               {searchQuery && (
@@ -676,7 +674,7 @@ export default function RAGBookBot() {
               )}
             </div>
             {isSearching && (
-              <div className="mt-2 text-xs text-blue-600 flex items-center">
+              <div className="mt-2 text-xs text-emerald-600 flex items-center">
                 <Loader className="w-3 h-3 animate-spin mr-2" />
                 Searching...
               </div>
@@ -695,7 +693,7 @@ export default function RAGBookBot() {
                   <div
                     key={idx}
                     onClick={() => loadSession(result.session_id)}
-                    className="bg-gray-50 hover:bg-blue-50 rounded-lg p-3 cursor-pointer transition-all border border-gray-200 hover:border-blue-300"
+                    className="bg-stone-50 hover:bg-emerald-50 rounded-lg p-3 cursor-pointer transition-all border border-stone-200 hover:border-emerald-300"
                   >
                     <div className="text-sm text-gray-900 font-medium mb-1 truncate">
                       {result.user_query}
@@ -728,11 +726,10 @@ export default function RAGBookBot() {
                     <div
                       key={idx}
                       onClick={() => loadSession(session.session_id)}
-                      className={`rounded-lg p-3 cursor-pointer transition-all border ${
-                        isCurrent
-                          ? "bg-blue-50 border-blue-300 shadow-sm"
-                          : "bg-gray-50 hover:bg-blue-50 border-gray-200 hover:border-blue-300"
-                      }`}
+                      className={`rounded-lg p-3 cursor-pointer transition-all border ${isCurrent
+                        ? "bg-emerald-50 border-emerald-300 shadow-sm"
+                        : "bg-stone-50 hover:bg-emerald-50 border-stone-200 hover:border-emerald-300"
+                        }`}
                     >
                       <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
@@ -770,7 +767,7 @@ export default function RAGBookBot() {
 
         {/* Main Content */}
         <div className="flex-1 flex flex-col h-full min-h-0">
-          <header className="bg-white border-b border-gray-200 shadow-sm">
+          <header className="bg-white border-b border-stone-200 shadow-sm">
             <div className="px-4 sm:px-6 lg:px-8 py-4">
               <div className="relative flex items-center">
                 <div className="flex items-center space-x-3">
@@ -780,7 +777,7 @@ export default function RAGBookBot() {
                   >
                     <History className="w-5 h-5" />
                   </button>
-                  <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-2 rounded-lg shadow-md">
+                  <div className="bg-gradient-to-br from-emerald-500 to-teal-600 p-2 rounded-lg shadow-md shadow-emerald-500/20">
                     <Library className="w-8 h-8 text-white" />
                   </div>
                   <div>
@@ -806,7 +803,7 @@ export default function RAGBookBot() {
                   </button>
                   <button
                     onClick={() => navigate("/ingest")}
-                    className="flex-shrink-0 flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md"
+                    className="flex-shrink-0 flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-lg hover:from-emerald-600 hover:to-teal-700 transition-all shadow-md"
                   >
                     <Upload className="w-4 h-4" />
                     <span className="hidden sm:inline">Upload Doc</span>
@@ -824,7 +821,7 @@ export default function RAGBookBot() {
 
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-full min-h-0 p-6">
             <div className="lg:col-span-1 space-y-4 overflow-hidden flex flex-col">
-              <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm flex-1 flex flex-col min-h-0">
+              <div className="bg-white rounded-xl p-4 border border-stone-200 shadow-sm flex-1 flex flex-col min-h-0">
                 <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center flex-shrink-0">
                   <Library className="w-5 h-5 mr-2" />
                   Library{" "}
@@ -832,40 +829,37 @@ export default function RAGBookBot() {
                     {searchMode === "all"
                       ? "All"
                       : searchMode === "books"
-                      ? "Books"
-                      : "Papers"}
+                        ? "Books"
+                        : "Papers"}
                   </span>
                 </h3>
                 <div className="space-y-2 flex-1 flex flex-col min-h-0">
                   <div className="flex justify-center">
-                    <div className="bg-gray-100 p-1 rounded-lg flex space-x-1">
+                    <div className="bg-stone-100 p-1 rounded-lg flex space-x-1">
                       <button
                         onClick={() => setSearchMode("all")}
-                        className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                          searchMode === "all"
-                            ? "bg-blue-600 text-white shadow-md"
-                            : "text-gray-600 hover:bg-gray-200"
-                        }`}
+                        className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${searchMode === "all"
+                          ? "bg-emerald-600 text-white shadow-md"
+                          : "text-stone-600 hover:bg-stone-200"
+                          }`}
                       >
                         All Sources
                       </button>
                       <button
                         onClick={() => setSearchMode("books")}
-                        className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
-                          searchMode === "books"
-                            ? "bg-blue-600 text-white shadow-md"
-                            : "text-gray-600 hover:bg-gray-200"
-                        }`}
+                        className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${searchMode === "books"
+                          ? "bg-emerald-600 text-white shadow-md"
+                          : "text-stone-600 hover:bg-stone-200"
+                          }`}
                       >
                         <BookOpen className="w-3 h-3 mr-1" /> Books
                       </button>
                       <button
                         onClick={() => setSearchMode("papers")}
-                        className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
-                          searchMode === "papers"
-                            ? "bg-green-600 text-white shadow-md"
-                            : "text-gray-600 hover:bg-gray-200"
-                        }`}
+                        className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${searchMode === "papers"
+                          ? "bg-teal-600 text-white shadow-md"
+                          : "text-stone-600 hover:bg-stone-200"
+                          }`}
                       >
                         <GraduationCap className="w-3 h-3 mr-1" /> Papers
                       </button>
@@ -978,9 +972,8 @@ export default function RAGBookBot() {
                     </div>
                   </div>
                   <div
-                    className={`grid grid-cols-2 gap-4 transition-opacity duration-300 mb-6 ${
-                      useBackendDefaults ? "opacity-50" : "opacity-100"
-                    }`}
+                    className={`grid grid-cols-2 gap-4 transition-opacity duration-300 mb-6 ${useBackendDefaults ? "opacity-50" : "opacity-100"
+                      }`}
                   >
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -993,9 +986,8 @@ export default function RAGBookBot() {
                         aria-disabled={useBackendDefaults}
                         value={pass1K}
                         onChange={(e) => setPass1K(parseInt(e.target.value))}
-                        className={`w-full accent-blue-600 ${
-                          useBackendDefaults ? "pointer-events-none" : ""
-                        }`}
+                        className={`w-full accent-blue-600 ${useBackendDefaults ? "pointer-events-none" : ""
+                          }`}
                       />
                       <span className="text-gray-900 text-sm">
                         {pass1K} chunks
@@ -1012,9 +1004,8 @@ export default function RAGBookBot() {
                         disabled={useBackendDefaults}
                         value={pass2K}
                         onChange={(e) => setPass2K(parseInt(e.target.value))}
-                        className={`w-full accent-blue-600 ${
-                          useBackendDefaults ? "pointer-events-none" : ""
-                        }`}
+                        className={`w-full accent-blue-600 ${useBackendDefaults ? "pointer-events-none" : ""
+                          }`}
                       />
                       <span className="text-gray-900 text-sm">
                         {pass2K} chunks
@@ -1032,12 +1023,12 @@ export default function RAGBookBot() {
                   {messages.length === 0 ? (
                     <div
                       className="relative flex flex-col items-center justify-center h-full text-center 
-bg-gradient-to-br from-blue-50 via-white to-blue-100 
-rounded-xl border border-blue-200 shadow-inner overflow-hidden"
+bg-gradient-to-br from-emerald-50/50 via-white to-amber-50/30 
+rounded-xl border border-stone-200 shadow-inner overflow-hidden"
                     >
                       <div className="absolute inset-0 bg-[url('/image.jpg')] bg-no-repeat bg-center bg-contain opacity-10 pointer-events-none" />
 
-                      <h3 className="text-2xl font-semibold text-blue-900 mb-2">
+                      <h3 className="text-2xl font-semibold text-stone-700 mb-2">
                         {currentSessionId ? "Continue Your Conversation" : ""}
                       </h3>
                     </div>
@@ -1061,9 +1052,9 @@ rounded-xl border border-blue-200 shadow-inner overflow-hidden"
                   )}
                   {loading && (
                     <div className="flex justify-start">
-                      <div className="max-w-2xl bg-blue-50 border border-blue-200 rounded-2xl p-4 shadow-sm">
+                      <div className="max-w-2xl bg-emerald-50 border border-emerald-200 rounded-2xl p-4 shadow-sm">
                         <div className="flex items-center space-x-3">
-                          <Loader className="w-5 h-5 text-blue-600 animate-spin" />
+                          <Loader className="w-5 h-5 text-emerald-600 animate-spin" />
                           <span className="text-sm text-gray-700 font-medium">
                             {loadingStages[currentLoadingStage]}
                           </span>
@@ -1075,14 +1066,14 @@ rounded-xl border border-blue-200 shadow-inner overflow-hidden"
                 </div>
 
                 {/* Input Area */}
-                <div className="p-4 border-t border-gray-200 bg-gray-50">
+                <div className="p-4 border-t border-stone-200 bg-stone-50">
                   <form onSubmit={handleQuerySubmit} className="flex space-x-3">
                     <input
                       type="text"
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
                       placeholder="Ask a question about your documents..."
-                      className="flex-1 px-4 py-3 bg-white border border-gray-300 rounded-xl text-gray-900 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      className="flex-1 px-4 py-3 bg-white border border-stone-300 rounded-xl text-stone-800 placeholder-stone-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                       disabled={loading}
                     />
                     {loading ? (
@@ -1098,7 +1089,7 @@ rounded-xl border border-blue-200 shadow-inner overflow-hidden"
                       <button
                         type="submit"
                         disabled={!query.trim()}
-                        className="px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-semibold shadow-md flex items-center space-x-2"
+                        className="px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-xl hover:from-emerald-600 hover:to-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-semibold shadow-md flex items-center space-x-2"
                       >
                         <MessageSquare className="w-5 h-5" />
                         <span>Send</span>
@@ -1149,20 +1140,20 @@ const MessageBubble = ({
               <textarea
                 value={editingText}
                 onChange={(e) => onEditChange(e.target.value)}
-                className="w-full p-3 bg-white border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 mb-3"
+                className="w-full p-3 bg-white border border-stone-300 rounded-lg text-stone-800 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 mb-3"
                 rows={4}
               />
               <div className="flex space-x-2">
                 <button
                   onClick={() => onSubmitEdit(index)}
                   disabled={isLoading}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium transition-all"
+                  className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 text-sm font-medium transition-all"
                 >
                   Resend
                 </button>
                 <button
                   onClick={onCancelEdit}
-                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm font-medium transition-all"
+                  className="px-4 py-2 bg-stone-200 text-stone-700 rounded-lg hover:bg-stone-300 text-sm font-medium transition-all"
                 >
                   Cancel
                 </button>
@@ -1170,14 +1161,14 @@ const MessageBubble = ({
             </div>
           ) : (
             <div className="group">
-              <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl px-5 py-3 shadow-md">
+              <div className="bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-2xl px-5 py-3 shadow-md">
                 <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
                   {message.content || ""}
                 </p>
               </div>
               <button
                 onClick={() => onEdit(index, message.content)}
-                className="mt-2 text-xs text-gray-500 hover:text-blue-600 transition-colors opacity-0 group-hover:opacity-100 flex items-center space-x-1"
+                className="mt-2 text-xs text-stone-500 hover:text-emerald-600 transition-colors opacity-0 group-hover:opacity-100 flex items-center space-x-1"
               >
                 <Edit className="w-3 h-3" />
                 <span>Edit</span>
@@ -1201,9 +1192,9 @@ const MessageBubble = ({
   return (
     <div className="flex justify-start" id={id}>
       <div className="max-w-3xl w-full">
-        <div className="bg-gray-50 border border-gray-200 rounded-2xl p-5 shadow-sm animate-slide">
+        <div className="bg-stone-50 border border-stone-200 rounded-2xl p-5 shadow-sm animate-slide">
           {message.answered_from_history && (
-            <div className="mb-3 flex items-center space-x-2 text-xs text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200 w-fit">
+            <div className="mb-3 flex items-center space-x-2 text-xs text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200 w-fit">
               <History className="w-3.5 h-3.5" />
               <span className="font-medium">
                 Answered from conversation history
@@ -1435,9 +1426,8 @@ function EnhancedPipelineDisplay({ stages, stats }) {
                 </div>
                 {hasChunks && (
                   <ChevronDown
-                    className={`w-4 h-4 text-white transition-transform ${
-                      isExpanded ? "rotate-180" : ""
-                    }`}
+                    className={`w-4 h-4 text-white transition-transform ${isExpanded ? "rotate-180" : ""
+                      }`}
                   />
                 )}
               </div>

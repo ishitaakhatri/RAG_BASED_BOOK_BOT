@@ -16,6 +16,8 @@ import {
   EyeOff,
   KeyRound,
   ArrowLeft,
+  BookOpen,
+  Zap,
 } from "lucide-react";
 
 const API_BASE_URL = "/api";
@@ -78,12 +80,12 @@ const LandingPage = () => {
       }
     } catch (err) {
       console.error("Auth error:", err);
-      
+
       const errorCode = err.errors?.[0]?.code;
-      
+
       if (errorCode === "form_password_pwned") {
-          setShowClerkLogin(true);
-          return;
+        setShowClerkLogin(true);
+        return;
       }
 
       setError(
@@ -123,15 +125,16 @@ const LandingPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 text-gray-900 relative overflow-y-auto">
+    <div className="min-h-screen bg-gradient-to-br from-stone-50 via-stone-100 to-amber-50/30 text-stone-800 relative overflow-y-auto">
       {/* Subtle Background Elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-20 right-20 w-96 h-96 bg-blue-200/30 rounded-full blur-3xl" />
-        <div className="absolute bottom-20 left-20 w-96 h-96 bg-indigo-200/30 rounded-full blur-3xl" />
+        <div className="absolute top-20 right-20 w-96 h-96 bg-emerald-200/20 rounded-full blur-3xl" />
+        <div className="absolute bottom-20 left-20 w-96 h-96 bg-amber-200/20 rounded-full blur-3xl" />
+        <div className="absolute top-1/2 left-1/3 w-64 h-64 bg-teal-200/15 rounded-full blur-3xl" />
       </div>
 
       {/* Subtle Grid Pattern */}
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(99,102,241,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(99,102,241,0.03)_1px,transparent_1px)] bg-[size:64px_64px]" />
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(16,185,129,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(16,185,129,0.02)_1px,transparent_1px)] bg-[size:64px_64px]" />
 
       <div className="relative z-10 flex items-center justify-center min-h-screen px-6 py-16">
         <div className="w-full max-w-6xl">
@@ -141,15 +144,15 @@ const LandingPage = () => {
               {/* Logo Section */}
               <div className="flex items-center space-x-5">
                 <div className="relative">
-                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shadow-lg">
+                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg shadow-emerald-500/25">
                     <Library className="w-8 h-8 text-white" />
                   </div>
                 </div>
                 <div>
-                  <h1 className="text-5xl font-bold text-gray-900">
+                  <h1 className="text-5xl font-bold text-stone-800">
                     RAG Bot
                   </h1>
-                  <p className="text-gray-600 text-sm mt-1">
+                  <p className="text-stone-500 text-sm mt-1">
                     Knowledge at your fingertips
                   </p>
                 </div>
@@ -157,13 +160,13 @@ const LandingPage = () => {
 
               {/* Tagline */}
               <div className="space-y-5">
-                <h2 className="text-4xl font-bold text-gray-900 leading-tight">
+                <h2 className="text-4xl font-bold text-stone-800 leading-tight">
                   Your personal AI librarian for
-                  <span className="block text-blue-600">
+                  <span className="block text-emerald-600">
                     research & discovery
                   </span>
                 </h2>
-                <p className="text-gray-600 text-lg leading-relaxed max-w-lg">
+                <p className="text-stone-600 text-lg leading-relaxed max-w-lg">
                   Transform your documents into interactive knowledge bases. Ask
                   questions, get precise answers, and unlock insights from your
                   research papers and books.
@@ -176,11 +179,19 @@ const LandingPage = () => {
                   icon={<Sparkles className="w-5 h-5" />}
                   title="AI-Powered Search"
                   description="Semantic understanding of your queries"
+                  accentColor="emerald"
+                />
+                <FeatureCard
+                  icon={<BookOpen className="w-5 h-5" />}
+                  title="Multi-Source Knowledge"
+                  description="Books, papers, and documents in one place"
+                  accentColor="teal"
                 />
                 <FeatureCard
                   icon={<Lock className="w-5 h-5" />}
                   title="Private & Secure"
                   description="Your documents stay confidential"
+                  accentColor="amber"
                 />
               </div>
             </div>
@@ -190,27 +201,27 @@ const LandingPage = () => {
               <div className="relative">
                 {showClerkLogin ? (
                   // CLERK UI FALLBACK
-                  <div className="flex flex-col justify-center items-center bg-white rounded-2xl shadow-xl border border-gray-200 p-8 min-h-[500px] relative">
-                    <SignIn 
+                  <div className="flex flex-col justify-center items-center bg-white rounded-2xl shadow-xl shadow-stone-200/50 border border-stone-200 p-8 min-h-[500px] relative">
+                    <SignIn
                       appearance={{
                         elements: {
                           rootBox: "w-full",
                           card: "bg-transparent shadow-none w-full",
-                          headerTitle: "text-gray-900",
-                          headerSubtitle: "text-gray-600",
-                          socialButtonsBlockButton: "text-gray-700 border-gray-300 hover:bg-gray-50",
-                          formFieldLabel: "text-gray-700",
-                          formFieldInput: "bg-white border-gray-300 text-gray-900",
-                          footerActionText: "text-gray-600",
-                          footerActionLink: "text-blue-600 hover:text-blue-700",
-                          dividerLine: "bg-gray-200",
-                          dividerText: "text-gray-500"
+                          headerTitle: "text-stone-800",
+                          headerSubtitle: "text-stone-600",
+                          socialButtonsBlockButton: "text-stone-700 border-stone-300 hover:bg-stone-50",
+                          formFieldLabel: "text-stone-700",
+                          formFieldInput: "bg-white border-stone-300 text-stone-800",
+                          footerActionText: "text-stone-600",
+                          footerActionLink: "text-emerald-600 hover:text-emerald-700",
+                          dividerLine: "bg-stone-200",
+                          dividerText: "text-stone-500"
                         }
                       }}
                     />
-                    <button 
+                    <button
                       onClick={() => setShowClerkLogin(false)}
-                      className="absolute top-4 right-4 text-gray-400 hover:text-gray-700 transition-colors"
+                      className="absolute top-4 right-4 text-stone-400 hover:text-stone-700 transition-colors"
                       title="Return to custom login"
                     >
                       <ArrowLeft className="w-5 h-5" />
@@ -218,7 +229,7 @@ const LandingPage = () => {
                   </div>
                 ) : (
                   // CUSTOM UI
-                  <div className="relative bg-white rounded-2xl shadow-xl border border-gray-200 p-10">
+                  <div className="relative bg-white rounded-2xl shadow-xl shadow-stone-200/50 border border-stone-200 p-10">
                     <div className="text-center mb-8 relative">
                       {resetStep && (
                         <button
@@ -232,20 +243,20 @@ const LandingPage = () => {
                               newPassword: "",
                             });
                           }}
-                          className="absolute left-0 top-1 text-gray-400 hover:text-gray-700 transition"
+                          className="absolute left-0 top-1 text-stone-400 hover:text-stone-700 transition"
                           title="Back to Login"
                         >
                           <ArrowLeft className="w-5 h-5" />
                         </button>
                       )}
-                      <h3 className="text-3xl font-bold text-gray-900 mb-2">
+                      <h3 className="text-3xl font-bold text-stone-800 mb-2">
                         {getTitle()}
                       </h3>
-                      <p className="text-gray-600 text-sm">{getSubtitle()}</p>
+                      <p className="text-stone-500 text-sm">{getSubtitle()}</p>
                     </div>
 
                     {error && (
-                      <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
+                      <div className="mb-6 p-4 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-sm">
                         {error}
                       </div>
                     )}
@@ -254,11 +265,11 @@ const LandingPage = () => {
                       {/* EMAIL INPUT */}
                       {(resetStep === null || resetStep === "email") && (
                         <div className="space-y-2">
-                          <label className="text-sm font-medium text-gray-700 block">
+                          <label className="text-sm font-medium text-stone-700 block">
                             Email Address
                           </label>
                           <div className="relative">
-                            <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                            <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-stone-400" />
                             <input
                               type="email"
                               value={formData.email}
@@ -268,7 +279,7 @@ const LandingPage = () => {
                                   email: e.target.value,
                                 })
                               }
-                              className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
+                              className="w-full pl-11 pr-4 py-3 bg-stone-50 border border-stone-300 rounded-xl text-stone-800 placeholder-stone-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-all"
                               placeholder="you@example.com"
                               required
                             />
@@ -280,7 +291,7 @@ const LandingPage = () => {
                       {resetStep === null && (
                         <div className="space-y-2">
                           <div className="flex justify-between items-center">
-                            <label className="text-sm font-medium text-gray-700 block">
+                            <label className="text-sm font-medium text-stone-700 block">
                               Password
                             </label>
                             <button
@@ -289,13 +300,13 @@ const LandingPage = () => {
                                 setResetStep("email");
                                 setError("");
                               }}
-                              className="text-sm text-blue-600 hover:text-blue-700 transition"
+                              className="text-sm text-emerald-600 hover:text-emerald-700 transition"
                             >
                               Forgot password?
                             </button>
                           </div>
                           <div className="relative">
-                            <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                            <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-stone-400" />
                             <input
                               type={showPassword ? "text" : "password"}
                               value={formData.password}
@@ -305,14 +316,14 @@ const LandingPage = () => {
                                   password: e.target.value,
                                 })
                               }
-                              className="w-full pl-11 pr-12 py-3 bg-gray-50 border border-gray-300 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
+                              className="w-full pl-11 pr-12 py-3 bg-stone-50 border border-stone-300 rounded-xl text-stone-800 placeholder-stone-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-all"
                               placeholder="••••••••"
                               required
                             />
                             <button
                               type="button"
                               onClick={() => setShowPassword(!showPassword)}
-                              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none"
+                              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-stone-400 hover:text-stone-600 transition-colors focus:outline-none"
                               tabIndex={-1}
                             >
                               {showPassword ? (
@@ -328,18 +339,18 @@ const LandingPage = () => {
                       {/* RESET CODE INPUT */}
                       {resetStep === "code" && (
                         <div className="space-y-2">
-                          <label className="text-sm font-medium text-gray-700 block">
+                          <label className="text-sm font-medium text-stone-700 block">
                             Reset Code
                           </label>
                           <div className="relative">
-                            <KeyRound className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                            <KeyRound className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-stone-400" />
                             <input
                               type="text"
                               value={formData.code}
                               onChange={(e) =>
                                 setFormData({ ...formData, code: e.target.value })
                               }
-                              className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
+                              className="w-full pl-11 pr-4 py-3 bg-stone-50 border border-stone-300 rounded-xl text-stone-800 placeholder-stone-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-all"
                               placeholder="Enter code from email"
                               required
                             />
@@ -350,11 +361,11 @@ const LandingPage = () => {
                       {/* NEW PASSWORD INPUT */}
                       {resetStep === "code" && (
                         <div className="space-y-2">
-                          <label className="text-sm font-medium text-gray-700 block">
+                          <label className="text-sm font-medium text-stone-700 block">
                             New Password
                           </label>
                           <div className="relative">
-                            <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                            <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-stone-400" />
                             <input
                               type={showPassword ? "text" : "password"}
                               value={formData.newPassword}
@@ -364,14 +375,14 @@ const LandingPage = () => {
                                   newPassword: e.target.value,
                                 })
                               }
-                              className="w-full pl-11 pr-12 py-3 bg-gray-50 border border-gray-300 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
+                              className="w-full pl-11 pr-12 py-3 bg-stone-50 border border-stone-300 rounded-xl text-stone-800 placeholder-stone-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-all"
                               placeholder="New secure password"
                               required
                             />
                             <button
                               type="button"
                               onClick={() => setShowPassword(!showPassword)}
-                              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none"
+                              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-stone-400 hover:text-stone-600 transition-colors focus:outline-none"
                               tabIndex={-1}
                             >
                               {showPassword ? (
@@ -387,15 +398,15 @@ const LandingPage = () => {
                       <button
                         type="submit"
                         disabled={loading}
-                        className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 rounded-xl font-semibold text-white shadow-md hover:shadow-lg transition-all transform hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 rounded-xl font-semibold text-white shadow-lg shadow-emerald-500/25 hover:shadow-xl hover:shadow-emerald-500/30 transition-all transform hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {loading
                           ? "Processing..."
                           : resetStep === "email"
-                          ? "Send Reset Code"
-                          : resetStep === "code"
-                          ? "Reset & Sign In"
-                          : "Sign In"}
+                            ? "Send Reset Code"
+                            : resetStep === "code"
+                              ? "Reset & Sign In"
+                              : "Sign In"}
                       </button>
                     </form>
 
@@ -404,10 +415,10 @@ const LandingPage = () => {
                       <>
                         <div className="relative my-6">
                           <div className="absolute inset-0 flex items-center">
-                            <div className="w-full border-t border-gray-200"></div>
+                            <div className="w-full border-t border-stone-200"></div>
                           </div>
                           <div className="relative flex justify-center text-xs uppercase">
-                            <span className="bg-white px-2 text-gray-500">
+                            <span className="bg-white px-2 text-stone-500">
                               Or continue with
                             </span>
                           </div>
@@ -417,7 +428,7 @@ const LandingPage = () => {
                           type="button"
                           onClick={() => handleSocialLogin("google")}
                           disabled={loading}
-                          className="w-full py-2.5 px-4 bg-white border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                          className="w-full py-2.5 px-4 bg-white border border-stone-300 rounded-xl text-sm font-medium text-stone-700 hover:bg-stone-50 hover:border-stone-400 transition flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                         >
                           <svg className="w-5 h-5" viewBox="0 0 24 24">
                             <path
@@ -453,17 +464,25 @@ const LandingPage = () => {
 };
 
 // Feature Card Component
-const FeatureCard = ({ icon, title, description }) => (
-  <div className="flex items-start space-x-4 p-5 rounded-xl bg-white border border-gray-200 shadow-sm hover:shadow-md transition-all">
-    <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-gradient-to-br from-blue-100 to-indigo-100 flex items-center justify-center text-blue-600">
-      {icon}
+const FeatureCard = ({ icon, title, description, accentColor = "emerald" }) => {
+  const colorClasses = {
+    emerald: "from-emerald-100 to-teal-100 text-emerald-600",
+    teal: "from-teal-100 to-cyan-100 text-teal-600",
+    amber: "from-amber-100 to-orange-100 text-amber-600",
+  };
+
+  return (
+    <div className="flex items-start space-x-4 p-5 rounded-xl bg-white border border-stone-200 shadow-sm hover:shadow-md hover:border-stone-300 transition-all group">
+      <div className={`flex-shrink-0 w-10 h-10 rounded-lg bg-gradient-to-br ${colorClasses[accentColor]} flex items-center justify-center group-hover:scale-110 transition-transform`}>
+        {icon}
+      </div>
+      <div>
+        <h4 className="font-semibold text-stone-800 text-sm mb-1">{title}</h4>
+        <p className="text-stone-500 text-xs leading-relaxed">{description}</p>
+      </div>
     </div>
-    <div>
-      <h4 className="font-semibold text-gray-900 text-sm mb-1">{title}</h4>
-      <p className="text-gray-600 text-xs leading-relaxed">{description}</p>
-    </div>
-  </div>
-);
+  );
+};
 
 // Main App Component
 export default function App() {
@@ -488,16 +507,16 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 text-gray-900 relative">
+    <div className="min-h-screen bg-gradient-to-br from-stone-50 via-stone-100 to-amber-50/30 text-stone-800 relative">
       {/* Subtle Background Elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-20 right-20 w-96 h-96 bg-blue-200/20 rounded-full blur-3xl" />
-        <div className="absolute bottom-20 left-20 w-96 h-96 bg-indigo-200/20 rounded-full blur-3xl" />
+        <div className="absolute top-20 right-20 w-96 h-96 bg-emerald-200/15 rounded-full blur-3xl" />
+        <div className="absolute bottom-20 left-20 w-96 h-96 bg-amber-200/15 rounded-full blur-3xl" />
       </div>
-      
+
       {/* Subtle Grid Pattern */}
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(99,102,241,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(99,102,241,0.03)_1px,transparent_1px)] bg-[size:64px_64px]" />
-      
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(16,185,129,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(16,185,129,0.02)_1px,transparent_1px)] bg-[size:64px_64px]" />
+
       <div className="relative z-10">
         {/* SIGNED OUT */}
         <SignedOut>
@@ -511,7 +530,7 @@ export default function App() {
               afterSignOutUrl="/"
               appearance={{
                 elements: {
-                  userButtonAvatarBox: "w-10 h-10 shadow-lg",
+                  userButtonAvatarBox: "w-10 h-10 shadow-lg ring-2 ring-white",
                 },
               }}
             />

@@ -37,23 +37,22 @@ const LogItem = React.memo(({ log, getLogColor }) => (
       [{log.timestamp}]
     </span>
     <span
-      className={`mr-3 flex-shrink-0 font-bold text-xs select-none px-2 py-0.5 rounded ${
-        log.type === "error"
-          ? "bg-red-100 text-red-700 border border-red-300"
-          : log.type === "warning"
+      className={`mr-3 flex-shrink-0 font-bold text-xs select-none px-2 py-0.5 rounded ${log.type === "error"
+        ? "bg-red-100 text-red-700 border border-red-300"
+        : log.type === "warning"
           ? "bg-yellow-100 text-yellow-700 border border-yellow-300"
           : log.type === "success"
-          ? "bg-green-100 text-green-700 border border-green-300"
-          : "bg-blue-100 text-blue-700 border border-blue-300"
-      }`}
+            ? "bg-green-100 text-green-700 border border-green-300"
+            : "bg-blue-100 text-blue-700 border border-blue-300"
+        }`}
     >
       {log.type === "error"
         ? "ERR"
         : log.type === "warning"
-        ? "WRN"
-        : log.type === "success"
-        ? "OK"
-        : "INF"}
+          ? "WRN"
+          : log.type === "success"
+            ? "OK"
+            : "INF"}
     </span>
     <span className="flex-1 break-all text-gray-700">{log.message}</span>
   </div>
@@ -240,13 +239,13 @@ export default function IngestionPage({ books, onUploadSuccess }) {
 
         if (taskId) {
           addLog(`✅ Upload complete. Tracking Task ID: ${taskId}`, "success");
-          
+
           setUploadProgress({
             status: "processing",
             message: "File uploaded. Starting processing...",
             percentage: 10,
           });
-          
+
           if (isIngestingRef.current) {
             await connectWebSocket(taskId);
           }
@@ -282,7 +281,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         }
 
         const wsUrlWithId = `${WS_URL}/${taskId}`;
-        
+
         wsRef.current = new WebSocket(wsUrlWithId);
 
         wsRef.current.onopen = () => {
@@ -319,7 +318,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
           console.error("WebSocket error:", error);
           reject(error);
         };
-        
+
         wsRef.current.onclose = () => {
           console.log("WebSocket connection closed");
         };
@@ -426,18 +425,18 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     e.stopPropagation();
     if (!isIngesting) setIsDragging(true);
   };
-  
+
   const handleDragLeave = (e) => {
     e.preventDefault();
     e.stopPropagation();
     if (e.currentTarget === e.target) setIsDragging(false);
   };
-  
+
   const handleDragOver = (e) => {
     e.preventDefault();
     e.stopPropagation();
   };
-  
+
   const handleDrop = (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -509,21 +508,21 @@ export default function IngestionPage({ books, onUploadSuccess }) {
       return (
         20 +
         ((liveProgress.current_page || 0) / (liveProgress.total_pages || 1)) *
-          30
+        30
       );
     if (status === "embedding")
       return (
         50 +
         ((liveProgress.embeddings_generated || 0) /
           (liveProgress.chunks_created || 1)) *
-          30
+        30
       );
     if (status === "upserting")
       return (
         80 +
         ((liveProgress.vectors_upserted || 0) /
           (liveProgress.chunks_created || 1)) *
-          18
+        18
       );
 
     return Math.max(uploadProgress?.percentage ?? 0, 5);
@@ -534,7 +533,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     liveProgress?.status || uploadProgress?.status || "idle";
   const radius = 48;
   const circumference = 2 * Math.PI * radius;
-  
+
   const renderedLogs = useMemo(
     () =>
       logs.map((log, idx) => (
@@ -568,19 +567,19 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   }, [books, searchMode, bookList, paperList]);
 
   return (
-    <div className="h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 text-gray-900 relative flex flex-col">
+    <div className="h-screen bg-gradient-to-br from-stone-50 via-stone-100 to-amber-50/30 text-stone-800 relative flex flex-col">
       {/* Subtle Background Elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-20 right-20 w-96 h-96 bg-blue-200/20 rounded-full blur-3xl" />
-        <div className="absolute bottom-20 left-20 w-96 h-96 bg-indigo-200/20 rounded-full blur-3xl" />
+        <div className="absolute top-20 right-20 w-96 h-96 bg-emerald-200/15 rounded-full blur-3xl" />
+        <div className="absolute bottom-20 left-20 w-96 h-96 bg-amber-200/15 rounded-full blur-3xl" />
       </div>
-      
+
       {/* Grid Pattern Overlay */}
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(99,102,241,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(99,102,241,0.03)_1px,transparent_1px)] bg-[size:64px_64px]" />
-      
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(16,185,129,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(16,185,129,0.02)_1px,transparent_1px)] bg-[size:64px_64px]" />
+
       <div className="relative z-10 flex flex-col flex-1 w-full">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-10 flex-shrink-0">
+        <header className="bg-white border-b border-stone-200 shadow-sm sticky top-0 z-10 flex-shrink-0">
           <div className="px-4 sm:px-6 lg:px-8 py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-3">
@@ -591,7 +590,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                 >
                   <ArrowLeft className="w-5 h-5" />
                 </button>
-                <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-2 rounded-lg shadow-md">
+                <div className="bg-gradient-to-br from-emerald-500 to-teal-600 p-2 rounded-lg shadow-md shadow-emerald-500/20">
                   <Upload className="w-8 h-8 text-white" />
                 </div>
                 <div>
@@ -613,7 +612,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
               {/* LEFT SIDEBAR */}
               <div className="lg:col-span-1 space-y-6">
-                <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
+                <div className="bg-white rounded-xl p-6 border border-stone-200 shadow-sm">
                   <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
                     <Library className="w-5 h-5 mr-2" />
                     Library
@@ -621,34 +620,31 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                   <div className="space-y-2">
                     {/* Search Scope Toggle */}
                     <div className="flex justify-center mb-4">
-                      <div className="bg-gray-100 p-1 rounded-lg flex space-x-1">
+                      <div className="bg-stone-100 p-1 rounded-lg flex space-x-1">
                         <button
                           onClick={() => setSearchMode("all")}
-                          className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                            searchMode === "all"
-                              ? "bg-blue-600 text-white shadow-md"
-                              : "text-gray-600 hover:bg-gray-200"
-                          }`}
+                          className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${searchMode === "all"
+                            ? "bg-emerald-600 text-white shadow-md"
+                            : "text-stone-600 hover:bg-stone-200"
+                            }`}
                         >
                           All Sources
                         </button>
                         <button
                           onClick={() => setSearchMode("books")}
-                          className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
-                            searchMode === "books"
-                              ? "bg-blue-600 text-white shadow-md"
-                              : "text-gray-600 hover:bg-gray-200"
-                          }`}
+                          className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${searchMode === "books"
+                            ? "bg-emerald-600 text-white shadow-md"
+                            : "text-stone-600 hover:bg-stone-200"
+                            }`}
                         >
                           <BookOpen className="w-3 h-3 mr-1" /> Books
                         </button>
                         <button
                           onClick={() => setSearchMode("papers")}
-                          className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
-                            searchMode === "papers"
-                              ? "bg-green-600 text-white shadow-md"
-                              : "text-gray-600 hover:bg-gray-200"
-                          }`}
+                          className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${searchMode === "papers"
+                            ? "bg-teal-600 text-white shadow-md"
+                            : "text-stone-600 hover:bg-stone-200"
+                            }`}
                         >
                           <GraduationCap className="w-3 h-3 mr-1" /> Papers
                         </button>
@@ -662,7 +658,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                         paperList.length > 0 && (
                           <div>
                             {searchMode === "all" && (
-                              <div className="text-xs font-bold text-green-600 uppercase tracking-wider mb-2 flex items-center">
+                              <div className="text-xs font-bold text-teal-600 uppercase tracking-wider mb-2 flex items-center">
                                 <GraduationCap className="w-3 h-3 mr-1" />
                                 Research Papers
                               </div>
@@ -671,10 +667,10 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                               {paperList.map((book, idx) => (
                                 <button
                                   key={idx}
-                                  className="w-full text-left px-3 py-2 rounded-lg transition-all bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-green-300"
+                                  className="w-full text-left px-3 py-2 rounded-lg transition-all bg-white border border-stone-200 text-stone-700 hover:bg-stone-50 hover:border-teal-300"
                                 >
                                   <div className="flex items-center space-x-2">
-                                    <FileText className="w-3 h-3 flex-shrink-0 text-green-600" />
+                                    <FileText className="w-3 h-3 flex-shrink-0 text-teal-600" />
                                     <div className="truncate flex-1">
                                       <div className="text-sm font-semibold truncate">
                                         {book.title}
@@ -700,7 +696,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                         bookList.length > 0 && (
                           <div>
                             {searchMode === "all" && (
-                              <div className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-2 mt-4 flex items-center">
+                              <div className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-2 mt-4 flex items-center">
                                 <Book className="w-3 h-3 mr-1" />
                                 Books
                               </div>
@@ -741,7 +737,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                     </div>
                   </div>
                 </div>
-                
+
                 {/* Stats */}
                 <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
                   <h3 className="text-lg font-semibold text-gray-900 mb-4">
@@ -773,7 +769,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
 
               {/* RIGHT SIDE - Upload Form */}
               <div className="lg:col-span-3 space-y-6">
-                <div className="bg-white rounded-xl p-8 border border-gray-200 shadow-sm">
+                <div className="bg-white rounded-xl p-8 border border-stone-200 shadow-sm">
                   <h2 className="text-2xl font-bold text-gray-900 mb-2">
                     Upload PDFs
                   </h2>
@@ -792,11 +788,10 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                           </label>
                           <label
                             htmlFor="file-upload"
-                            className={`flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-xl cursor-pointer transition-all duration-300 ${
-                              isDragging
-                                ? "border-blue-500 bg-blue-50 scale-[1.01] shadow-lg"
-                                : "border-gray-300 bg-gray-50 hover:bg-blue-50 hover:border-blue-400"
-                            }`}
+                            className={`flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-xl cursor-pointer transition-all duration-300 ${isDragging
+                              ? "border-emerald-500 bg-emerald-50 scale-[1.01] shadow-lg"
+                              : "border-stone-300 bg-stone-50 hover:bg-emerald-50 hover:border-emerald-400"
+                              }`}
                             onDragEnter={handleDragEnter}
                             onDragLeave={handleDragLeave}
                             onDragOver={handleDragOver}
@@ -804,11 +799,10 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                           >
                             <div className="flex flex-col items-center justify-center pt-8 pb-6">
                               <Upload
-                                className={`w-12 h-12 mb-2 transition-all duration-300 ${
-                                  isDragging
-                                    ? "text-blue-600 scale-125"
-                                    : "text-gray-400"
-                                }`}
+                                className={`w-12 h-12 mb-2 transition-all duration-300 ${isDragging
+                                  ? "text-emerald-600 scale-125"
+                                  : "text-stone-400"
+                                  }`}
                               />
                               <p className="text-sm font-semibold text-gray-900">
                                 {isDragging
@@ -882,16 +876,14 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                         <div className="flex items-center justify-between mb-6">
                           <h3 className="text-xl font-bold text-gray-900 flex items-center">
                             <div
-                              className={`w-2 h-2 rounded-full mr-3 ${
-                                currentPercentage === 100 && !isIngesting
-                                  ? "bg-green-500"
-                                  : "bg-green-500 animate-pulse"
-                              }`}
+                              className={`w-2 h-2 rounded-full mr-3 ${currentPercentage === 100 && !isIngesting
+                                ? "bg-green-500"
+                                : "bg-green-500 animate-pulse"
+                                }`}
                             ></div>
                             {isIngesting
-                              ? `Processing File ${currentFileIndex + 1} of ${
-                                  fileQueue.length
-                                }`
+                              ? `Processing File ${currentFileIndex + 1} of ${fileQueue.length
+                              }`
                               : "Ingestion Complete"}
                           </h3>
                           <span className="text-xs font-mono bg-white px-2 py-1 rounded text-gray-700 border border-gray-300">
@@ -905,15 +897,14 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                             {fileQueue.map((item, idx) => (
                               <div
                                 key={item.id}
-                                className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border transition-all ${
-                                  idx === currentFileIndex
-                                    ? "bg-blue-600 border-blue-500 text-white animate-pulse shadow-md"
-                                    : item.status === "success"
+                                className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border transition-all ${idx === currentFileIndex
+                                  ? "bg-blue-600 border-blue-500 text-white animate-pulse shadow-md"
+                                  : item.status === "success"
                                     ? "bg-green-100 border-green-500 text-green-700"
                                     : item.status === "error"
-                                    ? "bg-red-100 border-red-500 text-red-700"
-                                    : "bg-gray-100 border-gray-300 text-gray-500"
-                                }`}
+                                      ? "bg-red-100 border-red-500 text-red-700"
+                                      : "bg-gray-100 border-gray-300 text-gray-500"
+                                  }`}
                               >
                                 {item.status === "success" ? (
                                   <CheckCircle className="w-5 h-5" />
@@ -967,11 +958,11 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                                   >
                                     <stop
                                       offset="0%"
-                                      stopColor="#3b82f6"
+                                      stopColor="#10b981"
                                     />
                                     <stop
                                       offset="100%"
-                                      stopColor="#6366f1"
+                                      stopColor="#0d9488"
                                     />
                                   </linearGradient>
                                 </defs>
@@ -1040,7 +1031,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                       {!isIngesting && fileQueue.length > 0 && (
                         <button
                           onClick={startQueueProcessing}
-                          className="flex-1 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all font-semibold shadow-md flex items-center justify-center space-x-2"
+                          className="flex-1 px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-lg hover:from-emerald-600 hover:to-teal-700 transition-all font-semibold shadow-md flex items-center justify-center space-x-2"
                         >
                           <Upload className="w-5 h-5" />
                           <span>Start Processing ({fileQueue.length} files)</span>
@@ -1049,7 +1040,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                       {!isIngesting && fileQueue.length > 0 && (
                         <button
                           onClick={() => setFileQueue([])}
-                          className="px-6 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all font-semibold"
+                          className="px-6 py-3 bg-stone-200 text-stone-700 rounded-lg hover:bg-stone-300 transition-all font-semibold"
                         >
                           Clear Queue
                         </button>

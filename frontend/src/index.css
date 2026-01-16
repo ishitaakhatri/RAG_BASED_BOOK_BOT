@@ -1,14 +1,22 @@
 @import "tailwindcss/base";
 @import "tailwindcss/components";
 @import "tailwindcss/utilities";
-/* ==================== SCROLLBAR FIX - UNIVERSAL ==================== */
 
-/* Apply to any scrollable container */
+/* ==================== BASE STYLES ==================== */
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ==================== SCROLLBAR - WARM THEME ==================== */
+
 .scrollbar-visible {
   overflow-y: auto !important;
   overflow-x: hidden !important;
   scrollbar-width: thin;
-  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.3);
+  scrollbar-color: #10b981 rgba(41, 37, 36, 0.1);
 }
 
 .scrollbar-visible::-webkit-scrollbar {
@@ -17,29 +25,29 @@
 }
 
 .scrollbar-visible::-webkit-scrollbar-track {
-  background: rgba(88, 28, 135, 0.15);
+  background: rgba(41, 37, 36, 0.05);
   border-radius: 10px;
 }
 
 .scrollbar-visible::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
+  background: linear-gradient(180deg, #10b981 0%, #059669 100%);
   border-radius: 10px;
   min-height: 40px;
 }
 
 .scrollbar-visible::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
-  box-shadow: 0 0 15px rgba(168, 85, 247, 0.6);
+  background: linear-gradient(180deg, #34d399 0%, #10b981 100%);
+  box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
 }
 
-/* ==================== LIBRARY SIDEBAR FIX ==================== */
+/* ==================== LIBRARY SIDEBAR ==================== */
 
 .library-scroll {
   max-height: 400px;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
-  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.3);
+  scrollbar-color: #10b981 rgba(41, 37, 36, 0.1);
 }
 
 .library-scroll::-webkit-scrollbar {
@@ -47,29 +55,29 @@
 }
 
 .library-scroll::-webkit-scrollbar-track {
-  background: rgba(88, 28, 135, 0.1);
+  background: rgba(41, 37, 36, 0.05);
   border-radius: 8px;
   margin: 5px 0;
 }
 
 .library-scroll::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
+  background: linear-gradient(180deg, #10b981 0%, #059669 100%);
   border-radius: 8px;
   min-height: 30px;
 }
 
 .library-scroll::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
+  background: linear-gradient(180deg, #34d399 0%, #10b981 100%);
 }
 
-/* ==================== TERMINAL/LOGS AREA FIX ==================== */
+/* ==================== TERMINAL/LOGS AREA ==================== */
 
 .terminal-logs {
   height: 300px;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
-  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.4);
+  scrollbar-color: #10b981 rgba(41, 37, 36, 0.15);
 }
 
 .terminal-logs::-webkit-scrollbar {
@@ -77,29 +85,29 @@
 }
 
 .terminal-logs::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(41, 37, 36, 0.1);
   border-radius: 8px;
 }
 
 .terminal-logs::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
+  background: linear-gradient(180deg, #10b981 0%, #059669 100%);
   border-radius: 8px;
   min-height: 40px;
 }
 
 .terminal-logs::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
-  box-shadow: 0 0 12px rgba(168, 85, 247, 0.5);
+  background: linear-gradient(180deg, #34d399 0%, #10b981 100%);
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.4);
 }
 
-/* ==================== MAIN CONTENT AREA FIX ==================== */
+/* ==================== MAIN CONTENT SCROLL ==================== */
 
 .ingest-scroll-area {
   max-height: calc(100vh - 150px);
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: auto;
-  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.2);
+  scrollbar-color: #10b981 rgba(41, 37, 36, 0.1);
 }
 
 .ingest-scroll-area::-webkit-scrollbar {
@@ -107,13 +115,13 @@
 }
 
 .ingest-scroll-area::-webkit-scrollbar-track {
-  background: rgba(88, 28, 135, 0.1);
+  background: rgba(41, 37, 36, 0.05);
   border-radius: 10px;
   margin: 10px 0;
 }
 
 .ingest-scroll-area::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
+  background: linear-gradient(180deg, #10b981 0%, #059669 100%);
   border-radius: 10px;
   min-height: 50px;
   border: 2px solid transparent;
@@ -121,18 +129,18 @@
 }
 
 .ingest-scroll-area::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
+  background: linear-gradient(180deg, #34d399 0%, #10b981 100%);
   background-clip: content-box;
 }
 
-/* ==================== QUEUE FILE LIST ==================== */
+/* ==================== FILE QUEUE SCROLL ==================== */
 
 .file-queue-scroll {
   max-height: 200px;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
-  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.3);
+  scrollbar-color: #10b981 rgba(41, 37, 36, 0.1);
 }
 
 .file-queue-scroll::-webkit-scrollbar {
@@ -140,69 +148,65 @@
 }
 
 .file-queue-scroll::-webkit-scrollbar-track {
-  background: rgba(88, 28, 135, 0.1);
+  background: rgba(41, 37, 36, 0.05);
   border-radius: 6px;
 }
 
 .file-queue-scroll::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
+  background: linear-gradient(180deg, #10b981 0%, #059669 100%);
   border-radius: 6px;
   min-height: 25px;
 }
 
 .file-queue-scroll::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
+  background: linear-gradient(180deg, #34d399 0%, #10b981 100%);
 }
 
 /* ==================== FIREFOX FALLBACK ==================== */
 
-/* Ensures Firefox shows scrollbars even without hover */
 * {
   scrollbar-width: auto;
 }
 
-/* ==================== IMPORTANT: ENABLE OVERFLOW ==================== */
+/* ==================== ENABLE SCROLL UTILITY ==================== */
 
-/* Make sure parent containers allow scrolling */
 .enable-scroll {
   overflow: auto !important;
 }
 
-/* ==================== CUSTOM SCROLLBAR (PURPLE THEME) ==================== */
+/* ==================== CUSTOM SCROLLBAR ==================== */
 
-/* Applies only where .custom-scrollbar is used */
 .custom-scrollbar::-webkit-scrollbar {
   width: 8px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(41, 37, 36, 0.05);
   border-radius: 10px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
+  background: linear-gradient(180deg, #10b981 0%, #059669 100%);
   border-radius: 10px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
+  background: linear-gradient(180deg, #34d399 0%, #10b981 100%);
   background-clip: content-box;
 }
 
-/* Firefox */
 .custom-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: #a855f7 rgba(255, 255, 255, 0.05);
+  scrollbar-color: #10b981 rgba(41, 37, 36, 0.05);
 }
 
 /* ==================== THIN SCROLLBAR VARIANT ==================== */
 
 .scrollbar-thin {
   scrollbar-width: auto;
-  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.3);
+  scrollbar-color: #10b981 rgba(41, 37, 36, 0.1);
 }
 
 .scrollbar-thin::-webkit-scrollbar {
@@ -211,102 +215,37 @@
 }
 
 .scrollbar-thin::-webkit-scrollbar-track {
-  background: rgba(88, 28, 135, 0.15);
+  background: rgba(41, 37, 36, 0.05);
   border-radius: 10px;
   margin: 5px 0;
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
+  background: linear-gradient(180deg, #10b981 0%, #059669 100%);
   border-radius: 10px;
-  border: 2px solid rgba(139, 92, 246, 0.2);
+  border: 2px solid rgba(16, 185, 129, 0.2);
   background-clip: content-box;
   min-height: 40px;
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
+  background: linear-gradient(180deg, #34d399 0%, #10b981 100%);
   background-clip: content-box;
-  box-shadow: 0 0 20px rgba(168, 85, 247, 0.8);
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.5);
 }
 
 .scrollbar-thin::-webkit-scrollbar-corner {
-  background: rgba(88, 28, 135, 0.15);
+  background: rgba(41, 37, 36, 0.05);
 }
 
-/* ==================== VISIBLE SCROLLBAR ==================== */
-
-.scrollbar-visible {
-  scrollbar-width: auto;
-  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.4);
-}
-
-.scrollbar-visible::-webkit-scrollbar {
-  width: 14px;
-  height: 14px;
-}
-
-.scrollbar-visible::-webkit-scrollbar-track {
-  background: rgba(88, 28, 135, 0.2);
-  border-radius: 10px;
-  margin: 10px 0;
-}
-
-.scrollbar-visible::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
-  border-radius: 10px;
-  border: 3px solid rgba(139, 92, 246, 0.3);
-  background-clip: content-box;
-  min-height: 50px;
-}
-
-.scrollbar-visible::-webkit-scrollbar-thumb:active,
-.scrollbar-visible::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
-  background-clip: content-box;
-  box-shadow: 0 0 25px rgba(168, 85, 247, 1);
-  border-color: rgba(168, 85, 247, 0.6);
-}
-
-.scrollbar-visible::-webkit-scrollbar-corner {
-  background: rgba(88, 28, 135, 0.2);
-}
-
-/* ==================== INGESTION PAGE SCROLLBAR ==================== */
-.ingest-scroll::-webkit-scrollbar {
-  width: 10px;
-}
-
-.ingest-scroll::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 10px;
-}
-
-.ingest-scroll::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
-  border-radius: 10px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-
-.ingest-scroll::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
-  background-clip: content-box;
-}
-
-.ingest-scroll {
-  scrollbar-width: auto;
-  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.2);
-}
-
-/* ==================== CHAT / LOG SCROLL AREA ==================== */
+/* ==================== CHAT MESSAGES SCROLL ==================== */
 
 .chat-messages {
   overflow-y: auto;
   overflow-x: hidden;
   scroll-behavior: smooth;
   scrollbar-width: thin;
-  scrollbar-color: #a855f7 rgba(88, 28, 135, 0.2);
+  scrollbar-color: #10b981 rgba(41, 37, 36, 0.1);
 }
 
 .chat-messages::-webkit-scrollbar {
@@ -314,24 +253,23 @@
 }
 
 .chat-messages::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(41, 37, 36, 0.05);
   border-radius: 10px;
 }
 
 .chat-messages::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
+  background: linear-gradient(180deg, #10b981 0%, #059669 100%);
   border-radius: 10px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
 
 .chat-messages::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
+  background: linear-gradient(180deg, #34d399 0%, #10b981 100%);
 }
 
-/* ==================== SAFE GLOBAL LAYOUT ==================== */
+/* ==================== GLOBAL LAYOUT ==================== */
 
-/* Let Tailwind Preflight handle margins/padding */
 *,
 *::before,
 *::after {
@@ -343,7 +281,7 @@ body {
   height: 100%;
 }
 
-/* Desktop: app controls scrolling, not body */
+/* Desktop: app controls scrolling */
 @media (min-width: 768px) {
   html,
   body {
@@ -352,7 +290,7 @@ body {
 
   #root {
     height: 100%;
-    overflow: hidden; /* keep */
+    overflow: hidden;
     display: flex;
     flex-direction: column;
   }
@@ -360,7 +298,6 @@ body {
 
 /* ==================== MOBILE SAFETY ==================== */
 
-/* Prevent iOS zoom on input focus */
 @media (max-width: 768px) {
   input,
   textarea,
@@ -369,7 +306,6 @@ body {
   }
 }
 
-/* Touch-friendly targets */
 @media (max-width: 768px) {
   button,
   a {
@@ -378,8 +314,7 @@ body {
   }
 }
 
-/* ==================== CUSTOM RESPONSIVE HELPERS ==================== */
-/* Use these INSTEAD of overriding Tailwind utilities */
+/* ==================== RESPONSIVE HELPERS ==================== */
 
 @media (max-width: 640px) {
   .mobile-px {
@@ -397,61 +332,6 @@ body {
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
-  background: transparent;
-  cursor: pointer;
-}
-
-input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
-  box-shadow: 0 2px 8px rgba(168, 85, 247, 0.4);
-}
-
-input[type="range"]::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
-  border: none;
-  box-shadow: 0 2px 8px rgba(168, 85, 247, 0.4);
-}
-
-input[type="checkbox"] {
-  cursor: pointer;
-}
-
-/* ==================== ACCESSIBILITY ==================== */
-
-:focus-visible {
-  outline: 2px solid #a855f7;
-  outline-offset: 2px;
-}
-
-/* Reduce motion if user prefers */
-@media (prefers-reduced-motion: reduce) {
-  * {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-}
-
-@media (prefers-color-scheme: dark) {
-  body {
-    background-color: #0f172a;
-    color: #f8fafc;
-  }
-}
-
-/* ==================== INPUT STYLING - PERFECT RANGE SLIDER ==================== */
-
-input[type="range"] {
-  -webkit-appearance: none;
-  appearance: none;
   width: 100%;
   height: 18px;
   padding: 0;
@@ -461,7 +341,6 @@ input[type="range"] {
   display: block;
 }
 
-/* Chrome, Safari, Edge */
 input[type="range"]::-webkit-slider-runnable-track {
   -webkit-appearance: none;
   appearance: none;
@@ -469,11 +348,11 @@ input[type="range"]::-webkit-slider-runnable-track {
   height: 6px;
   background: linear-gradient(
     90deg,
-    rgba(168, 85, 247, 0.4) 0%,
-    rgba(236, 72, 153, 0.4) 100%
+    rgba(16, 185, 129, 0.3) 0%,
+    rgba(5, 150, 105, 0.3) 100%
   );
   border-radius: 5px;
-  border: 1px solid rgba(168, 85, 247, 0.6);
+  border: 1px solid rgba(16, 185, 129, 0.4);
   box-sizing: border-box;
 }
 
@@ -483,9 +362,9 @@ input[type="range"]::-webkit-slider-thumb {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(168, 85, 247, 0.6),
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.4),
     0 0 0 1px rgba(255, 255, 255, 0.3);
   border: none;
   transition: all 0.2s ease;
@@ -494,20 +373,19 @@ input[type="range"]::-webkit-slider-thumb {
 
 input[type="range"]::-webkit-slider-thumb:hover {
   transform: scale(1.2);
-  box-shadow: 0 4px 12px rgba(168, 85, 247, 0.8),
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.6),
     0 0 0 2px rgba(255, 255, 255, 0.4);
 }
 
-/* Firefox */
 input[type="range"]::-moz-range-track {
   background: linear-gradient(
     90deg,
-    rgba(168, 85, 247, 0.4) 0%,
-    rgba(236, 72, 153, 0.4) 100%
+    rgba(16, 185, 129, 0.3) 0%,
+    rgba(5, 150, 105, 0.3) 100%
   );
   height: 6px;
   border-radius: 5px;
-  border: 1px solid rgba(168, 85, 247, 0.6);
+  border: 1px solid rgba(16, 185, 129, 0.4);
   box-sizing: border-box;
 }
 
@@ -515,9 +393,9 @@ input[type="range"]::-moz-range-thumb {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(168, 85, 247, 0.6),
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.4),
     0 0 0 1px rgba(255, 255, 255, 0.3);
   border: none;
   transition: all 0.2s ease;
@@ -525,11 +403,10 @@ input[type="range"]::-moz-range-thumb {
 
 input[type="range"]::-moz-range-thumb:hover {
   transform: scale(1.2);
-  box-shadow: 0 4px 12px rgba(168, 85, 247, 0.8),
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.6),
     0 0 0 2px rgba(255, 255, 255, 0.4);
 }
 
-/* Disabled state */
 input[type="range"]:disabled,
 input[type="range"][aria-disabled="true"] {
   opacity: 0.5;
@@ -543,7 +420,7 @@ input[type="checkbox"] {
 /* ==================== ACCESSIBILITY ==================== */
 
 :focus-visible {
-  outline: 2px solid #a855f7;
+  outline: 2px solid #10b981;
   outline-offset: 2px;
 }
 
@@ -554,4 +431,48 @@ input[type="checkbox"] {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background-color: #1c1917;
+    color: #fafaf9;
+  }
+}
+
+/* ==================== ANIMATION UTILITIES ==================== */
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.animate-slide {
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+@keyframes slideUp {
+  0% { opacity: 0; transform: translateY(10px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* ==================== TERMINAL GLOW - BRAND THEME ==================== */
+
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 20px rgba(16, 185, 129, 0.2); }
+  50% { box-shadow: 0 0 30px rgba(16, 185, 129, 0.3); }
+}
+
+.terminal-glow {
+  animation: glow 3s ease-in-out infinite;
+}
+
+/* ==================== PROGRESS CIRCLE ==================== */
+
+.progress-circle {
+  transition: stroke-dashoffset 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 }
