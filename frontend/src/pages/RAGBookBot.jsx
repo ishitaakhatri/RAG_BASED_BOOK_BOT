@@ -2,7 +2,7 @@
 import { useNavigate } from "react-router-dom";
 import "tailwindcss/tailwind.css";
 import jsPDF from "jspdf";
-import { useAuth } from "@clerk/clerk-react";
+import { useAuth, UserButton } from "@clerk/clerk-react";
 
 import {
   Search,
@@ -35,8 +35,11 @@ import {
   Library,
   GraduationCap,
   Edit,
-  LogOut,
   Pause,
+  CheckSquare,
+  Square,
+  Zap,
+  HelpCircle,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
@@ -87,13 +90,13 @@ class SafeErrorBoundary extends React.Component {
 }
 
 export default function RAGBookBot() {
-  const { getToken, signOut } = useAuth();
+  const { getToken } = useAuth();
 
   const [query, setQuery] = useState("");
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [books, setBooks] = useState([]);
-  const [selectedBook, setSelectedBook] = useState("all");
+  const [selectedBooks, setSelectedBooks] = useState([]);  // Changed to array for multi-select
   const [showSettings, setShowSettings] = useState(false);
   const [currentLoadingStage, setCurrentLoadingStage] = useState(0);
   const messagesEndRef = useRef(null);
@@ -109,6 +112,7 @@ export default function RAGBookBot() {
   const [isSearching, setIsSearching] = useState(false);
 
   const [searchMode, setSearchMode] = useState("all");
+  const [libraryFilter, setLibraryFilter] = useState("");
 
   const [useBackendDefaults, setUseBackendDefaults] = useState(true);
   const [pass1K, setPass1K] = useState(BACKEND_DEFAULTS.pass1K);
@@ -171,18 +175,28 @@ export default function RAGBookBot() {
     shouldAutoScrollRef.current = isAtBottom;
   };
 
-  const { bookList, paperList } = useMemo(() => {
+  const { bookList, paperList, totalChunks } = useMemo(() => {
     const b = [];
     const p = [];
+    let chunks = 0;
+
     books.forEach((item) => {
+      chunks += item.total_chunks || 0;
       const isPaper =
         item.total_chunks < 100 ||
         (item.title && item.title.toLowerCase().includes("paper"));
       if (isPaper) p.push(item);
       else b.push(item);
     });
-    return { bookList: b, paperList: p };
+    return { bookList: b, paperList: p, totalChunks: chunks };
   }, [books]);
+
+  // Filter for visual display only (doesn't affect retrieval)
+  const filterDoc = (doc) => {
+    if (!libraryFilter) return true;
+    const term = libraryFilter.toLowerCase();
+    return doc.title?.toLowerCase().includes(term) || doc.author?.toLowerCase().includes(term);
+  };
 
   const downloadChat = () => {
     if (messages.length === 0) {
@@ -408,7 +422,7 @@ export default function RAGBookBot() {
     const requestPayload = {
       query,
       session_id: currentSessionId,
-      book_filter: selectedBook === "all" ? null : selectedBook,
+      book_filter: selectedBooks.length === 0 ? null : selectedBooks,
       search_mode: searchMode,
       top_k: 5,
       ...(useBackendDefaults
@@ -516,7 +530,7 @@ export default function RAGBookBot() {
     const requestPayload = {
       query: editingText,
       session_id: currentSessionId,
-      book_filter: selectedBook === "all" ? null : selectedBook,
+      book_filter: selectedBooks.length === 0 ? null : selectedBooks,
       search_mode: searchMode,
       top_k: 5,
       ...(useBackendDefaults
@@ -606,23 +620,53 @@ export default function RAGBookBot() {
     }
   };
 
-  const renderDocButton = (doc, icon) => (
-    <button
-      key={doc.title}
-      onClick={() => setSelectedBook(doc.title)}
-      className={`w-full text-left px-3 py-2 rounded-lg transition-all truncate group ${selectedBook === doc.title
-        ? "bg-blue-600 text-white shadow-md"
-        : "bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-blue-300"
-        }`}
-      title={`${doc.title} by ${doc.author}`}
-    >
-      <div className="flex items-center space-x-2">
-        {icon}
-        <span className="text-sm font-semibold truncate">{doc.title}</span>
-      </div>
-      <div className="text-xs opacity-75 pl-5">by {doc.author}</div>
-    </button>
-  );
+  const renderDocButton = (doc, icon) => {
+    const isSelected = selectedBooks.includes(doc.title);
+    const isPaper = doc.total_chunks < 100 || (doc.title && doc.title.toLowerCase().includes("paper"));
+    const toggleSelection = () => {
+      if (isSelected) {
+        setSelectedBooks(selectedBooks.filter(t => t !== doc.title));
+      } else {
+        setSelectedBooks([...selectedBooks, doc.title]);
+      }
+    };
+    return (
+      <button
+        key={doc.title}
+        onClick={toggleSelection}
+        className={`w-full text-left p-3 rounded-xl transition-all border shadow-sm ${isSelected
+            ? "bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-300 shadow-emerald-100"
+            : "bg-white border-stone-200 hover:border-stone-300 hover:shadow-md"
+          }`}
+        title={`${doc.title} by ${doc.author}`}
+      >
+        <div className="flex items-start gap-3">
+          {/* Checkbox */}
+          <div className={`mt-0.5 flex-shrink-0 ${isSelected ? "text-emerald-600" : "text-stone-400"}`}>
+            {isSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+          </div>
+
+          {/* Content */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <span className={`flex-shrink-0 ${isPaper ? "text-teal-500" : "text-emerald-500"}`}>
+                {isPaper ? <FileText className="w-3.5 h-3.5" /> : <Book className="w-3.5 h-3.5" />}
+              </span>
+              <span className={`text-sm font-medium truncate ${isSelected ? "text-emerald-900" : "text-stone-800"}`}>
+                {doc.title}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-xs text-stone-500">
+              <span className="truncate">by {doc.author}</span>
+              <span className={`flex-shrink-0 ${isSelected ? "text-emerald-600" : "text-stone-400"}`}>
+                {doc.total_chunks || 0} chunks
+              </span>
+            </div>
+          </div>
+        </div>
+      </button>
+    );
+  };
 
   return (
     <div className="h-screen bg-gradient-to-br from-stone-50 via-stone-100 to-amber-50/30 text-stone-800 relative overflow-hidden flex">
@@ -769,11 +813,12 @@ export default function RAGBookBot() {
         <div className="flex-1 flex flex-col h-full min-h-0">
           <header className="bg-white border-b border-stone-200 shadow-sm">
             <div className="px-4 sm:px-6 lg:px-8 py-4">
-              <div className="relative flex items-center">
+              <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3">
                   <button
                     onClick={() => setShowSessions(!showSessions)}
-                    className="p-2 hover:bg-gray-100 rounded-lg transition-all text-gray-700"
+                    className={`p-2 rounded-lg transition-all ${showSessions ? "bg-emerald-100 text-emerald-700" : "hover:bg-gray-100 text-gray-700"}`}
+                    title="Toggle conversation history"
                   >
                     <History className="w-5 h-5" />
                   </button>
@@ -791,12 +836,12 @@ export default function RAGBookBot() {
                     </p>
                   </div>
                 </div>
-                <div className="absolute right-16 top-1/2 transform -translate-y-1/2 flex items-center space-x-3 flex-nowrap">
+                <div className="flex items-center space-x-3">
                   <button
                     onClick={downloadChat}
                     disabled={messages.length === 0}
-                    className="flex-shrink-0 flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md"
-                    title="Download chat history"
+                    className="flex-shrink-0 flex items-center space-x-2 px-4 py-2 bg-stone-600 text-white rounded-lg hover:bg-stone-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md"
+                    title="Download chat as PDF"
                   >
                     <Download className="w-4 h-4" />
                     <span className="hidden sm:inline">Download</span>
@@ -810,130 +855,143 @@ export default function RAGBookBot() {
                   </button>
                   <button
                     onClick={() => setShowSettings(!showSettings)}
-                    className="flex-shrink-0 p-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all"
+                    className={`flex-shrink-0 p-2 rounded-lg transition-all ${showSettings ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}
+                    title="Toggle settings"
                   >
                     <Settings className="w-5 h-5" />
                   </button>
+                  <UserButton
+                    afterSignOutUrl="/"
+                    appearance={{
+                      elements: {
+                        avatarBox: "w-9 h-9",
+                      }
+                    }}
+                  />
                 </div>
               </div>
             </div>
           </header>
 
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-full min-h-0 p-6">
-            <div className="lg:col-span-1 space-y-4 overflow-hidden flex flex-col">
+            {/* Streamlined Library Panel */}
+            <div className="lg:col-span-1 overflow-hidden flex flex-col">
               <div className="bg-white rounded-xl p-4 border border-stone-200 shadow-sm flex-1 flex flex-col min-h-0">
-                <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center flex-shrink-0">
-                  <Library className="w-5 h-5 mr-2" />
-                  Library{" "}
-                  <span className="ml-auto text-xs font-normal text-gray-600 bg-gray-100 px-2 py-1 rounded">
-                    {searchMode === "all"
-                      ? "All"
-                      : searchMode === "books"
-                        ? "Books"
-                        : "Papers"}
-                  </span>
-                </h3>
-                <div className="space-y-2 flex-1 flex flex-col min-h-0">
-                  <div className="flex justify-center">
-                    <div className="bg-stone-100 p-1 rounded-lg flex space-x-1">
-                      <button
-                        onClick={() => setSearchMode("all")}
-                        className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${searchMode === "all"
-                          ? "bg-emerald-600 text-white shadow-md"
-                          : "text-stone-600 hover:bg-stone-200"
-                          }`}
-                      >
-                        All Sources
-                      </button>
-                      <button
-                        onClick={() => setSearchMode("books")}
-                        className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${searchMode === "books"
-                          ? "bg-emerald-600 text-white shadow-md"
-                          : "text-stone-600 hover:bg-stone-200"
-                          }`}
-                      >
-                        <BookOpen className="w-3 h-3 mr-1" /> Books
-                      </button>
-                      <button
-                        onClick={() => setSearchMode("papers")}
-                        className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${searchMode === "papers"
-                          ? "bg-teal-600 text-white shadow-md"
-                          : "text-stone-600 hover:bg-stone-200"
-                          }`}
-                      >
-                        <GraduationCap className="w-3 h-3 mr-1" /> Papers
-                      </button>
-                    </div>
-                  </div>
-                  <div className="overflow-y-auto pr-2 space-y-3 flex-1">
-                    {(searchMode === "all" || searchMode === "papers") &&
-                      paperList.length > 0 && (
-                        <div className="animate-fade-in">
-                          {searchMode === "all" && (
-                            <div className="text-xs font-bold text-green-600 uppercase tracking-wider mb-1 mt-2 flex items-center">
-                              <GraduationCap className="w-3 h-3 mr-1" />{" "}
-                              Research Papers
-                            </div>
-                          )}
-                          <div className="space-y-1">
-                            {paperList.map((doc, idx) =>
-                              renderDocButton(
-                                doc,
-                                <FileText className="w-3 h-3 flex-shrink-0 text-green-600" />
-                              )
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    {(searchMode === "all" || searchMode === "books") &&
-                      bookList.length > 0 && (
-                        <div className="animate-fade-in">
-                          {searchMode === "all" && (
-                            <div className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1 mt-4 flex items-center">
-                              <Book className="w-3 h-3 mr-1" /> Books
-                            </div>
-                          )}
-                          <div className="space-y-1">
-                            {bookList.map((doc, idx) =>
-                              renderDocButton(
-                                doc,
-                                <Book className="w-3 h-3 flex-shrink-0 text-blue-600" />
-                              )
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    {books.length === 0 && (
-                      <div className="text-center text-gray-500 text-sm py-8 opacity-70">
-                        No documents found. <br /> Upload some!
-                      </div>
+                {/* Header */}
+                <div className="flex items-center justify-between mb-3 flex-shrink-0">
+                  <h3 className="text-base font-semibold text-gray-900 flex items-center">
+                    <Filter className="w-4 h-4 mr-2 text-emerald-600" />
+                    Sources
+                    {selectedBooks.length > 0 && (
+                      <span className="ml-2 text-xs bg-emerald-500 text-white px-1.5 py-0.5 rounded-full font-medium">
+                        {selectedBooks.length}
+                      </span>
                     )}
+                  </h3>
+                  {selectedBooks.length > 0 && (
+                    <button
+                      onClick={() => setSelectedBooks([])}
+                      className="text-xs text-stone-500 hover:text-stone-700"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+
+                {/* Selected Filter Chips */}
+                {selectedBooks.length > 0 && (
+                  <div className="mb-3 flex-shrink-0 flex flex-wrap gap-1">
+                    {selectedBooks.map(title => (
+                      <div key={title} className="flex items-center bg-emerald-100 text-emerald-800 rounded px-2 py-0.5 text-xs">
+                        <span className="truncate max-w-[100px]">{title}</span>
+                        <button
+                          onClick={() => setSelectedBooks(selectedBooks.filter(t => t !== title))}
+                          className="ml-1 text-emerald-600 hover:text-emerald-800"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Compact Mode Toggle */}
+                <div className="flex mb-3 flex-shrink-0">
+                  <div className="bg-stone-100 p-0.5 rounded-lg flex w-full">
+                    <button
+                      onClick={() => setSearchMode("all")}
+                      className={`flex-1 px-2 py-1 rounded text-xs font-medium transition-all ${searchMode === "all" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500"
+                        }`}
+                    >
+                      All
+                    </button>
+                    <button
+                      onClick={() => setSearchMode("books")}
+                      className={`flex-1 px-2 py-1 rounded text-xs font-medium transition-all flex items-center justify-center gap-1 ${searchMode === "books" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500"
+                        }`}
+                    >
+                      <Book className="w-3 h-3" /> Books
+                    </button>
+                    <button
+                      onClick={() => setSearchMode("papers")}
+                      className={`flex-1 px-2 py-1 rounded text-xs font-medium transition-all flex items-center justify-center gap-1 ${searchMode === "papers" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500"
+                        }`}
+                    >
+                      <FileText className="w-3 h-3" /> Papers
+                    </button>
                   </div>
                 </div>
-              </div>
-              <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm flex-shrink-0">
-                <h3 className="text-lg font-semibold text-gray-900 mb-3">
-                  Stats
-                </h3>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between text-gray-600">
-                    <span>Books:</span>
-                    <span className="font-semibold text-gray-900">
-                      {bookList.length}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-gray-600">
-                    <span>Papers:</span>
-                    <span className="font-semibold text-gray-900">
-                      {paperList.length}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-gray-600">
-                    <span>Sessions:</span>
-                    <span className="font-semibold text-gray-900">
-                      {sessions.length}
-                    </span>
-                  </div>
+
+                {/* Search - For navigation only */}
+                <div className="relative flex-shrink-0 mb-2">
+                  <input
+                    type="text"
+                    value={libraryFilter}
+                    onChange={(e) => setLibraryFilter(e.target.value)}
+                    placeholder="Find in list..."
+                    className="w-full pl-8 pr-7 py-1.5 bg-stone-50 border border-stone-200 rounded-md text-sm placeholder-stone-400 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                  <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-stone-400" />
+                  {libraryFilter && (
+                    <button onClick={() => setLibraryFilter("")} className="absolute right-2 top-2 text-stone-400 hover:text-stone-600">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Document List */}
+                <div className="overflow-y-auto flex-1 space-y-1 pr-1">
+                  {(searchMode === "all" || searchMode === "papers") && paperList.filter(filterDoc).length > 0 && (
+                    <>
+                      {searchMode === "all" && (
+                        <div className="text-[10px] font-semibold text-teal-600 uppercase tracking-wider py-1 sticky top-0 bg-white">
+                          Papers ({paperList.filter(filterDoc).length})
+                        </div>
+                      )}
+                      {paperList.filter(filterDoc).map((doc) => renderDocButton(doc, null))}
+                    </>
+                  )}
+                  {(searchMode === "all" || searchMode === "books") && bookList.filter(filterDoc).length > 0 && (
+                    <>
+                      {searchMode === "all" && (
+                        <div className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wider py-1 mt-2 sticky top-0 bg-white">
+                          Books ({bookList.filter(filterDoc).length})
+                        </div>
+                      )}
+                      {bookList.filter(filterDoc).map((doc) => renderDocButton(doc, null))}
+                    </>
+                  )}
+                  {books.length === 0 && (
+                    <div className="text-center text-stone-400 text-sm py-6">No documents yet</div>
+                  )}
+                  {books.length > 0 && bookList.filter(filterDoc).length === 0 && paperList.filter(filterDoc).length === 0 && (
+                    <div className="text-center text-stone-400 text-xs py-4">No matches</div>
+                  )}
+                </div>
+
+                {/* Compact Footer */}
+                <div className="flex-shrink-0 pt-2 mt-2 border-t border-stone-100 text-xs text-stone-500 text-center">
+                  {bookList.length} books · {paperList.length} papers
                 </div>
               </div>
             </div>
@@ -954,20 +1012,22 @@ export default function RAGBookBot() {
                         className="flex items-center text-sm text-gray-600 hover:text-gray-900 transition-colors focus:outline-none"
                       >
                         {useBackendDefaults ? (
-                          <ToggleRight className="w-8 h-8 text-blue-600 mr-2" />
+                          <ToggleRight className="w-8 h-8 text-emerald-600 mr-2" />
                         ) : (
                           <ToggleLeft className="w-8 h-8 text-gray-400 mr-2" />
                         )}
                         <span>Use Server Defaults</span>
                       </button>
-                      <div className="w-px h-6 bg-gray-300"></div>
                       <button
-                        onClick={() => signOut()}
-                        className="flex items-center space-x-1 px-3 py-2 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 rounded-lg transition-all border border-red-200"
-                        title="Logout"
+                        onClick={() => {
+                          setPass1K(BACKEND_DEFAULTS.pass1K);
+                          setPass2K(BACKEND_DEFAULTS.pass2K);
+                          setPass3Enabled(BACKEND_DEFAULTS.pass3Enabled);
+                          setMaxTokens(BACKEND_DEFAULTS.maxTokens);
+                        }}
+                        className="text-xs text-stone-500 hover:text-stone-700 px-3 py-1 border border-stone-200 rounded-md hover:bg-stone-50 transition-all"
                       >
-                        <LogOut className="w-4 h-4" />
-                        <span className="text-xs font-semibold">Logout</span>
+                        Reset
                       </button>
                     </div>
                   </div>
@@ -986,7 +1046,7 @@ export default function RAGBookBot() {
                         aria-disabled={useBackendDefaults}
                         value={pass1K}
                         onChange={(e) => setPass1K(parseInt(e.target.value))}
-                        className={`w-full accent-blue-600 ${useBackendDefaults ? "pointer-events-none" : ""
+                        className={`w-full accent-emerald-600 ${useBackendDefaults ? "pointer-events-none" : ""
                           }`}
                       />
                       <span className="text-gray-900 text-sm">
@@ -1004,7 +1064,7 @@ export default function RAGBookBot() {
                         disabled={useBackendDefaults}
                         value={pass2K}
                         onChange={(e) => setPass2K(parseInt(e.target.value))}
-                        className={`w-full accent-blue-600 ${useBackendDefaults ? "pointer-events-none" : ""
+                        className={`w-full accent-emerald-600 ${useBackendDefaults ? "pointer-events-none" : ""
                           }`}
                       />
                       <span className="text-gray-900 text-sm">
@@ -1021,16 +1081,11 @@ export default function RAGBookBot() {
                   onScroll={handleUserScroll}
                 >
                   {messages.length === 0 ? (
-                    <div
-                      className="relative flex flex-col items-center justify-center h-full text-center 
-bg-gradient-to-br from-emerald-50/50 via-white to-amber-50/30 
-rounded-xl border border-stone-200 shadow-inner overflow-hidden"
-                    >
-                      <div className="absolute inset-0 bg-[url('/image.jpg')] bg-no-repeat bg-center bg-contain opacity-10 pointer-events-none" />
-
-                      <h3 className="text-2xl font-semibold text-stone-700 mb-2">
-                        {currentSessionId ? "Continue Your Conversation" : ""}
-                      </h3>
+                    <div className="relative flex items-center justify-center h-full rounded-xl overflow-hidden">
+                      {/* Background Graphic - Professional styling */}
+                      <div className="absolute inset-0 bg-[url('/image.jpg')] bg-no-repeat bg-center bg-contain opacity-[0.18] pointer-events-none" />
+                      {/* Subtle gradient overlay */}
+                      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-white/40 pointer-events-none" />
                     </div>
                   ) : (
                     messages.map((msg, idx) => (

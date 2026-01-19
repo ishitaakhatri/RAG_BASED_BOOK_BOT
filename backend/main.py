@@ -115,7 +115,7 @@ class QueryRequest(BaseModel):
     query: str
     session_id: Optional[str] = None
     user_id: Optional[str] = None
-    book_filter: Optional[str] = None
+    book_filter: Optional[List[str]] = None  # Changed to list for multi-select
     chapter_filter: Optional[str] = None
     search_mode: Optional[str] = "all" 
     top_k: int = 5

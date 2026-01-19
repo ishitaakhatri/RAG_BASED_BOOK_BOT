@@ -377,8 +377,13 @@ async def vector_search_node(state: AgentState) -> Dict:
         
         target_namespaces = [settings.vector_db.namespace, "papers_rag"]
         filter_dict = {}
-        if state.get("book_filter"):
-            filter_dict["book_title"] = state.get("book_filter")
+        book_filter = state.get("book_filter")
+        if book_filter and len(book_filter) > 0:
+            # Use $in operator for multiple book titles
+            if len(book_filter) == 1:
+                filter_dict["book_title"] = book_filter[0]
+            else:
+                filter_dict["book_title"] = {"$in": book_filter}
         
         engine = get_search_engine()
         all_section_results = {}

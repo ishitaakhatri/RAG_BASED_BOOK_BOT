@@ -567,7 +567,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   }, [books, searchMode, bookList, paperList]);
 
   return (
-    <div className="h-screen bg-gradient-to-br from-stone-50 via-stone-100 to-amber-50/30 text-stone-800 relative flex flex-col">
+    <div className="min-h-screen bg-gradient-to-br from-stone-50 via-stone-100 to-amber-50/30 text-stone-800 relative flex flex-col overflow-auto">
       {/* Subtle Background Elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-20 right-20 w-96 h-96 bg-emerald-200/15 rounded-full blur-3xl" />

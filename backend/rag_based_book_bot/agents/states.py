@@ -97,7 +97,7 @@ class AgentState(TypedDict, total=False):
     pass2_k: int
     pass3_enabled: bool
     max_tokens: int
-    book_filter: Optional[str]
+    book_filter: Optional[List[str]]  # List of book titles to filter by
     chapter_filter: Optional[str]
     
     # ===== Relevance Check =====
