@@ -5,7 +5,13 @@ import "tailwindcss/tailwind.css";
 import RAGBookBot from "./pages/RAGBookBot";
 import IngestionPage from "./pages/IngestionPage";
 
-import { SignedIn, SignedOut, useSignIn, UserButton, SignIn } from "@clerk/clerk-react";
+import {
+  SignedIn,
+  SignedOut,
+  useSignIn,
+  UserButton,
+  SignIn,
+} from "@clerk/clerk-react";
 
 import {
   Library,
@@ -74,7 +80,10 @@ const LandingPage = () => {
         if (result.status === "complete") {
           await setActive({ session: result.createdSessionId });
         } else {
-          console.log("Login incomplete, switching to Clerk UI. Status:", result.status);
+          console.log(
+            "Login incomplete, switching to Clerk UI. Status:",
+            result.status,
+          );
           setShowClerkLogin(true);
         }
       }
@@ -89,7 +98,7 @@ const LandingPage = () => {
       }
 
       setError(
-        err.errors?.[0]?.message || "Authentication failed. Please try again."
+        err.errors?.[0]?.message || "Authentication failed. Please try again.",
       );
     } finally {
       setLoading(false);
@@ -149,9 +158,7 @@ const LandingPage = () => {
                   </div>
                 </div>
                 <div>
-                  <h1 className="text-5xl font-bold text-stone-800">
-                    RAG Bot
-                  </h1>
+                  <h1 className="text-5xl font-bold text-stone-800">RAG Bot</h1>
                   <p className="text-stone-500 text-sm mt-1">
                     Knowledge at your fingertips
                   </p>
@@ -209,14 +216,17 @@ const LandingPage = () => {
                           card: "bg-transparent shadow-none w-full",
                           headerTitle: "text-stone-800",
                           headerSubtitle: "text-stone-600",
-                          socialButtonsBlockButton: "text-stone-700 border-stone-300 hover:bg-stone-50",
+                          socialButtonsBlockButton:
+                            "text-stone-700 border-stone-300 hover:bg-stone-50",
                           formFieldLabel: "text-stone-700",
-                          formFieldInput: "bg-white border-stone-300 text-stone-800",
+                          formFieldInput:
+                            "bg-white border-stone-300 text-stone-800",
                           footerActionText: "text-stone-600",
-                          footerActionLink: "text-emerald-600 hover:text-emerald-700",
+                          footerActionLink:
+                            "text-emerald-600 hover:text-emerald-700",
                           dividerLine: "bg-stone-200",
-                          dividerText: "text-stone-500"
-                        }
+                          dividerText: "text-stone-500",
+                        },
                       }}
                     />
                     <button
@@ -348,7 +358,10 @@ const LandingPage = () => {
                               type="text"
                               value={formData.code}
                               onChange={(e) =>
-                                setFormData({ ...formData, code: e.target.value })
+                                setFormData({
+                                  ...formData,
+                                  code: e.target.value,
+                                })
                               }
                               className="w-full pl-11 pr-4 py-3 bg-stone-50 border border-stone-300 rounded-xl text-stone-800 placeholder-stone-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-all"
                               placeholder="Enter code from email"
@@ -473,7 +486,9 @@ const FeatureCard = ({ icon, title, description, accentColor = "emerald" }) => {
 
   return (
     <div className="flex items-start space-x-4 p-5 rounded-xl bg-white border border-stone-200 shadow-sm hover:shadow-md hover:border-stone-300 transition-all group">
-      <div className={`flex-shrink-0 w-10 h-10 rounded-lg bg-gradient-to-br ${colorClasses[accentColor]} flex items-center justify-center group-hover:scale-110 transition-transform`}>
+      <div
+        className={`flex-shrink-0 w-10 h-10 rounded-lg bg-gradient-to-br ${colorClasses[accentColor]} flex items-center justify-center group-hover:scale-110 transition-transform`}
+      >
         {icon}
       </div>
       <div>

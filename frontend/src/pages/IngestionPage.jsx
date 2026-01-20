@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 
 // Determine the correct protocol (ws or wss) based on the current page
-const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 
 // Dynamically set the URL to match the current domain/IP
 const WS_URL = `${protocol}//${window.location.host}/api/ws/ingest`;
@@ -30,21 +30,22 @@ const API_BASE_URL = "/api";
 const LogItem = React.memo(({ log, getLogColor }) => (
   <div
     className={`${getLogColor(
-      log.type
+      log.type,
     )} leading-relaxed flex items-start hover:bg-blue-50 px-3 py-1.5 rounded-md transition-all duration-200`}
   >
     <span className="text-gray-500 text-xs mr-3 flex-shrink-0 select-none font-semibold">
       [{log.timestamp}]
     </span>
     <span
-      className={`mr-3 flex-shrink-0 font-bold text-xs select-none px-2 py-0.5 rounded ${log.type === "error"
-        ? "bg-red-100 text-red-700 border border-red-300"
-        : log.type === "warning"
-          ? "bg-yellow-100 text-yellow-700 border border-yellow-300"
-          : log.type === "success"
-            ? "bg-green-100 text-green-700 border border-green-300"
-            : "bg-blue-100 text-blue-700 border border-blue-300"
-        }`}
+      className={`mr-3 flex-shrink-0 font-bold text-xs select-none px-2 py-0.5 rounded ${
+        log.type === "error"
+          ? "bg-red-100 text-red-700 border border-red-300"
+          : log.type === "warning"
+            ? "bg-yellow-100 text-yellow-700 border border-yellow-300"
+            : log.type === "success"
+              ? "bg-green-100 text-green-700 border border-green-300"
+              : "bg-blue-100 text-blue-700 border border-blue-300"
+      }`}
     >
       {log.type === "error"
         ? "ERR"
@@ -104,6 +105,31 @@ export default function IngestionPage({ books, onUploadSuccess }) {
       .terminal-glow {
         animation: glow 3s ease-in-out infinite;
       }
+      ::-webkit-scrollbar {
+        width: 14px;
+      }
+      ::-webkit-scrollbar-track {
+        background: linear-gradient(to bottom, #f8fafc, #e2e8f0);
+        border-radius: 10px;
+        box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.1);
+      }
+      ::-webkit-scrollbar-thumb {
+        background: linear-gradient(135deg, #10b981, #0d9488);
+        border-radius: 10px;
+        border: 2px solid #f1f5f9;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        transition: background 0.3s ease;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: linear-gradient(135deg, #059669, #0f766e);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+      }
+      ::-webkit-scrollbar-thumb:active {
+        background: linear-gradient(135deg, #047857, #115e59);
+      }
+      ::-webkit-scrollbar-corner {
+        background: #f1f5f9;
+      }
     `;
     document.head.appendChild(style);
     return () => document.head.removeChild(style);
@@ -139,8 +165,8 @@ export default function IngestionPage({ books, onUploadSuccess }) {
 
       setFileQueue((prev) =>
         prev.map((f, i) =>
-          i === currentFileIndex ? { ...f, status: "processing" } : f
-        )
+          i === currentFileIndex ? { ...f, status: "processing" } : f,
+        ),
       );
       uploadSingleFile(item);
     } else if (currentFileIndex >= fileQueue.length && currentFileIndex > 0) {
@@ -229,7 +255,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
 
       if (currentFileIdRef.current !== queueItem.id) {
         console.warn(
-          `🛑 Ignoring stale response for ${queueItem.file.name} (Current: ${currentFileIdRef.current})`
+          `🛑 Ignoring stale response for ${queueItem.file.name} (Current: ${currentFileIdRef.current})`,
         );
         return;
       }
@@ -250,7 +276,10 @@ export default function IngestionPage({ books, onUploadSuccess }) {
             await connectWebSocket(taskId);
           }
         } else {
-          addLog("⚠️ No task ID returned. Assuming immediate completion.", "warning");
+          addLog(
+            "⚠️ No task ID returned. Assuming immediate completion.",
+            "warning",
+          );
           finishSequenceStarted.current = true;
           proceedToNextFile();
         }
@@ -262,7 +291,9 @@ export default function IngestionPage({ books, onUploadSuccess }) {
 
       addLog(`❌ Failed: ${queueItem.file.name} - ${error.message}`, "error");
       setFileQueue((prev) =>
-        prev.map((f) => (f.id === queueItem.id ? { ...f, status: "error" } : f))
+        prev.map((f) =>
+          f.id === queueItem.id ? { ...f, status: "error" } : f,
+        ),
       );
 
       setTimeout(() => proceedToNextFile(), 2000);
@@ -299,7 +330,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
             if (data.logs && Array.isArray(data.logs)) {
               data.logs.forEach((logLine) => {
                 const match = logLine.match(
-                  /\[(\d{2}:\d{2}:\d{2})\] (\w+): (.+)/
+                  /\[(\d{2}:\d{2}:\d{2})\] (\w+): (.+)/,
                 );
                 if (match) {
                   const [, timestamp, level, message] = match;
@@ -322,7 +353,6 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         wsRef.current.onclose = () => {
           console.log("WebSocket connection closed");
         };
-
       } catch (error) {
         reject(error);
       }
@@ -345,12 +375,12 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     if (!processingStarted.current && isActiveStatus) {
       processingStarted.current = true;
       setLogs((prevLogs) =>
-        prevLogs.filter((l) => !l.message.includes("Ingestion completed"))
+        prevLogs.filter((l) => !l.message.includes("Ingestion completed")),
       );
     }
 
     const isFinishedInLogs = logs.some((l) =>
-      l.message.includes("Ingestion completed successfully")
+      l.message.includes("Ingestion completed successfully"),
     );
     const isFinishedStatus =
       liveProgress?.status === "completed" ||
@@ -366,8 +396,8 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         if (currentFileIndex >= 0 && currentFileIndex < fileQueue.length) {
           setFileQueue((prev) =>
             prev.map((f, i) =>
-              i === currentFileIndex ? { ...f, status: "success" } : f
-            )
+              i === currentFileIndex ? { ...f, status: "success" } : f,
+            ),
           );
         }
 
@@ -508,21 +538,21 @@ export default function IngestionPage({ books, onUploadSuccess }) {
       return (
         20 +
         ((liveProgress.current_page || 0) / (liveProgress.total_pages || 1)) *
-        30
+          30
       );
     if (status === "embedding")
       return (
         50 +
         ((liveProgress.embeddings_generated || 0) /
           (liveProgress.chunks_created || 1)) *
-        30
+          30
       );
     if (status === "upserting")
       return (
         80 +
         ((liveProgress.vectors_upserted || 0) /
           (liveProgress.chunks_created || 1)) *
-        18
+          18
       );
 
     return Math.max(uploadProgress?.percentage ?? 0, 5);
@@ -539,7 +569,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
       logs.map((log, idx) => (
         <LogItem key={idx} log={log} getLogColor={getLogColor} />
       )),
-    [logs]
+    [logs],
   );
 
   const { bookList, paperList } = useMemo(() => {
@@ -567,7 +597,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
   }, [books, searchMode, bookList, paperList]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-stone-50 via-stone-100 to-amber-50/30 text-stone-800 relative flex flex-col overflow-auto">
+    <div className="min-h-screen bg-gradient-to-br from-stone-50 via-stone-100 to-amber-50/30 text-stone-800 relative flex flex-col ingest-scroll-area scrollbar-visible scroll-smooth momentum-scroll">
       {/* Subtle Background Elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-20 right-20 w-96 h-96 bg-emerald-200/15 rounded-full blur-3xl" />
@@ -607,12 +637,12 @@ export default function IngestionPage({ books, onUploadSuccess }) {
         </header>
 
         {/* Main Content */}
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="max-w-7xl mx-auto">
+        <div className="flex-1 overflow-y-auto p-6 scrollbar-visible momentum-scroll">
+          <div className="max-w-[1400px] mx-auto px-2 sm:px-4">
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
               {/* LEFT SIDEBAR */}
-              <div className="lg:col-span-1 space-y-6">
-                <div className="bg-white rounded-xl p-6 border border-stone-200 shadow-sm">
+              <div className="lg:col-span-1 space-y-6 lg:sticky lg:top-24 h-fit">
+                <div className="bg-white/90 backdrop-blur rounded-2xl p-5 border border-stone-200 shadow-lg hover:shadow-xl transition">
                   <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
                     <Library className="w-5 h-5 mr-2" />
                     Library
@@ -623,28 +653,31 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                       <div className="bg-stone-100 p-1 rounded-lg flex space-x-1">
                         <button
                           onClick={() => setSearchMode("all")}
-                          className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${searchMode === "all"
-                            ? "bg-emerald-600 text-white shadow-md"
-                            : "text-stone-600 hover:bg-stone-200"
-                            }`}
+                          className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                            searchMode === "all"
+                              ? "bg-emerald-600 text-white shadow-md"
+                              : "text-stone-600 hover:bg-stone-200"
+                          }`}
                         >
                           All Sources
                         </button>
                         <button
                           onClick={() => setSearchMode("books")}
-                          className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${searchMode === "books"
-                            ? "bg-emerald-600 text-white shadow-md"
-                            : "text-stone-600 hover:bg-stone-200"
-                            }`}
+                          className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
+                            searchMode === "books"
+                              ? "bg-emerald-600 text-white shadow-md"
+                              : "text-stone-600 hover:bg-stone-200"
+                          }`}
                         >
                           <BookOpen className="w-3 h-3 mr-1" /> Books
                         </button>
                         <button
                           onClick={() => setSearchMode("papers")}
-                          className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${searchMode === "papers"
-                            ? "bg-teal-600 text-white shadow-md"
-                            : "text-stone-600 hover:bg-stone-200"
-                            }`}
+                          className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center space-x-1 ${
+                            searchMode === "papers"
+                              ? "bg-teal-600 text-white shadow-md"
+                              : "text-stone-600 hover:bg-stone-200"
+                          }`}
                         >
                           <GraduationCap className="w-3 h-3 mr-1" /> Papers
                         </button>
@@ -652,7 +685,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                     </div>
 
                     {/* Scrollable library list */}
-                    <div className="max-h-96 overflow-y-auto space-y-2">
+                    <div className="library-scroll space-y-2 pr-2">
                       {/* RESEARCH PAPERS SECTION */}
                       {(searchMode === "all" || searchMode === "papers") &&
                         paperList.length > 0 && (
@@ -745,9 +778,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                   </h3>
                   <div className="space-y-3">
                     <div className="flex justify-between items-center">
-                      <span className="text-gray-600 text-sm">
-                        Total Docs:
-                      </span>
+                      <span className="text-gray-600 text-sm">Total Docs:</span>
                       <span className="font-bold text-gray-900 text-lg">
                         {filteredBooks.length}
                       </span>
@@ -759,7 +790,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                       <span className="font-bold text-gray-900 text-lg">
                         {filteredBooks.reduce(
                           (sum, b) => sum + (b.total_chunks || 0),
-                          0
+                          0,
                         )}
                       </span>
                     </div>
@@ -774,8 +805,8 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                     Upload PDFs
                   </h2>
                   <p className="text-gray-600 mb-6">
-                    Select books or research papers. The system will
-                    auto-detect the document type.
+                    Select books or research papers. The system will auto-detect
+                    the document type.
                   </p>
 
                   <div className="space-y-6">
@@ -788,10 +819,11 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                           </label>
                           <label
                             htmlFor="file-upload"
-                            className={`flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-xl cursor-pointer transition-all duration-300 ${isDragging
-                              ? "border-emerald-500 bg-emerald-50 scale-[1.01] shadow-lg"
-                              : "border-stone-300 bg-stone-50 hover:bg-emerald-50 hover:border-emerald-400"
-                              }`}
+                            className={`flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-xl cursor-pointer transition-all duration-300 ${
+                              isDragging
+                                ? "border-emerald-500 bg-emerald-50 scale-[1.01] shadow-lg"
+                                : "border-stone-300 bg-stone-50 hover:bg-emerald-50 hover:border-emerald-400"
+                            }`}
                             onDragEnter={handleDragEnter}
                             onDragLeave={handleDragLeave}
                             onDragOver={handleDragOver}
@@ -799,10 +831,11 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                           >
                             <div className="flex flex-col items-center justify-center pt-8 pb-6">
                               <Upload
-                                className={`w-12 h-12 mb-2 transition-all duration-300 ${isDragging
-                                  ? "text-emerald-600 scale-125"
-                                  : "text-stone-400"
-                                  }`}
+                                className={`w-12 h-12 mb-2 transition-all duration-300 ${
+                                  isDragging
+                                    ? "text-emerald-600 scale-125"
+                                    : "text-stone-400"
+                                }`}
                               />
                               <p className="text-sm font-semibold text-gray-900">
                                 {isDragging
@@ -833,7 +866,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                               <h4 className="text-sm font-semibold text-gray-700 mb-2">
                                 Selected Files ({fileQueue.length})
                               </h4>
-                              <div className="space-y-2 max-h-48 overflow-y-auto">
+                              <div className="file-queue-scroll space-y-2 pr-2">
                                 {fileQueue.map((item) => (
                                   <div
                                     key={item.id}
@@ -876,14 +909,16 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                         <div className="flex items-center justify-between mb-6">
                           <h3 className="text-xl font-bold text-gray-900 flex items-center">
                             <div
-                              className={`w-2 h-2 rounded-full mr-3 ${currentPercentage === 100 && !isIngesting
-                                ? "bg-green-500"
-                                : "bg-green-500 animate-pulse"
-                                }`}
+                              className={`w-2 h-2 rounded-full mr-3 ${
+                                currentPercentage === 100 && !isIngesting
+                                  ? "bg-green-500"
+                                  : "bg-green-500 animate-pulse"
+                              }`}
                             ></div>
                             {isIngesting
-                              ? `Processing File ${currentFileIndex + 1} of ${fileQueue.length
-                              }`
+                              ? `Processing File ${currentFileIndex + 1} of ${
+                                  fileQueue.length
+                                }`
                               : "Ingestion Complete"}
                           </h3>
                           <span className="text-xs font-mono bg-white px-2 py-1 rounded text-gray-700 border border-gray-300">
@@ -893,18 +928,19 @@ export default function IngestionPage({ books, onUploadSuccess }) {
 
                         <div className="space-y-6">
                           {/* Queue Visualizer */}
-                          <div className="flex space-x-2 overflow-x-auto pb-2">
+                          <div className="flex space-x-2 overflow-x-auto pb-2 scrollbar-thin">
                             {fileQueue.map((item, idx) => (
                               <div
                                 key={item.id}
-                                className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border transition-all ${idx === currentFileIndex
-                                  ? "bg-blue-600 border-blue-500 text-white animate-pulse shadow-md"
-                                  : item.status === "success"
-                                    ? "bg-green-100 border-green-500 text-green-700"
-                                    : item.status === "error"
-                                      ? "bg-red-100 border-red-500 text-red-700"
-                                      : "bg-gray-100 border-gray-300 text-gray-500"
-                                  }`}
+                                className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border transition-all ${
+                                  idx === currentFileIndex
+                                    ? "bg-blue-600 border-blue-500 text-white animate-pulse shadow-md"
+                                    : item.status === "success"
+                                      ? "bg-green-100 border-green-500 text-green-700"
+                                      : item.status === "error"
+                                        ? "bg-red-100 border-red-500 text-red-700"
+                                        : "bg-gray-100 border-gray-300 text-gray-500"
+                                }`}
                               >
                                 {item.status === "success" ? (
                                   <CheckCircle className="w-5 h-5" />
@@ -956,14 +992,8 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                                     x2="100%"
                                     y2="100%"
                                   >
-                                    <stop
-                                      offset="0%"
-                                      stopColor="#10b981"
-                                    />
-                                    <stop
-                                      offset="100%"
-                                      stopColor="#0d9488"
-                                    />
+                                    <stop offset="0%" stopColor="#10b981" />
+                                    <stop offset="100%" stopColor="#0d9488" />
                                   </linearGradient>
                                 </defs>
                               </svg>
@@ -980,8 +1010,12 @@ export default function IngestionPage({ books, onUploadSuccess }) {
 
                           {/* Status Message */}
                           <div className="text-center">
-                            <p className={`text-sm font-medium ${getStatusColor(currentStatus)}`}>
-                              {liveProgress?.message || uploadProgress?.message || "Initializing..."}
+                            <p
+                              className={`text-sm font-medium ${getStatusColor(currentStatus)}`}
+                            >
+                              {liveProgress?.message ||
+                                uploadProgress?.message ||
+                                "Initializing..."}
                             </p>
                           </div>
 
@@ -990,15 +1024,20 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                             <div className="grid grid-cols-2 gap-4 text-sm">
                               {liveProgress.total_pages && (
                                 <div className="bg-white p-3 rounded-lg border border-gray-200">
-                                  <div className="text-gray-600 text-xs">Pages</div>
+                                  <div className="text-gray-600 text-xs">
+                                    Pages
+                                  </div>
                                   <div className="text-gray-900 font-semibold">
-                                    {liveProgress.current_page || 0} / {liveProgress.total_pages}
+                                    {liveProgress.current_page || 0} /{" "}
+                                    {liveProgress.total_pages}
                                   </div>
                                 </div>
                               )}
                               {liveProgress.chunks_created && (
                                 <div className="bg-white p-3 rounded-lg border border-gray-200">
-                                  <div className="text-gray-600 text-xs">Chunks</div>
+                                  <div className="text-gray-600 text-xs">
+                                    Chunks
+                                  </div>
                                   <div className="text-gray-900 font-semibold">
                                     {liveProgress.chunks_created}
                                   </div>
@@ -1006,7 +1045,9 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                               )}
                               {liveProgress.embeddings_generated && (
                                 <div className="bg-white p-3 rounded-lg border border-gray-200">
-                                  <div className="text-gray-600 text-xs">Embeddings</div>
+                                  <div className="text-gray-600 text-xs">
+                                    Embeddings
+                                  </div>
                                   <div className="text-gray-900 font-semibold">
                                     {liveProgress.embeddings_generated}
                                   </div>
@@ -1014,7 +1055,9 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                               )}
                               {liveProgress.vectors_upserted && (
                                 <div className="bg-white p-3 rounded-lg border border-gray-200">
-                                  <div className="text-gray-600 text-xs">Vectors</div>
+                                  <div className="text-gray-600 text-xs">
+                                    Vectors
+                                  </div>
                                   <div className="text-gray-900 font-semibold">
                                     {liveProgress.vectors_upserted}
                                   </div>
@@ -1034,7 +1077,9 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                           className="flex-1 px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-lg hover:from-emerald-600 hover:to-teal-700 transition-all font-semibold shadow-md flex items-center justify-center space-x-2"
                         >
                           <Upload className="w-5 h-5" />
-                          <span>Start Processing ({fileQueue.length} files)</span>
+                          <span>
+                            Start Processing ({fileQueue.length} files)
+                          </span>
                         </button>
                       )}
                       {!isIngesting && fileQueue.length > 0 && (
@@ -1073,7 +1118,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                           </button>
                         </div>
                         {showLogs && (
-                          <div className="p-4 max-h-80 overflow-y-auto bg-gray-50 font-mono text-xs space-y-1 terminal-glow">
+                          <div className="terminal-logs p-4 bg-gray-50 font-mono text-xs space-y-1 terminal-glow pr-2">
                             {renderedLogs}
                             <div ref={logsEndRef} />
                           </div>
