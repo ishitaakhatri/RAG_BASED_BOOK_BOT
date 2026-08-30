@@ -28,6 +28,7 @@ from rag_based_book_bot.retrieval.cross_encoder_reranker import CrossEncoderRera
 from rag_based_book_bot.retrieval.multi_hop_expander import MultiHopExpander
 from rag_based_book_bot.retrieval.cluster_manager import ClusterManager
 from rag_based_book_bot.retrieval.context_compressor import EnhancedContextCompressor
+from rag_based_book_bot.agents.llm_utils import extract_text_from_response
 
 from app_config import get_config
 
@@ -164,7 +165,7 @@ Return ONLY valid JSON in this exact format:
             HumanMessage(content=user_prompt)
         ])
 
-        raw = response.content.strip()
+        raw = extract_text_from_response(response.content).strip()
         if raw.startswith("```"):
             raw = raw.replace("```json", "").replace("```", "").strip()
 
@@ -201,7 +202,7 @@ def irrelevant_query_handler_node(state: AgentState) -> Dict:
             HumanMessage(content=query)
         ])
         
-        answer = response.content
+        answer = extract_text_from_response(response.content)
         
         return {
             "response": LLMResponse(
@@ -278,7 +279,7 @@ Respond with ONLY valid JSON in this exact format:
             HumanMessage(content=f'Analyze this query: "{query}"')
         ])
         
-        text = response.content.strip()
+        text = extract_text_from_response(response.content).strip()
         if text.startswith("```"):
             text = text.replace("```json", "").replace("```", "").strip()
         
@@ -341,7 +342,7 @@ Return ONLY a valid JSON array of strings."""
             HumanMessage(content=f"Original: {query_to_expand}")
         ])
         
-        text = response.content.strip()
+        text = extract_text_from_response(response.content).strip()
         if text.startswith("```"):
             text = text.replace("```json", "").replace("```", "").strip()
             
@@ -739,7 +740,7 @@ Provide your answer in the following JSON format ONLY, nothing else, no extra te
         ]
         
         response = await llm.ainvoke(messages)
-        content = response.content.strip()
+        content = extract_text_from_response(response.content).strip()
         
         # Use the robust helper function
         data = clean_and_parse_json(content)

@@ -6,12 +6,14 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
-# --- NEW SECTION STARTS ---
-# Declare the build argument
+# --- BUILD ARGS ---
+# Declare the build arguments
 ARG VITE_CLERK_PUBLISHABLE_KEY
-# Set it as an environment variable for the build command
+ARG VITE_API_URL
+# Set them as environment variables for the build command
 ENV VITE_CLERK_PUBLISHABLE_KEY=$VITE_CLERK_PUBLISHABLE_KEY
-# --- NEW SECTION ENDS ---
+ENV VITE_API_URL=$VITE_API_URL
+# --- END BUILD ARGS ---
 
 # Copy source code and build
 COPY . .

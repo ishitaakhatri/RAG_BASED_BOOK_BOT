@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import "tailwindcss/tailwind.css";
 import jsPDF from "jspdf";
@@ -43,7 +43,7 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
-const API_BASE_URL = "/api";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
 
 const BACKEND_DEFAULTS = {
   pass1K: 50,

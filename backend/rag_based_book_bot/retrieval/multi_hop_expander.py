@@ -27,7 +27,7 @@ class MultiHopExpander:
             api_key: Google API key (defaults to env var)
         """
         self.llm = ChatGoogleGenerativeAI(
-            model="models/gemma-3-27b-it",
+            model="gemma-4-31b-it",
             google_api_key=os.getenv("GOOGLE_API_KEY"),
             temperature=0.7,
             max_retries=0, # FIX: Prevents passing the unexpected keyword argument

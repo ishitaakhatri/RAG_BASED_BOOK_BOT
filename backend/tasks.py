@@ -1,5 +1,5 @@
 import os
-import boto3
+from azure.storage.blob import BlobServiceClient
 import time
 import hashlib
 from celery import Task
@@ -32,7 +32,7 @@ def store_book_metadata(book_title: str, author: str, total_chunks: int, code_ch
         
         # Upsert the "Book Card"
         # We use a dummy vector of all 1.0s because we only query this by metadata or list all
-        dummy_vector = [1.0] * settings.vector_db.dimension
+        dummy_vector = [1.0] * 1024  # Match embedding dimension
         
         index.upsert(
             vectors=[{
@@ -62,28 +62,25 @@ class IngestionTask(Task):
             tracker.finish(success=False)
 
 @celery_app.task(bind=True, base=IngestionTask, name="ingest_book_task")
-def ingest_book_task(self, task_id: str, s3_key: str, book_title: str, author: str):
+def ingest_book_task(self, task_id: str, blob_name: str, book_title: str, author: str):
     """
-    Celery task that downloads a PDF from S3 and ingests it.
+    Celery task that downloads a PDF from Azure Blob Storage and ingests it.
     """
     tracker = get_tracker(task_id)
     local_path = f"/tmp/{task_id}.pdf"
     
-    # --- THREAD SAFETY FIX ---
-    # Initialize S3 Client INSIDE the task. Boto3 clients are not thread-safe.
-    # This ensures each worker process gets its own clean connection.
-    s3_client = boto3.client(
-        's3',
-        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-        region_name=settings.AWS_DEFAULT_REGION
-    )
+    # Initialize Azure Blob client INSIDE the task for thread safety
+    blob_service = BlobServiceClient.from_connection_string(settings.AZURE_STORAGE_CONNECTION_STRING)
+    blob_container = blob_service.get_container_client(settings.AZURE_STORAGE_CONTAINER)
     
     try:
-        tracker.add_log(f"📥 Downloading {s3_key} from S3...")
+        tracker.add_log(f"📥 Downloading {blob_name} from Azure Blob Storage...")
         
-        # Download from S3 to local worker temp storage
-        s3_client.download_file(settings.S3_BUCKET_NAME, s3_key, local_path)
+        # Download from Azure Blob to local worker temp storage
+        blob_client = blob_container.get_blob_client(blob_name)
+        with open(local_path, "wb") as download_file:
+            blob_data = blob_client.download_blob()
+            blob_data.readinto(download_file)
         
         tracker.add_log("⚙️ Initializing AI Ingestor...")
         

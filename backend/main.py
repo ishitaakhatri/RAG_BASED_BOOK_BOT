@@ -13,7 +13,7 @@ import os
 import time
 import hashlib
 import json
-import boto3
+from azure.storage.blob import BlobServiceClient
 from uuid import uuid4
 from dotenv import load_dotenv
 from redis import Redis
@@ -50,16 +50,16 @@ from rag_based_book_bot.memory import (
 # INITIALIZATION
 # ============================================================================
 
-# S3 Client for API Uploads
-s3_client = boto3.client(
-    's3',
-    aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-    region_name=settings.AWS_DEFAULT_REGION
-)
+# Azure Blob Storage Client for PDF Uploads
+blob_service = BlobServiceClient.from_connection_string(settings.AZURE_STORAGE_CONNECTION_STRING)
+blob_container = blob_service.get_container_client(settings.AZURE_STORAGE_CONTAINER)
 
 # Redis Client for Status Polling
-redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+import ssl as _ssl
+_redis_kwargs = {"decode_responses": True}
+if settings.REDIS_URL.startswith("rediss://"):
+    _redis_kwargs["ssl_cert_reqs"] = _ssl.CERT_REQUIRED
+redis_client = Redis.from_url(settings.REDIS_URL, **_redis_kwargs)
 
 query_graph_app = None
 
@@ -471,14 +471,14 @@ def ingest_book(
     author: Optional[str] = "Unknown"
 ):
     """
-    Synchronous endpoint (using 'def') to handle blocking S3 uploads safely.
+    Synchronous endpoint (using 'def') to handle blocking blob uploads safely.
     FastAPI runs this in a threadpool, preventing the event loop from blocking.
     """
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files supported")
     
     task_id = str(uuid4())
-    s3_key = f"uploads/{task_id}/{file.filename}"
+    blob_name = f"uploads/{task_id}/{file.filename}"
     
     try:
         # 1. Parse Metadata
@@ -486,15 +486,16 @@ def ingest_book(
         final_book_title = book_title or extracted_title
         final_author = author or extracted_author
         
-        # 2. Upload to S3 (Blocking I/O)
-        logger.info(f"📤 Uploading {file.filename} to S3 bucket {settings.S3_BUCKET_NAME}...")
-        s3_client.upload_fileobj(file.file, settings.S3_BUCKET_NAME, s3_key)
+        # 2. Upload to Azure Blob Storage (Blocking I/O)
+        logger.info(f"📤 Uploading {file.filename} to Azure Blob container {settings.AZURE_STORAGE_CONTAINER}...")
+        blob_client = blob_container.get_blob_client(blob_name)
+        blob_client.upload_blob(file.file, overwrite=True)
         
         # 3. Dispatch Celery Task (Non-blocking)
         logger.info(f"🚀 Dispatching Celery task for {task_id}")
         ingest_book_task.delay(
             task_id=task_id, 
-            s3_key=s3_key, 
+            blob_name=blob_name, 
             book_title=final_book_title, 
             author=final_author
         )

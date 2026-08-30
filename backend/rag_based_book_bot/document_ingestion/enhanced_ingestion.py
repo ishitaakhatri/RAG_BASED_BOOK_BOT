@@ -94,9 +94,10 @@ class SemanticBookIngestor:
     def _check_grobid_health(self) -> bool:
         grobid_url = settings.ingestion.grobid_url
         try:
-            resp = requests.get(f"{grobid_url}/isalive", timeout=2)
+            resp = requests.get(f"{grobid_url}/isalive", timeout=45, verify=False)
             return resp.status_code == 200
-        except Exception:
+        except Exception as e:
+            logger.warning(f"GROBID health check failed: {e}")
             return False
 
     def _process_pdf_with_grobid(self, pdf_path: str, is_paper: bool = False) -> Optional[Dict]:
@@ -108,7 +109,8 @@ class SemanticBookIngestor:
             url = f"{grobid_url}/processFulltextDocument"
             with open(pdf_path, 'rb') as f:
                 files = {'input': (os.path.basename(pdf_path), f, 'application/pdf')}
-                resp = requests.post(url, files=files, timeout=grobid_timeout)
+                data = {'generateIDs': '1', 'consolidateHeader': '1', 'consolidateCitations': '1'}
+                resp = requests.post(url, files=files, data=data, timeout=grobid_timeout, verify=False)
             
             if resp.status_code == 200:
                 return self.grobid_parser.parse_tei_xml(resp.text, is_paper=is_paper)

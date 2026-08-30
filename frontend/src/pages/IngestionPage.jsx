@@ -17,14 +17,21 @@ import {
   Book,
 } from "lucide-react";
 
+// API URL: use VITE_API_URL env var (Azure) or fall back to "/api" (docker-compose with nginx)
+const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
+
 // Determine the correct protocol (ws or wss) based on the current page
-const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 
-// Dynamically set the URL to match the current domain/IP
-const WS_URL = `${protocol}//${window.location.host}/api/ws/ingest`;
-
-// For the API URL, we can use a relative path so Nginx proxies it
-const API_BASE_URL = "/api";
+// Derive WebSocket URL from API base
+let WS_URL;
+if (API_BASE_URL.startsWith("http")) {
+  // Azure: API_BASE_URL is a full URL like "https://ragbot-backend.xxx.azurecontainerapps.io"
+  WS_URL = API_BASE_URL.replace(/^http/, "ws") + "/ws/ingest";
+} else {
+  // Docker-compose: relative path, use current host
+  WS_URL = `${wsProtocol}//${window.location.host}${API_BASE_URL}/ws/ingest`;
+}
 
 // Extract LogItem to a memoized component for performance
 const LogItem = React.memo(({ log, getLogColor }) => (
@@ -335,7 +342,7 @@ export default function IngestionPage({ books, onUploadSuccess }) {
                 if (match) {
                   const [, timestamp, level, message] = match;
                   if (isIngestingRef.current) {
-                    addLog(message, level.toLowerCase());
+                    addLog(message, level.toLowerCase(), timestamp);
                   }
                 }
               });
@@ -492,8 +499,8 @@ export default function IngestionPage({ books, onUploadSuccess }) {
     navigate("/");
   };
 
-  const addLog = (message, type = "info") => {
-    const timestamp = new Date().toLocaleTimeString();
+  const addLog = (message, type = "info", providedTimestamp = null) => {
+    const timestamp = providedTimestamp || new Date().toLocaleTimeString();
     const logKey = `${timestamp}-${message}`;
     if (processedLogsRef.current.has(logKey)) return;
     processedLogsRef.current.add(logKey);

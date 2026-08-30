@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 import time
 import traceback
 from rag_based_book_bot.agents.states import AgentState, ConversationTurn, LLMResponse
+from rag_based_book_bot.agents.llm_utils import extract_text_from_response
 from rag_based_book_bot.memory.conversation_store import search_conversation_context
 from app_config import get_config
 load_dotenv()
@@ -105,7 +106,7 @@ Return ONLY valid JSON:
         print(f"\n[Context Resolution] Analyzing query: '{current_query[:60]}...'")
         
         response = llm.invoke([HumanMessage(content=prompt)])
-        text = response.content.strip()
+        text = extract_text_from_response(response.content).strip()
 
         # Clean JSON extraction
         if text.startswith("```"):
@@ -231,7 +232,7 @@ Answer:"""
         response = llm.invoke([HumanMessage(content=prompt)])
         
         llm_response = LLMResponse(
-            answer=response.content,
+            answer=extract_text_from_response(response.content),
             sources=[],
             confidence=0.75,
             code_snippets=[]

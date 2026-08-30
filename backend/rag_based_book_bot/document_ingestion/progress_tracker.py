@@ -17,8 +17,12 @@ logger = logging.getLogger("progress_tracker")
 settings = get_settings()
 
 # Initialize Redis connection
+import ssl as _ssl
 try:
-    redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    _redis_kwargs = {"decode_responses": True}
+    if settings.REDIS_URL.startswith("rediss://"):
+        _redis_kwargs["ssl_cert_reqs"] = _ssl.CERT_REQUIRED
+    redis_client = Redis.from_url(settings.REDIS_URL, **_redis_kwargs)
 except Exception as e:
     logger.error(f"Failed to connect to Redis: {e}")
     redis_client = None
@@ -99,6 +103,10 @@ class ProgressTracker:
         self.state.start_time = time.time()
         self.state.percentage = 0.0
         self.add_log(f"Started ingestion for {book_title} ({total_pages} pages)")
+        self._save()
+
+    def update_total_pages(self, total_pages: int):
+        self.state.total_pages = total_pages
         self._save()
 
     def update_batch(self, batch_num: int, total_batches: int, current_page: int):

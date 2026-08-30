@@ -9,11 +9,9 @@ class AppSettings(BaseSettings):
     APP_ENV: Literal["development", "production"] = "development"
     LOG_LEVEL: str = "INFO"
 
-    # --- AWS (Storage) ---
-    AWS_ACCESS_KEY_ID: str = Field(..., description="AWS Access Key")
-    AWS_SECRET_ACCESS_KEY: str = Field(..., description="AWS Secret Key")
-    AWS_DEFAULT_REGION: str = "us-east-1"
-    S3_BUCKET_NAME: str
+    # --- Azure Blob Storage ---
+    AZURE_STORAGE_CONNECTION_STRING: str = Field(..., description="Azure Storage account connection string")
+    AZURE_STORAGE_CONTAINER: str = "uploads"
 
     # --- Redis (Broker & State) ---
     REDIS_URL: str = "redis://redis:6379/0"
@@ -38,7 +36,7 @@ class AppSettings(BaseSettings):
 
 # --- Sub-config objects for internal logic ---
 class LLMConfig(BaseModel):
-    model_name: str = "models/gemma-3-27b-it"
+    model_name: str = "gemma-4-31b-it"
     temperature: float = 0.7
     google_api_key: Optional[str] = Field(default_factory=lambda: os.getenv("GOOGLE_API_KEY"))
 

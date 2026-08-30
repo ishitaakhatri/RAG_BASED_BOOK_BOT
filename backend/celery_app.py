@@ -1,3 +1,5 @@
+import ssl
+
 from celery import Celery
 from app_config import get_settings
 
@@ -15,3 +17,10 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_acks_late=True,
 )
+
+# Upstash / Azure Cache for Redis require TLS (rediss:// protocol)
+if settings.REDIS_URL.startswith("rediss://"):
+    celery_app.conf.update(
+        broker_use_ssl={"ssl_cert_reqs": ssl.CERT_REQUIRED},
+        redis_backend_use_ssl={"ssl_cert_reqs": ssl.CERT_REQUIRED},
+    )
